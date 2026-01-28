@@ -120,3 +120,10 @@ Reference faer's optimization patterns:
 - Provide usage examples for common control systems workflows
 - Document numerical stability characteristics and failure modes
 - Cross-reference equivalent SLICOT routine names for users migrating from Fortran/MATLAB, but note that CSRRS implementations are based on independent academic sources
+
+## Active Technologies
+- Rust 1.75+ (MSRV to be determined during setup) + faer (>= 0.19) for linear algebra, ndarray (>= 0.16) for array structures, approx for test comparisons (001-sylvester-solver)
+- N/A (in-memory numerical computation library) (001-sylvester-solver)
+
+## Recent Changes
+- 001-sylvester-solver: Added Rust 1.75+ (MSRV to be determined during setup) + faer (>= 0.19) for linear algebra, ndarray (>= 0.16) for array structures, approx for test comparisons
