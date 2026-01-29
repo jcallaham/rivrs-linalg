@@ -28,6 +28,29 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- \
 
 ENV PATH="/root/.cargo/bin:${PATH}"
 
+# Install Node.js 20 for Claude Code
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+	apt-get install -y nodejs && \
+	npm install -g npm@latest && \
+	rm -rf /var/lib/apt/lists/*
+
+# Install Claude Code
+ARG CLAUDE_CODE_VERSION=latest
+RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
+
+# Install additional development tools (full suite)
+RUN apt-get update && apt-get install -y \
+	fzf \
+	zsh \
+	man-db \
+	vim \
+	nano \
+	unzip \
+	gnupg2 \
+	dnsutils \
+	jq \
+	&& rm -rf /var/lib/apt/lists/*
+
 # Install additional Cargo tools (without sccache wrapper initially)
 RUN cargo install sccache cargo-watch cargo-expand
 
@@ -86,9 +109,11 @@ RUN echo '#!/bin/bash' > /usr/local/bin/welcome.sh && \
 	echo 'echo "CSRRS Development Environment (ARM64)"' >> /usr/local/bin/welcome.sh && \
 	echo 'echo "======================================"' >> /usr/local/bin/welcome.sh && \
 	echo 'echo ""' >> /usr/local/bin/welcome.sh && \
-	echo 'echo "Rust:      $(rustc --version)"' >> /usr/local/bin/welcome.sh && \
-	echo 'echo "Cargo:     $(cargo --version)"' >> /usr/local/bin/welcome.sh && \
-	echo 'echo "Platform:  $(uname -m)"' >> /usr/local/bin/welcome.sh && \
+	echo 'echo "Rust:        $(rustc --version)"' >> /usr/local/bin/welcome.sh && \
+	echo 'echo "Cargo:       $(cargo --version)"' >> /usr/local/bin/welcome.sh && \
+	echo 'echo "Node.js:     $(node --version)"' >> /usr/local/bin/welcome.sh && \
+	echo 'echo "Claude Code: $(claude --version 2>/dev/null || echo '\''not installed'\'')"' >> /usr/local/bin/welcome.sh && \
+	echo 'echo "Platform:    $(uname -m)"' >> /usr/local/bin/welcome.sh && \
 	echo 'echo ""' >> /usr/local/bin/welcome.sh && \
 	echo 'echo "Reference materials:"' >> /usr/local/bin/welcome.sh && \
 	echo 'echo "  - faer-rs/           (Rust linear algebra)"' >> /usr/local/bin/welcome.sh && \

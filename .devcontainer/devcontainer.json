@@ -14,6 +14,7 @@
 	"customizations": {
 		"vscode": {
 			"extensions": [
+				"anthropic.claude-code",
 				"rust-lang.rust-analyzer",
 				"vadimcn.vscode-lldb",
 				"serayuzgur.crates",
@@ -40,9 +41,15 @@
 
 	"remoteUser": "root",
 
-	"postCreateCommand": "rustc --version && cargo --version && gh --version && echo '✓ Development environment ready'",
+	"remoteEnv": {
+		"NODE_OPTIONS": "--max-old-space-size=4096",
+		"CLAUDE_CONFIG_DIR": "/root/.claude"
+	},
+
+	"postCreateCommand": "rustc --version && cargo --version && gh --version && claude --version && echo '✓ Development environment ready'",
 
 	"mounts": [
-		"source=${localEnv:HOME}/.config/gh,target=/root/.config/gh,type=bind,consistency=cached"
+		"source=${localEnv:HOME}/.config/gh,target=/root/.config/gh,type=bind,consistency=cached",
+		"source=csrrs-claude-config,target=/root/.claude,type=volume"
 	]
 }

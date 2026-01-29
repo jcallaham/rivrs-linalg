@@ -7,6 +7,7 @@ services:
       dockerfile: docker/Dockerfile
       args:
         RUST_VERSION: "1.93.0"
+        CLAUDE_CODE_VERSION: "latest"
         GIT_USER_NAME: "${GIT_USER_NAME:-Claude Code}"
         GIT_USER_EMAIL: "${GIT_USER_EMAIL:-claude@example.com}"
     platform: linux/arm64
@@ -16,6 +17,7 @@ services:
     volumes:
       - cargo-cache:/root/.cargo/registry
       - sccache-cache:/root/.cache/sccache
+      - claude-config:/root/.claude
       # VS Code Dev Containers handles gh credentials via devcontainer.json mounts
       # For docker-compose CLI usage, uncomment the line below:
       # - ${HOME}/.config/gh:/root/.config/gh:ro
@@ -24,6 +26,8 @@ services:
       - RUSTFLAGS=-C target-cpu=native
       - CARGO_BUILD_JOBS=8
       - RUSTC_WRAPPER=sccache
+      - NODE_OPTIONS=--max-old-space-size=4096
+      - CLAUDE_CONFIG_DIR=/root/.claude
 
     deploy:
       resources:
@@ -41,3 +45,5 @@ volumes:
     name: csrrs-cargo-cache
   sccache-cache:
     name: csrrs-sccache-cache
+  claude-config:
+    name: csrrs-claude-config

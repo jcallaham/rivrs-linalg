@@ -44,6 +44,12 @@ __pycache__/
 venv/
 *.egg-info/
 
+# Node.js artifacts
+node_modules/
+npm-debug.log
+yarn-error.log
+package-lock.json
+
 # Rust artifacts
 Cargo.lock
 *.profraw

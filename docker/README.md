@@ -8,10 +8,13 @@ Complete, isolated Docker development environment for CSRRS with all reference m
 
 **Key Features**:
 - Rust 1.93.0 with rust-analyzer, clippy, rustfmt
+- Claude Code AI assistant pre-installed
+- Node.js 20 + npm for Claude Code and JavaScript/TypeScript development
+- Full development tool suite (fzf, zsh, vim, jq, etc.)
 - All reference materials included (730MB: faer-rs, lapack, SLICOT-Reference, slicot)
-- SSH agent forwarding for GitHub authentication
+- GitHub authentication via GitHub CLI token forwarding
 - sccache for fast compilation
-- Persistent Cargo cache across container restarts
+- Persistent Cargo and Claude Code config caches across container restarts
 - 8 CPUs, 16GB RAM by default
 
 ## Quick Start
@@ -92,6 +95,59 @@ cd docker
 
 /root/.cargo/                  # Rust installation
 /root/.cache/sccache/          # Compilation cache
+/root/.claude/                 # Claude Code config (persisted)
+```
+
+## Claude Code Integration
+
+**Claude Code** is pre-installed and ready to use for AI-assisted development.
+
+### How to Use Claude Code
+
+**In VS Code (Recommended)**:
+1. Reopen the project in the container (F1 → "Dev Containers: Reopen in Container")
+2. The Claude Code extension is automatically loaded
+3. Click the Claude icon in the sidebar to start interacting
+4. Claude can read/edit Rust files, run tests, and assist with CSRRS development
+
+**From Command Line**:
+```bash
+# Inside container
+claude --version  # Verify installation
+
+# Claude Code CLI is available for terminal-based AI assistance
+# Note: You'll need to authenticate via the VS Code extension first
+```
+
+### What Claude Code Can Do
+
+- **Read and analyze** Rust code in the CSRRS project
+- **Edit files** based on your instructions
+- **Run commands** (cargo build, cargo test, etc.)
+- **Explain algorithms** from reference materials (following clean room rules)
+- **Suggest implementations** based on academic papers and LAPACK patterns
+- **Debug issues** by analyzing error messages and code
+
+### Clean Room Compliance
+
+Claude Code is configured to follow CSRRS clean room implementation rules:
+- Will NOT read SLICOT Fortran source code (slicot/src/*.f files)
+- Will use SLICOT documentation, test cases, and LAPACK source as references
+- Will help implement algorithms from academic papers and textbooks
+- Will document which references were used for each implementation
+
+### Persistent Configuration
+
+Claude Code configuration is stored in a persistent Docker volume:
+- Volume name: `csrrs-claude-config`
+- Mount point: `/root/.claude`
+- Survives container restarts and rebuilds
+- Plugins and settings are preserved
+
+To reset Claude Code config:
+```bash
+docker volume rm csrrs-claude-config
+# Next container start will create a fresh volume
 ```
 
 ## Development Workflow
@@ -436,6 +492,18 @@ A: It includes complete Rust toolchain + 710MB reference materials. Trade-off fo
 
 **Q: Why not mount the project directory from host?**
 A: Isolation. Prevents accidental dependency on host tools/libraries. Forces clean build.
+
+**Q: Can I use Claude Code for Rust development?**
+A: Yes! Claude Code is pre-installed and the VS Code extension is automatically loaded. Use it for AI-assisted coding, debugging, and algorithm implementation.
+
+**Q: Why is Node.js installed in a Rust container?**
+A: Claude Code is distributed as an npm package, so Node.js is required. This also enables JavaScript/TypeScript development if needed for Python bindings or web interfaces.
+
+**Q: Does Claude Code work offline?**
+A: No, Claude Code requires internet access to call the Anthropic API. However, rust-analyzer and other local tools work offline.
+
+**Q: How much larger is the image with Claude Code?**
+A: Approximately 500MB larger (3.3GB → 3.8GB) due to Node.js ecosystem and development tools. Trade-off for integrated AI assistance.
 
 ---
 
