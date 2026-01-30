@@ -3,7 +3,10 @@
 //! Tests `solve_discrete` against analytically known solutions and
 //! verifies residual norms for various problem sizes and structures.
 
-use csrrs::sylvester::{compute_residual, solve_discrete, EquationType};
+mod common;
+
+use common::{compute_schur, schur_has_2x2_blocks};
+use csrrs::sylvester::{compute_residual, solve_discrete, solve_discrete_schur, EquationType};
 use faer::prelude::*;
 
 /// Helper to verify a discrete solution: ||AXB + X - C|| < tol
@@ -142,16 +145,8 @@ fn test_slicot_sb04qd_benchmark() {
     // References:
     // - Golub, Nash & Van Loan (1979), IEEE Trans. Auto. Contr., AC-24:909-913
     // - Sima (1996), "Algorithms for Linear-Quadratic Optimization"
-    let a = mat![
-        [1.0, 2.0, 3.0],
-        [6.0, 7.0, 8.0],
-        [9.0, 2.0, 3.0f64]
-    ];
-    let b = mat![
-        [7.0, 2.0, 3.0],
-        [2.0, 1.0, 2.0],
-        [3.0, 4.0, 1.0f64]
-    ];
+    let a = mat![[1.0, 2.0, 3.0], [6.0, 7.0, 8.0], [9.0, 2.0, 3.0f64]];
+    let b = mat![[7.0, 2.0, 3.0], [2.0, 1.0, 2.0], [3.0, 4.0, 1.0f64]];
     let c = mat![
         [271.0, 135.0, 147.0],
         [923.0, 494.0, 482.0],
@@ -159,11 +154,7 @@ fn test_slicot_sb04qd_benchmark() {
     ];
 
     // Known exact solution from SLICOT documentation
-    let x_expected = mat![
-        [2.0, 3.0, 6.0],
-        [4.0, 7.0, 1.0],
-        [5.0, 3.0, 2.0f64]
-    ];
+    let x_expected = mat![[2.0, 3.0, 6.0], [4.0, 7.0, 1.0], [5.0, 3.0, 2.0f64]];
 
     let result = solve_discrete(a.as_ref(), b.as_ref(), c.as_ref()).unwrap();
     let x = &result.solution * (1.0 / result.scale);
@@ -196,4 +187,97 @@ fn test_slicot_sb04qd_benchmark() {
         "Residual {:.2e} exceeds tolerance 1e-11",
         residual
     );
+}
+
+// === Schur API Tests ===
+
+#[test]
+fn test_solve_discrete_schur_api() {
+    let a = mat![[0.5, 0.1], [0.0, 0.8f64]];
+    let b = mat![[0.6, 0.1], [0.0, 0.9f64]];
+    let c = mat![[1.0, 2.0], [3.0, 4.0f64]];
+
+    let (schur_a, u) = compute_schur(a.as_ref());
+    let (schur_b, v) = compute_schur(b.as_ref());
+
+    let result = solve_discrete_schur(
+        schur_a.as_ref(),
+        schur_b.as_ref(),
+        u.as_ref(),
+        v.as_ref(),
+        c.as_ref(),
+    )
+    .unwrap();
+
+    let result_std = solve_discrete(a.as_ref(), b.as_ref(), c.as_ref()).unwrap();
+    let x_schur = &result.solution * (1.0 / result.scale);
+    let x_std = &result_std.solution * (1.0 / result_std.scale);
+
+    let mut max_diff = 0.0f64;
+    for j in 0..2 {
+        for i in 0..2 {
+            max_diff = max_diff.max((x_schur[(i, j)] - x_std[(i, j)]).abs());
+        }
+    }
+    assert!(
+        max_diff < 1e-10,
+        "Discrete Schur API and standard API differ by {:.2e}",
+        max_diff
+    );
+    assert!(result.residual_norm < 1e-10);
+}
+
+// === Explicit Quasi-Triangular Verification ===
+
+#[test]
+fn test_complex_eigenvalues_verified_schur_blocks() {
+    // A has complex eigenvalues (small magnitude for discrete stability)
+    let a = mat![[0.3, 0.4, 0.0], [-0.4, 0.3, 0.0], [0.0, 0.0, 0.5f64]];
+    // B has complex eigenvalues
+    let b = mat![[0.2, 0.3], [-0.3, 0.2f64]];
+    let c = mat![[1.0, 2.0], [3.0, 4.0], [5.0, 6.0f64]];
+
+    assert!(
+        schur_has_2x2_blocks(a.as_ref()),
+        "Test matrix A should produce 2x2 Schur blocks"
+    );
+
+    let result = solve_discrete(a.as_ref(), b.as_ref(), c.as_ref()).unwrap();
+    let x = &result.solution * (1.0 / result.scale);
+    let residual = compute_residual(
+        a.as_ref(),
+        b.as_ref(),
+        c.as_ref(),
+        x.as_ref(),
+        EquationType::Discrete,
+    );
+    assert!(
+        residual < 1e-10,
+        "Discrete with verified 2x2 Schur blocks: {:.2e}",
+        residual
+    );
+}
+
+// === Large Matrix / Stress Tests ===
+
+#[test]
+fn test_30x30_large() {
+    // Large discrete test to exercise iteration logic at scale.
+    let n = 30;
+    let mut a = Mat::zeros(n, n);
+    for i in 0..n {
+        a[(i, i)] = 0.3 + 0.01 * (i as f64);
+        if i + 1 < n {
+            a[(i, i + 1)] = 0.05;
+        }
+    }
+    let mut b = Mat::zeros(n, n);
+    for i in 0..n {
+        b[(i, i)] = 0.2 + 0.015 * (i as f64);
+        if i + 1 < n {
+            b[(i, i + 1)] = 0.03;
+        }
+    }
+    let c = Mat::from_fn(n, n, |i, j| ((i * n + j) % 11) as f64 - 5.0);
+    verify_discrete(&a, &b, &c, 1e-8);
 }
