@@ -14,6 +14,7 @@ pub mod condition;
 pub mod continuous;
 pub mod discrete;
 pub mod triangular;
+pub mod triangular_blocked;
 pub mod triangular_discrete;
 pub mod types;
 pub mod utils;

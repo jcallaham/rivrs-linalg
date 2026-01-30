@@ -21,6 +21,7 @@ use faer::Accum;
 
 use crate::error::SylvesterError;
 use super::condition::{estimate_separation, SEPARATION_THRESHOLD};
+use super::triangular_blocked::{solve_triangular_sylvester_blocked, BLOCKED_THRESHOLD};
 use super::types::SylvesterSolution;
 use super::triangular::solve_triangular_sylvester;
 use super::utils::compute_residual;
@@ -138,12 +139,22 @@ pub fn solve_continuous(
 
     // Step 3: Solve triangular system: T*Y + Y*S = F
     // sgn = +1 for AX + XB = C
-    let (scale, near_singular) = solve_triangular_sylvester(
-        schur_t.as_ref(),
-        schur_s.as_ref(),
-        f.as_mut(),
-        1.0,
-    );
+    // Use blocked solver for large matrices for better cache performance
+    let (scale, near_singular) = if n > BLOCKED_THRESHOLD || m > BLOCKED_THRESHOLD {
+        solve_triangular_sylvester_blocked(
+            schur_t.as_ref(),
+            schur_s.as_ref(),
+            f.as_mut(),
+            1.0,
+        )
+    } else {
+        solve_triangular_sylvester(
+            schur_t.as_ref(),
+            schur_s.as_ref(),
+            f.as_mut(),
+            1.0,
+        )
+    };
     // f now contains Y
 
     // Step 4: Back-transform: X = U1 * Y * U2^T

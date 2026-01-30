@@ -422,25 +422,26 @@ fn solve_2x2_linear_system(
 ) -> (f64, bool) {
     let mut near_singular = false;
 
-    let (a11, a12, a21, a22, r1, r2) = if d11.abs() >= d21.abs() {
-        (d11, d12, d21, d22, c[(0, 0)], c[(1, 0)])
+    // Extract RHS values based on whether c is 1×2 (from solve_1x2) or 2×1 (from solve_2x1)
+    let (r1_val, r2_val) = if c.nrows() == 1 {
+        (c[(0, 0)], c[(0, 1)])
     } else {
-        // Swap rows for partial pivoting, also swap RHS
-        // Note: for 1x2 case, c is (1, 2) so c[(0, 0)] and c[(0, 1)]
-        // For 2x1 case, c is (2, 1) so c[(0, 0)] and c[(1, 0)]
-        if c.nrows() == 1 {
-            (d21, d22, d11, d12, c[(0, 0)], c[(0, 1)])
-        } else {
-            (d21, d22, d11, d12, c[(1, 0)], c[(0, 0)])
-        }
+        (c[(0, 0)], c[(1, 0)])
+    };
+
+    let (a11, a12, a21, a22, r1, r2) = if d11.abs() >= d21.abs() {
+        (d11, d12, d21, d22, r1_val, r2_val)
+    } else {
+        // Swap rows for partial pivoting
+        (d21, d22, d11, d12, r2_val, r1_val)
     };
 
     let pivot = a11;
+    let (x1, x2);
+
     if pivot.abs() <= smin {
         near_singular = true;
         // Perturb and solve anyway
-        let x1;
-        let x2;
         if a12.abs() > smin {
             x2 = r1 / a12;
             x1 = (r2 - a22 * x2) / if a21.abs() > smin { a21 } else { smin };
@@ -448,47 +449,36 @@ fn solve_2x2_linear_system(
             x1 = r1 / smin;
             x2 = (r2 - a21 * x1) / if a22.abs() > smin { a22 } else { smin };
         }
-        if c.nrows() == 1 {
-            c[(0, 0)] = x1;
-            c[(0, 1)] = x2;
+    } else {
+        let factor = a21 / pivot;
+        let new_a22 = a22 - factor * a12;
+        let new_r2 = r2 - factor * r1;
+
+        let eff_a22 = if new_a22.abs() <= smin {
+            near_singular = true;
+            smin
         } else {
-            c[(0, 0)] = x1;
-            c[(1, 0)] = x2;
-        }
-        return (1.0, near_singular);
+            new_a22
+        };
+
+        x2 = new_r2 / eff_a22;
+        x1 = (r1 - a12 * x2) / pivot;
     }
 
-    let factor = a21 / pivot;
-    let new_a22 = a22 - factor * a12;
-    let new_r2 = r2 - factor * r1;
-
-    let eff_a22 = if new_a22.abs() <= smin {
-        near_singular = true;
-        smin
+    // Write solution back. x1 and x2 correspond to the pivoted system.
+    // If we swapped (d11.abs() < d21.abs()), x1/x2 correspond to swapped positions.
+    let (sol1, sol2) = if d11.abs() >= d21.abs() {
+        (x1, x2)
     } else {
-        new_a22
+        (x2, x1)
     };
 
-    let x2 = new_r2 / eff_a22;
-    let x1 = (r1 - a12 * x2) / pivot;
-
-    // Undo the pivot swap
-    if d11.abs() >= d21.abs() {
-        if c.nrows() == 1 {
-            c[(0, 0)] = x1;
-            c[(0, 1)] = x2;
-        } else {
-            c[(0, 0)] = x1;
-            c[(1, 0)] = x2;
-        }
+    if c.nrows() == 1 {
+        c[(0, 0)] = sol1;
+        c[(0, 1)] = sol2;
     } else {
-        if c.nrows() == 1 {
-            c[(0, 0)] = x1;
-            c[(0, 1)] = x2;
-        } else {
-            c[(0, 0)] = x2;
-            c[(1, 0)] = x1;
-        }
+        c[(0, 0)] = sol1;
+        c[(1, 0)] = sol2;
     }
 
     (1.0, near_singular)
