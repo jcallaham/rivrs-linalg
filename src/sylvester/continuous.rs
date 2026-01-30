@@ -20,6 +20,7 @@ use faer::prelude::*;
 use faer::Accum;
 
 use crate::error::SylvesterError;
+use super::condition::{estimate_separation, SEPARATION_THRESHOLD};
 use super::types::SylvesterSolution;
 use super::triangular::solve_triangular_sylvester;
 use super::utils::compute_residual;
@@ -98,6 +99,19 @@ pub fn solve_continuous(
     let (schur_t, u1) = compute_real_schur(a)?;
     let (schur_s, u2) = compute_real_schur(b)?;
 
+    // Step 1b: Check eigenvalue separation
+    let sep_est = estimate_separation(
+        schur_t.as_ref(),
+        schur_s.as_ref(),
+        EquationType::Continuous,
+    );
+    if sep_est.is_singular {
+        return Err(SylvesterError::CommonEigenvalues {
+            separation: sep_est.separation,
+            threshold: SEPARATION_THRESHOLD,
+        });
+    }
+
     // Step 2: Transform RHS: F = U1^T * C * U2
     let mut f = Mat::zeros(n, m);
     {
@@ -164,7 +178,7 @@ pub fn solve_continuous(
         solution,
         scale,
         residual_norm,
-        near_singular,
+        near_singular: near_singular || sep_est.is_near_singular,
     })
 }
 
@@ -503,6 +517,22 @@ mod tests {
 
         let result = solve_continuous(a.as_ref(), b.as_ref(), c.as_ref()).unwrap();
         assert!(result.residual_norm < 1e-10, "Residual: {}", result.residual_norm);
+    }
+
+    #[test]
+    fn test_solve_continuous_common_eigenvalues() {
+        // A has eigenvalue 2, B has eigenvalue -2
+        // A*X + X*B = C is singular when λ(A) + λ(B) = 0
+        let a = mat![[2.0f64]];
+        let b = mat![[-2.0f64]];
+        let c = mat![[1.0f64]];
+
+        let result = solve_continuous(a.as_ref(), b.as_ref(), c.as_ref());
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            crate::error::SylvesterError::CommonEigenvalues { .. } => {}
+            other => panic!("Expected CommonEigenvalues, got {:?}", other),
+        }
     }
 
     #[test]

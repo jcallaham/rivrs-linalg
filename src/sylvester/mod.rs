@@ -10,6 +10,7 @@
 //!   CACM 15(9):820-826
 //! - Golub & Van Loan (2013), "Matrix Computations" (4th Ed), Section 7.6.3
 
+pub mod condition;
 pub mod continuous;
 pub mod discrete;
 pub mod triangular;
@@ -18,6 +19,7 @@ pub mod types;
 pub mod utils;
 pub mod validation;
 
+pub use condition::{estimate_separation, SeparationEstimate};
 pub use continuous::{solve_continuous, solve_continuous_schur};
 pub use discrete::{solve_discrete, solve_discrete_schur};
 pub use types::{EquationType, Sign, SylvesterSolution, Transpose};

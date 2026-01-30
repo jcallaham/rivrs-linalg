@@ -10,6 +10,7 @@ use faer::prelude::*;
 /// - Bartels & Stewart (1972), "Solution of the Matrix Equation AX + XB = C",
 ///   CACM 15(9):820-826
 /// - LAPACK dtrsyl uses the same SCALE factor convention
+#[derive(Debug)]
 pub struct SylvesterSolution {
     /// Computed solution matrix X (may be scaled).
     ///
