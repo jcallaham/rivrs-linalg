@@ -141,3 +141,67 @@ fn test_negative_eigenvalues() {
     let c = mat![[1.0, 2.0], [3.0, 4.0f64]];
     verify_continuous(&a, &b, &c, 1e-10);
 }
+
+// === SLICOT Benchmark Tests ===
+
+#[test]
+fn test_slicot_sb04md_benchmark() {
+    // Test case from SLICOT SB04MD documentation (Release 4.5, NICONET 2002-2005).
+    // Solves AX + XB = C (continuous-time, Hessenberg-Schur method).
+    // N=3, M=2 (rectangular C).
+    //
+    // References:
+    // - Golub, Nash & Van Loan (1979), IEEE Trans. Auto. Contr., AC-24:909-913
+    // - Sima (1996), "Algorithms for Linear-Quadratic Optimization"
+    let a = mat![
+        [2.0, 1.0, 3.0],
+        [0.0, 2.0, 1.0],
+        [6.0, 1.0, 2.0f64]
+    ];
+    let b = mat![
+        [2.0, 1.0],
+        [1.0, 6.0f64]
+    ];
+    let c = mat![
+        [2.0, 1.0],
+        [1.0, 4.0],
+        [0.0, 5.0f64]
+    ];
+
+    // Known solution from SLICOT SB04MD documentation
+    let x_expected = mat![
+        [-2.7685, 0.5498],
+        [-1.0531, 0.6865],
+        [ 4.5257, -0.4389f64]
+    ];
+
+    let result = solve_continuous(a.as_ref(), b.as_ref(), c.as_ref()).unwrap();
+    let x = &result.solution * (1.0 / result.scale);
+
+    // Verify solution matches SLICOT reference (documented to 4 decimal places)
+    let mut max_err = 0.0f64;
+    for j in 0..2 {
+        for i in 0..3 {
+            max_err = max_err.max((x[(i, j)] - x_expected[(i, j)]).abs());
+        }
+    }
+    assert!(
+        max_err < 1e-4,
+        "Solution differs from SLICOT SB04MD reference by {:.2e}",
+        max_err
+    );
+
+    // Verify residual to high precision
+    let residual = compute_residual(
+        a.as_ref(),
+        b.as_ref(),
+        c.as_ref(),
+        x.as_ref(),
+        EquationType::Continuous,
+    );
+    assert!(
+        residual < 1e-11,
+        "Residual {:.2e} exceeds tolerance 1e-11",
+        residual
+    );
+}

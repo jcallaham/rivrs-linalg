@@ -131,3 +131,69 @@ fn test_small_eigenvalues() {
     let c = mat![[1.0, 2.0], [3.0, 4.0f64]];
     verify_discrete(&a, &b, &c, 1e-10);
 }
+
+// === SLICOT Benchmark Tests ===
+
+#[test]
+fn test_slicot_sb04qd_benchmark() {
+    // Test case from SLICOT SB04QD documentation (Release 4.5, NICONET 2002-2005).
+    // Solves X + AXB = C with known exact integer solution.
+    //
+    // References:
+    // - Golub, Nash & Van Loan (1979), IEEE Trans. Auto. Contr., AC-24:909-913
+    // - Sima (1996), "Algorithms for Linear-Quadratic Optimization"
+    let a = mat![
+        [1.0, 2.0, 3.0],
+        [6.0, 7.0, 8.0],
+        [9.0, 2.0, 3.0f64]
+    ];
+    let b = mat![
+        [7.0, 2.0, 3.0],
+        [2.0, 1.0, 2.0],
+        [3.0, 4.0, 1.0f64]
+    ];
+    let c = mat![
+        [271.0, 135.0, 147.0],
+        [923.0, 494.0, 482.0],
+        [578.0, 383.0, 287.0f64]
+    ];
+
+    // Known exact solution from SLICOT documentation
+    let x_expected = mat![
+        [2.0, 3.0, 6.0],
+        [4.0, 7.0, 1.0],
+        [5.0, 3.0, 2.0f64]
+    ];
+
+    let result = solve_discrete(a.as_ref(), b.as_ref(), c.as_ref()).unwrap();
+    let x = &result.solution * (1.0 / result.scale);
+
+    // Verify solution matches SLICOT reference to high precision
+    let mut max_err = 0.0f64;
+    for j in 0..3 {
+        for i in 0..3 {
+            max_err = max_err.max((x[(i, j)] - x_expected[(i, j)]).abs());
+        }
+    }
+    assert!(
+        max_err < 1e-10,
+        "Solution differs from SLICOT SB04QD reference by {:.2e}",
+        max_err
+    );
+
+    // Verify residual: ||AXB + X - C|| / ||C||
+    // With dense 3x3 matrices of magnitude ~100-900, machine epsilon (~1e-16)
+    // scaled by matrix norms gives expected residuals of O(1e-12).
+    let residual = compute_residual(
+        a.as_ref(),
+        b.as_ref(),
+        c.as_ref(),
+        x.as_ref(),
+        EquationType::Discrete,
+    );
+    assert!(
+        residual < 1e-11,
+        "Residual {:.2e} exceeds tolerance 1e-11",
+        residual
+    );
+}
