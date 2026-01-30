@@ -72,6 +72,13 @@ To maintain licensing flexibility, SLICOT source code (.f files in slicot/src/) 
 - Provide informative error messages that guide users to solutions
 - Consider error recovery strategies (e.g., regularization hints)
 
+## Git Commit Practices
+
+- **Commit frequently**: Create git commits after completing each logical unit of work (e.g., after finishing a phase, after getting tests passing, after adding a new module).
+- **Commit after verification**: Always commit when tests pass or a milestone is verified working.
+- **Descriptive messages**: Use clear commit messages that describe what was accomplished.
+- **Never skip commits**: Do not accumulate large amounts of uncommitted work.
+
 ## Development Workflow
 
 When implementing a new control systems algorithm:
