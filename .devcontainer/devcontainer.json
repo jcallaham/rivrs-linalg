@@ -4,13 +4,11 @@
 	"service": "csrrs-dev",
 	"workspaceFolder": "/workspace/csrrs",
 	"shutdownAction": "stopCompose",
-
 	"features": {
 		"ghcr.io/devcontainers/features/github-cli:1": {
 			"version": "latest"
 		}
 	},
-
 	"customizations": {
 		"vscode": {
 			"extensions": [
@@ -22,10 +20,13 @@
 				"ms-vscode.cmake-tools"
 			],
 			"settings": {
+				"claudeCode.useTerminal": false,
 				"editor.tabSize": 8,
 				"editor.insertSpaces": false,
 				"editor.detectIndentation": false,
-				"editor.rulers": [80],
+				"editor.rulers": [
+					80
+				],
 				"editor.formatOnSave": true,
 				"files.insertFinalNewline": true,
 				"files.trimTrailingWhitespace": true,
@@ -38,18 +39,14 @@
 			}
 		}
 	},
-
 	"remoteUser": "root",
-
 	"remoteEnv": {
 		"NODE_OPTIONS": "--max-old-space-size=4096",
 		"CLAUDE_CONFIG_DIR": "/root/.claude",
 		"GH_TOKEN": "${localEnv:GH_TOKEN}",
 		"GITHUB_TOKEN": "${localEnv:GITHUB_TOKEN}"
 	},
-
 	"postCreateCommand": "rustc --version && cargo --version && gh --version && claude --version && echo '✓ Development environment ready'",
-
 	"mounts": [
 		"source=${localEnv:HOME}/.config/gh,target=/root/.config/gh,type=bind,consistency=cached",
 		"source=csrrs-claude-config,target=/root/.claude,type=volume"

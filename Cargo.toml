@@ -1,0 +1,24 @@
+[package]
+name = "csrrs"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+description = "Control Systems Routines in Rust - Sylvester equation solver"
+license = "MIT OR Apache-2.0"
+categories = ["science", "mathematics"]
+keywords = ["control-systems", "linear-algebra", "sylvester", "matrix-equation"]
+
+[dependencies]
+faer = "0.22"
+dyn-stack = "0.10"
+
+[dev-dependencies]
+approx = "0.5"
+rand = "0.8"
+rand_distr = "0.4"
+
+[profile.dev]
+opt-level = 3
+
+[profile.test]
+opt-level = 3
