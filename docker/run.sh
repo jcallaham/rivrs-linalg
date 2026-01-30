@@ -45,13 +45,18 @@ else
 	docker volume create csrrs-cargo-cache 2>/dev/null || true
 	docker volume create csrrs-sccache-cache 2>/dev/null || true
 
+	# Get GitHub token from host (falls back to file-based if keyring fails)
+	GH_TOKEN=$(gh auth token 2>/dev/null || echo "")
+
 	# Run the container
 	docker run -it \
 		--name csrrs-dev \
 		--platform linux/arm64 \
+		-v csrrs-workspace:/workspace/csrrs \
 		-v csrrs-cargo-cache:/root/.cargo/registry \
 		-v csrrs-sccache-cache:/root/.cache/sccache \
-		-v "${HOME}/.config/gh":/root/.config/gh:ro \
+		-e GH_TOKEN="${GH_TOKEN}" \
+		-e GITHUB_TOKEN="${GH_TOKEN}" \
 		-e RUSTFLAGS="-C target-cpu=native" \
 		-e CARGO_BUILD_JOBS=8 \
 		-e RUSTC_WRAPPER=sccache \

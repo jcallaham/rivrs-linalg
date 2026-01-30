@@ -19,6 +19,14 @@ RUN apt-get update && apt-get install -y \
 	libssl-dev \
 	&& rm -rf /var/lib/apt/lists/*
 
+# Install GitHub CLI
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
+	&& chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
+	&& echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
+	&& apt-get update \
+	&& apt-get install -y gh \
+	&& rm -rf /var/lib/apt/lists/*
+
 # Install Rust (auto-detects ARM64 architecture)
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- \
 	-y \
@@ -60,7 +68,9 @@ ENV RUSTC_WRAPPER=sccache
 # Configure git (HTTPS-based workflow)
 RUN git config --global user.name "${GIT_USER_NAME}" && \
 	git config --global user.email "${GIT_USER_EMAIL}" && \
-	git config --global init.defaultBranch main
+	git config --global init.defaultBranch main && \
+	git config --global credential.helper "" && \
+	git config --global credential.helper "!gh auth git-credential"
 
 # Stage 2: Reference materials (separate for caching)
 FROM scratch AS references
@@ -72,27 +82,55 @@ COPY slicot /references/slicot
 # Stage 3: Development environment
 FROM base-builder AS development
 
+# Copy reference materials to /opt/references (permanent location)
+COPY --from=references /references/faer-rs /opt/references/faer-rs
+COPY --from=references /references/lapack /opt/references/lapack
+COPY --from=references /references/SLICOT-Reference /opt/references/SLICOT-Reference
+COPY --from=references /references/slicot /opt/references/slicot
+
+# Create entrypoint script that clones repository on first run
+RUN echo '#!/bin/bash' > /usr/local/bin/entrypoint.sh && \
+	echo 'set -e' >> /usr/local/bin/entrypoint.sh && \
+	echo '' >> /usr/local/bin/entrypoint.sh && \
+	echo '# Check if repository already exists (container restart)' >> /usr/local/bin/entrypoint.sh && \
+	echo 'if [ ! -d "/workspace/csrrs/.git" ]; then' >> /usr/local/bin/entrypoint.sh && \
+	echo '  echo "Cloning repository from GitHub..."' >> /usr/local/bin/entrypoint.sh && \
+	echo '  mkdir -p /workspace' >> /usr/local/bin/entrypoint.sh && \
+	echo '  cd /workspace' >> /usr/local/bin/entrypoint.sh && \
+	echo '  ' >> /usr/local/bin/entrypoint.sh && \
+	echo '  # Use gh CLI to clone (uses mounted credentials)' >> /usr/local/bin/entrypoint.sh && \
+	echo '  if ! gh repo clone jcallaham/csrrs csrrs 2>/tmp/clone_error.log; then' >> /usr/local/bin/entrypoint.sh && \
+	echo '    echo "ERROR: Failed to clone repository. Check GitHub authentication:"' >> /usr/local/bin/entrypoint.sh && \
+	echo '    cat /tmp/clone_error.log' >> /usr/local/bin/entrypoint.sh && \
+	echo '    echo ""' >> /usr/local/bin/entrypoint.sh && \
+	echo '    echo "Please ensure gh CLI is authenticated on your host machine:"' >> /usr/local/bin/entrypoint.sh && \
+	echo '    echo "  gh auth login"' >> /usr/local/bin/entrypoint.sh && \
+	echo '    exit 1' >> /usr/local/bin/entrypoint.sh && \
+	echo '  fi' >> /usr/local/bin/entrypoint.sh && \
+	echo '  ' >> /usr/local/bin/entrypoint.sh && \
+	echo '  cd /workspace/csrrs' >> /usr/local/bin/entrypoint.sh && \
+	echo '  git config --local safe.directory /workspace/csrrs' >> /usr/local/bin/entrypoint.sh && \
+	echo '  ' >> /usr/local/bin/entrypoint.sh && \
+	echo '  # Fix fetch refspec (gh repo clone sometimes misses this)' >> /usr/local/bin/entrypoint.sh && \
+	echo '  git config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*"' >> /usr/local/bin/entrypoint.sh && \
+	echo '  git fetch --all --quiet' >> /usr/local/bin/entrypoint.sh && \
+	echo '' >> /usr/local/bin/entrypoint.sh && \
+	echo '  # Symlink reference materials into repository' >> /usr/local/bin/entrypoint.sh && \
+	echo '  ln -s /opt/references/faer-rs /workspace/csrrs/faer-rs' >> /usr/local/bin/entrypoint.sh && \
+	echo '  ln -s /opt/references/lapack /workspace/csrrs/lapack' >> /usr/local/bin/entrypoint.sh && \
+	echo '  ln -s /opt/references/SLICOT-Reference /workspace/csrrs/SLICOT-Reference' >> /usr/local/bin/entrypoint.sh && \
+	echo '  ln -s /opt/references/slicot /workspace/csrrs/slicot' >> /usr/local/bin/entrypoint.sh && \
+	echo '  ' >> /usr/local/bin/entrypoint.sh && \
+	echo '  echo "Repository cloned successfully!"' >> /usr/local/bin/entrypoint.sh && \
+	echo 'else' >> /usr/local/bin/entrypoint.sh && \
+	echo '  echo "Repository already exists, skipping clone."' >> /usr/local/bin/entrypoint.sh && \
+	echo 'fi' >> /usr/local/bin/entrypoint.sh && \
+	echo '' >> /usr/local/bin/entrypoint.sh && \
+	echo 'cd /workspace/csrrs' >> /usr/local/bin/entrypoint.sh && \
+	echo 'exec "$@"' >> /usr/local/bin/entrypoint.sh && \
+	chmod +x /usr/local/bin/entrypoint.sh
+
 WORKDIR /workspace/csrrs
-
-# Copy reference materials from stage 2
-COPY --from=references /references/faer-rs ./faer-rs
-COPY --from=references /references/lapack ./lapack
-COPY --from=references /references/SLICOT-Reference ./SLICOT-Reference
-COPY --from=references /references/slicot ./slicot
-
-# Copy project metadata files
-COPY .gitignore CLAUDE.md README.md ./
-
-# Copy Cargo.toml and rustfmt.toml from faer-rs for reference
-COPY faer-rs/Cargo.toml ./faer-Cargo.toml.example
-COPY faer-rs/rustfmt.toml ./.rustfmt.toml
-
-# Create project structure
-RUN mkdir -p src tests examples benches docs .claude
-
-# Initialize git repository
-RUN git init && \
-	git config --local safe.directory /workspace/csrrs
 
 # Configure Cargo for performance
 RUN mkdir -p /root/.cargo && \
@@ -125,4 +163,5 @@ RUN echo '#!/bin/bash' > /usr/local/bin/welcome.sh && \
 	echo 'echo ""' >> /usr/local/bin/welcome.sh && \
 	chmod +x /usr/local/bin/welcome.sh
 
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["/bin/bash", "-c", "welcome.sh && exec /bin/bash"]

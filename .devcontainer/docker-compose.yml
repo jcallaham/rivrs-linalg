@@ -15,6 +15,7 @@ services:
     container_name: csrrs-dev
 
     volumes:
+      - workspace:/workspace/csrrs  # Isolated workspace (sandboxed from host)
       - cargo-cache:/root/.cargo/registry
       - sccache-cache:/root/.cache/sccache
       - claude-config:/root/.claude
@@ -28,6 +29,8 @@ services:
       - RUSTC_WRAPPER=sccache
       - NODE_OPTIONS=--max-old-space-size=4096
       - CLAUDE_CONFIG_DIR=/root/.claude
+      - GH_TOKEN=${GH_TOKEN:-}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
 
     deploy:
       resources:
@@ -41,6 +44,8 @@ services:
     tty: true
 
 volumes:
+  workspace:
+    name: csrrs-workspace
   cargo-cache:
     name: csrrs-cargo-cache
   sccache-cache:
