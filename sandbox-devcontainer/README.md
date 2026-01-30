@@ -34,7 +34,8 @@ Detailed documentation for specific aspects:
 
 - **`dockerfile-templates.md`** - Complete Dockerfiles for Python, Rust, Node.js, Go, Java, multi-language
 - **`devcontainer-configs.md`** - VS Code devcontainer.json examples per language
-- **`github-auth-patterns.md`** - HTTPS authentication with GitHub CLI (not SSH)
+- **`github-auth-patterns.md`** - HTTPS authentication with GitHub CLI (updated with all critical fixes)
+- **`lessons-learned.md`** - Battle-tested solutions to 7 critical issues discovered during CSRRS implementation
 - **`anthropic-reference.md`** - Learnings from Anthropic's official implementation
 - **`architecture-patterns.md`** - Multi-stage build strategies (TODO: add if needed)
 - **`language-runtimes.md`** - Runtime installation guides (TODO: add if needed)
@@ -161,6 +162,18 @@ As you create sandboxes for new projects:
 4. Update this README with new use cases
 
 ## Version History
+
+- **v1.1.0** (2026-01-30): Critical patterns update based on CSRRS battle-testing
+  - Fixed GitHub CLI installation (must be in Dockerfile)
+  - Fixed macOS Keychain issue (GH_TOKEN environment variable)
+  - Fixed git credential helper configuration
+  - Fixed private repo cloning (runtime entrypoint pattern)
+  - Fixed fetch refspec bug (gh clone doesn't set it)
+  - Fixed symlink .gitignore patterns
+  - Clarified volume vs mount for sandboxing
+  - Added `lessons-learned.md` with complete troubleshooting guide
+  - Updated `github-auth-patterns.md` with working solutions
+  - Updated `SKILL.md` with critical implementation patterns
 
 - **v1.0.0** (2024-01-29): Initial skill creation based on CSRRS implementation
   - Python, Rust, Node.js, Go, Java templates

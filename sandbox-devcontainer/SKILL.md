@@ -113,6 +113,14 @@ RUN apt-get update && apt-get install -y \
     # ... language-specific packages
     && rm -rf /var/lib/apt/lists/*
 
+# Install GitHub CLI (CRITICAL - must be in Dockerfile, not just devcontainer feature)
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
+    && apt-get update \
+    && apt-get install -y gh \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install primary language runtime
 # (See references/runtime-installation.md for examples)
 
@@ -131,9 +139,12 @@ RUN apt-get update && apt-get install -y \
     fzf zsh man-db vim nano unzip gnupg2 dnsutils jq \
     && rm -rf /var/lib/apt/lists/*
 
-# Configure git
+# Configure git (CRITICAL - set credential helper to use GitHub CLI)
 RUN git config --global user.name "${GIT_USER_NAME}" && \
-    git config --global user.email "${GIT_USER_EMAIL}"
+    git config --global user.email "${GIT_USER_EMAIL}" && \
+    git config --global init.defaultBranch main && \
+    git config --global credential.helper "" && \
+    git config --global credential.helper "!gh auth git-credential"
 
 # Stage 2: Reference materials (if needed)
 FROM scratch AS references
@@ -479,6 +490,165 @@ Consult `references/reference-strategies.md` for strategies with very large refe
 **Config**: Formatter, build tool integration
 
 Detailed patterns in `references/language-runtimes.md`.
+
+## Critical Implementation Patterns (Battle-Tested)
+
+### 1. GitHub CLI Installation
+
+**MUST install in Dockerfile**, not rely on devcontainer feature alone:
+
+```dockerfile
+# Install GitHub CLI
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
+    && apt-get update \
+    && apt-get install -y gh \
+    && rm -rf /var/lib/apt/lists/*
+```
+
+**Why**: Ensures `gh` is available for entrypoint scripts and standalone Docker usage.
+
+### 2. Git Credential Helper Configuration
+
+**MUST explicitly configure** git to use GitHub CLI:
+
+```dockerfile
+RUN git config --global credential.helper "" && \
+    git config --global credential.helper "!gh auth git-credential"
+```
+
+**Why**: Git doesn't automatically know to use `gh` for authentication. This makes all git operations use GitHub CLI tokens.
+
+### 3. macOS Keychain Workaround
+
+**Problem**: macOS stores `gh` tokens in Keychain, not in `~/.config/gh/hosts.yml` files. Containers can't access Keychain.
+
+**Solution**: Pass token via environment variable:
+
+**run.sh**:
+```bash
+GH_TOKEN=$(gh auth token 2>/dev/null || echo "")
+docker run -e GH_TOKEN="${GH_TOKEN}" -e GITHUB_TOKEN="${GH_TOKEN}" ...
+```
+
+**docker-compose.yml**:
+```yaml
+environment:
+  - GH_TOKEN=${GH_TOKEN:-}
+  - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+```
+
+**devcontainer.json**:
+```json
+{
+  "remoteEnv": {
+    "GH_TOKEN": "${localEnv:GH_TOKEN}",
+    "GITHUB_TOKEN": "${localEnv:GITHUB_TOKEN}"
+  }
+}
+```
+
+**Why**: `gh` CLI automatically reads from `GH_TOKEN` environment variable, bypassing Keychain/file storage issues.
+
+### 4. Private Repository Cloning (Runtime, Not Build-Time)
+
+For private repos, **clone in entrypoint script** (not during docker build):
+
+```dockerfile
+# Create entrypoint that clones repo using GH_TOKEN
+RUN echo '#!/bin/bash' > /usr/local/bin/entrypoint.sh && \
+    echo 'if [ ! -d "/workspace/project/.git" ]; then' >> /usr/local/bin/entrypoint.sh && \
+    echo '  gh repo clone username/project /workspace/project || exit 1' >> /usr/local/bin/entrypoint.sh && \
+    echo '  cd /workspace/project' >> /usr/local/bin/entrypoint.sh && \
+    echo '  git config --local safe.directory /workspace/project' >> /usr/local/bin/entrypoint.sh && \
+    echo '  git config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*"' >> /usr/local/bin/entrypoint.sh && \
+    echo '  git fetch --all --quiet' >> /usr/local/bin/entrypoint.sh && \
+    echo 'fi' >> /usr/local/bin/entrypoint.sh && \
+    echo 'cd /workspace/project' >> /usr/local/bin/entrypoint.sh && \
+    echo 'exec "$@"' >> /usr/local/bin/entrypoint.sh && \
+    chmod +x /usr/local/bin/entrypoint.sh
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+CMD ["/bin/bash"]
+```
+
+**Why**:
+- Build-time clone fails (no auth credentials during `docker build`)
+- Entrypoint runs after container starts with `GH_TOKEN` available
+- Automatically sets up repository on first container start
+
+### 5. Fetch Refspec Fix
+
+**Critical**: `gh repo clone` sometimes fails to set proper fetch configuration. **MUST fix in entrypoint**:
+
+```bash
+git config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*"
+git fetch --all --quiet
+```
+
+**Symptom without fix**: `git branch -a` shows only current branch, can't checkout other branches
+**Why**: GitHub CLI clone bug doesn't set fetch refspec properly
+
+### 6. Symlink .gitignore Patterns
+
+When symlinking reference materials, use patterns **without trailing slash**:
+
+**Correct**:
+```gitignore
+faer-rs
+lapack
+slicot
+```
+
+**Incorrect** (won't work):
+```gitignore
+faer-rs/
+lapack/
+slicot/
+```
+
+**Why**: Git treats symlinks differently than directories. Trailing `/` only matches directories, not symlinks.
+
+### 7. Isolated Workspace (Volume, Not Mount)
+
+For true sandboxing, use Docker **volume**, NOT host mount:
+
+**Correct** (isolated):
+```yaml
+volumes:
+  - workspace:/workspace/project  # Docker volume
+```
+
+**Incorrect** (breaks sandbox):
+```yaml
+volumes:
+  - ..:/workspace/project  # Host mount - exposes host files!
+```
+
+**run.sh correct**:
+```bash
+docker run -v project-workspace:/workspace/project ...
+```
+
+**run.sh incorrect**:
+```bash
+docker run -v "$(pwd)":/workspace/project ...  # Breaks isolation!
+```
+
+**Why**: Volumes provide complete isolation. Mounts give container/AI access to host filesystem.
+
+### Summary of Critical Patterns
+
+1. ✅ Install GitHub CLI in Dockerfile
+2. ✅ Configure git credential helper explicitly
+3. ✅ Pass GH_TOKEN via environment variable (macOS Keychain workaround)
+4. ✅ Clone private repos at runtime via entrypoint
+5. ✅ Fix fetch refspec after gh clone
+6. ✅ Use .gitignore patterns without `/` for symlinks
+7. ✅ Use Docker volumes, not mounts, for isolation
+
+**See**: `references/github-auth-patterns.md` for complete implementation details.
 
 ## Verification Checklist
 

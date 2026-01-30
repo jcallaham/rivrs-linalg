@@ -88,6 +88,14 @@ COPY --from=references /references/lapack /opt/references/lapack
 COPY --from=references /references/SLICOT-Reference /opt/references/SLICOT-Reference
 COPY --from=references /references/slicot /opt/references/slicot
 
+# Stage 4: Python environment
+
+# Install UV
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Install GitHub spec-kit
+RUN uv tool install specify-cli --from git+https://github.com/github/spec-kit.git
+
 # Create entrypoint script that clones repository on first run
 RUN echo '#!/bin/bash' > /usr/local/bin/entrypoint.sh && \
 	echo 'set -e' >> /usr/local/bin/entrypoint.sh && \
