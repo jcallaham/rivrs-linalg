@@ -29,13 +29,6 @@ target
 .DS_Store
 Thumbs.db
 
-
-# Claude Code
-.claude/
-.specify/*
-!.specify/memory/
-
-
 # Environments
 .env
 .envrc
