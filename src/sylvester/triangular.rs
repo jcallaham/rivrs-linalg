@@ -164,7 +164,7 @@ pub fn solve_triangular_sylvester(
 /// Detects 1x1 and 2x2 diagonal blocks in a quasi-triangular matrix.
 ///
 /// Returns a list of (start, end) index pairs (inclusive) for each block.
-fn detect_blocks(mat: MatRef<'_, f64>, n: usize) -> Vec<(usize, usize)> {
+pub(crate) fn detect_blocks(mat: MatRef<'_, f64>, n: usize) -> Vec<(usize, usize)> {
     let mut blocks = Vec::new();
     let mut i = 0;
     while i < n {
@@ -495,7 +495,7 @@ fn solve_2x2_linear_system(
 }
 
 /// Compute the maximum absolute value in a matrix.
-fn matrix_max_abs(m: MatRef<'_, f64>) -> f64 {
+pub(crate) fn matrix_max_abs(m: MatRef<'_, f64>) -> f64 {
     let mut max = 0.0f64;
     for j in 0..m.ncols() {
         for i in 0..m.nrows() {
