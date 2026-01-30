@@ -248,8 +248,8 @@ fn solve_1x2(
     // System: (a11 + sgn*b11)*x1 + sgn*b21*x2 = c1
     //         sgn*b12*x1 + (a11 + sgn*b22)*x2 = c2
     let d11 = a11 + sgn * b[(0, 0)];
-    let d12 = sgn * b[(0, 1)];
-    let d21 = sgn * b[(1, 0)];
+    let d12 = sgn * b[(1, 0)];
+    let d21 = sgn * b[(0, 1)];
     let d22 = a11 + sgn * b[(1, 1)];
 
     solve_2x2_linear_system(
@@ -311,17 +311,17 @@ fn solve_2x2(
 
     // 4x4 coefficient matrix T:
     // T = I ⊗ A + sgn * B^T ⊗ I
-    // = [[a11+sgn*b11, a21,          sgn*b21,     0          ],
-    //    [a12,          a22+sgn*b11,  0,           sgn*b21    ],
-    //    [sgn*b12,      0,           a11+sgn*b22, a21         ],
-    //    [0,            sgn*b12,     a12,          a22+sgn*b22]]
+    // = [[a11+sgn*b11, a12,          sgn*b21,     0          ],
+    //    [a21,          a22+sgn*b11,  0,           sgn*b21    ],
+    //    [sgn*b12,      0,           a11+sgn*b22, a12         ],
+    //    [0,            sgn*b12,     a21,          a22+sgn*b22]]
     let mut t = [[0.0f64; 4]; 4];
     t[0][0] = a11 + sgn * b11;
-    t[0][1] = a21;
+    t[0][1] = a12;
     t[0][2] = sgn * b21;
     t[0][3] = 0.0;
 
-    t[1][0] = a12;
+    t[1][0] = a21;
     t[1][1] = a22 + sgn * b11;
     t[1][2] = 0.0;
     t[1][3] = sgn * b21;
@@ -329,11 +329,11 @@ fn solve_2x2(
     t[2][0] = sgn * b12;
     t[2][1] = 0.0;
     t[2][2] = a11 + sgn * b22;
-    t[2][3] = a21;
+    t[2][3] = a12;
 
     t[3][0] = 0.0;
     t[3][1] = sgn * b12;
-    t[3][2] = a12;
+    t[3][2] = a21;
     t[3][3] = a22 + sgn * b22;
 
     // RHS vector (column-major vectorization of C)
