@@ -8,6 +8,7 @@ ARG GIT_USER_EMAIL="claude@example.com"
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
 	curl \
+	ca-certificates \
 	git \
 	build-essential \
 	gcc \
@@ -92,6 +93,8 @@ COPY --from=references /references/slicot /opt/references/slicot
 
 # Install UV
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:$PATH"
+ENV UV_LINK_MODE=copy
 
 # Install GitHub spec-kit
 RUN uv tool install specify-cli --from git+https://github.com/github/spec-kit.git
