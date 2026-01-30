@@ -27,23 +27,9 @@ pub fn compute_residual(
             // R = AX + XB - C
             let mut r = Mat::zeros(n, m);
             // R = A*X
-            faer::linalg::matmul::matmul(
-                r.as_mut(),
-                Accum::Replace,
-                a,
-                x,
-                1.0f64,
-                Par::Seq,
-            );
+            faer::linalg::matmul::matmul(r.as_mut(), Accum::Replace, a, x, 1.0f64, Par::Seq);
             // R += X*B
-            faer::linalg::matmul::matmul(
-                r.as_mut(),
-                Accum::Add,
-                x,
-                b,
-                1.0f64,
-                Par::Seq,
-            );
+            faer::linalg::matmul::matmul(r.as_mut(), Accum::Add, x, b, 1.0f64, Par::Seq);
             // R -= C
             for j in 0..m {
                 for i in 0..n {
@@ -57,14 +43,7 @@ pub fn compute_residual(
             let mut axb = Mat::zeros(n, m);
             // tmp = A*X
             let mut tmp = Mat::zeros(n, m);
-            faer::linalg::matmul::matmul(
-                tmp.as_mut(),
-                Accum::Replace,
-                a,
-                x,
-                1.0f64,
-                Par::Seq,
-            );
+            faer::linalg::matmul::matmul(tmp.as_mut(), Accum::Replace, a, x, 1.0f64, Par::Seq);
             // axb = tmp*B = A*X*B
             faer::linalg::matmul::matmul(
                 axb.as_mut(),

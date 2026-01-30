@@ -63,9 +63,7 @@ pub fn solve_triangular_sylvester_discrete(
 
     // Solve X + sgn * A*X*B = scale*C
     // Process columns left to right, rows bottom to top
-    for l_idx in 0..b_blocks.len() {
-        let (l1, l2) = b_blocks[l_idx];
-
+    for &(l1, l2) in &b_blocks {
         for k_idx in (0..a_blocks.len()).rev() {
             let (k1, k2) = a_blocks[k_idx];
 
@@ -238,6 +236,7 @@ pub fn solve_triangular_sylvester_discrete(
 ///   X + sgn * A_kk * X * B_ll = C_kl
 ///
 /// This is equivalent to: (I + sgn * B_ll^T ⊗ A_kk) vec(X) = vec(C_kl)
+#[allow(clippy::needless_range_loop)]
 fn solve_discrete_small_block(
     a_kk: MatRef<'_, f64>,
     b_ll: MatRef<'_, f64>,
@@ -375,9 +374,8 @@ mod tests {
         let a = mat![[2.0f64]];
         let b = mat![[3.0f64]];
         let mut c = mat![[7.0f64]];
-        let (scale, _ns) = solve_triangular_sylvester_discrete(
-            a.as_ref(), b.as_ref(), c.as_mut(), 1.0,
-        );
+        let (scale, _ns) =
+            solve_triangular_sylvester_discrete(a.as_ref(), b.as_ref(), c.as_mut(), 1.0);
         assert!((c[(0, 0)] / scale - 1.0).abs() < 1e-12);
     }
 
@@ -389,9 +387,8 @@ mod tests {
         let b = mat![[3.0, 0.0], [0.0, 4.0f64]];
         let c_orig = mat![[4.0, 5.0], [6.0, 9.0f64]];
         let mut c = c_orig.clone();
-        let (scale, _ns) = solve_triangular_sylvester_discrete(
-            a.as_ref(), b.as_ref(), c.as_mut(), 1.0,
-        );
+        let (scale, _ns) =
+            solve_triangular_sylvester_discrete(a.as_ref(), b.as_ref(), c.as_mut(), 1.0);
         let s = scale;
         // x11 = 4/(1+1*3) = 1
         // x12 = 5/(1+1*4) = 1
@@ -409,9 +406,8 @@ mod tests {
         let b = mat![[3.0, 1.0], [0.0, 4.0f64]];
         let c_orig = mat![[10.0, 11.0], [12.0, 13.0f64]];
         let mut c = c_orig.clone();
-        let (scale, _ns) = solve_triangular_sylvester_discrete(
-            a.as_ref(), b.as_ref(), c.as_mut(), 1.0,
-        );
+        let (scale, _ns) =
+            solve_triangular_sylvester_discrete(a.as_ref(), b.as_ref(), c.as_mut(), 1.0);
 
         // Verify: X + A*X*B should equal scale*C_orig
         let x = &c;
@@ -429,25 +425,12 @@ mod tests {
 
     #[test]
     fn test_discrete_3x3() {
-        let a = mat![
-            [0.5, 0.1, 0.0],
-            [0.0, 0.8, 0.2],
-            [0.0, 0.0, 0.3f64]
-        ];
-        let b = mat![
-            [0.6, 0.1, 0.0],
-            [0.0, 0.9, 0.05],
-            [0.0, 0.0, 0.4f64]
-        ];
-        let c_orig = mat![
-            [1.0, 2.0, 3.0],
-            [4.0, 5.0, 6.0],
-            [7.0, 8.0, 9.0f64]
-        ];
+        let a = mat![[0.5, 0.1, 0.0], [0.0, 0.8, 0.2], [0.0, 0.0, 0.3f64]];
+        let b = mat![[0.6, 0.1, 0.0], [0.0, 0.9, 0.05], [0.0, 0.0, 0.4f64]];
+        let c_orig = mat![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0f64]];
         let mut c = c_orig.clone();
-        let (scale, _ns) = solve_triangular_sylvester_discrete(
-            a.as_ref(), b.as_ref(), c.as_mut(), 1.0,
-        );
+        let (scale, _ns) =
+            solve_triangular_sylvester_discrete(a.as_ref(), b.as_ref(), c.as_mut(), 1.0);
 
         // Verify residual
         let x = &c;
@@ -469,9 +452,8 @@ mod tests {
         let b = mat![[0.6, 0.0], [0.0, 0.9f64]];
         let c_orig = mat![[1.0, 2.0], [3.0, 4.0f64]];
         let mut c = c_orig.clone();
-        let (scale, _ns) = solve_triangular_sylvester_discrete(
-            a.as_ref(), b.as_ref(), c.as_mut(), -1.0,
-        );
+        let (scale, _ns) =
+            solve_triangular_sylvester_discrete(a.as_ref(), b.as_ref(), c.as_mut(), -1.0);
 
         // Verify: X - A*X*B = scale*C_orig
         let x = &c;

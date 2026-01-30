@@ -4,8 +4,8 @@
 //! is singular and cannot be solved. This example demonstrates how the
 //! solver detects and reports such cases.
 
-use csrrs::sylvester::solve_continuous;
 use csrrs::error::SylvesterError;
+use csrrs::sylvester::solve_continuous;
 use faer::prelude::*;
 
 fn main() {
@@ -21,9 +21,15 @@ fn main() {
 
     match solve_continuous(a.as_ref(), b.as_ref(), c.as_ref()) {
         Ok(_) => println!("  Unexpected success"),
-        Err(SylvesterError::CommonEigenvalues { separation, threshold }) => {
+        Err(SylvesterError::CommonEigenvalues {
+            separation,
+            threshold,
+        }) => {
             println!("  Detected: common eigenvalues");
-            println!("  Separation: {:.2e} (threshold: {:.2e})", separation, threshold);
+            println!(
+                "  Separation: {:.2e} (threshold: {:.2e})",
+                separation, threshold
+            );
         }
         Err(e) => println!("  Other error: {}", e),
     }

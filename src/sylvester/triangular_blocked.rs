@@ -88,8 +88,7 @@ fn solve_blocked_impl(
     let b_panels = compute_panel_boundaries(b, n, block_size);
 
     // Process columns of B left-to-right (L panels), rows of A bottom-to-top (K panels)
-    for l_panel in 0..b_panels.len() {
-        let (l_start, l_end) = b_panels[l_panel];
+    for &(l_start, l_end) in &b_panels {
         let l_size = l_end - l_start;
 
         for k_panel in (0..a_panels.len()).rev() {
@@ -216,9 +215,8 @@ mod tests {
         let c_orig = mat![[10.0, 11.0], [12.0, 13.0f64]];
         let mut c = c_orig.clone();
 
-        let (scale, _ns) = solve_triangular_sylvester_blocked(
-            a.as_ref(), b.as_ref(), c.as_mut(), 1.0,
-        );
+        let (scale, _ns) =
+            solve_triangular_sylvester_blocked(a.as_ref(), b.as_ref(), c.as_mut(), 1.0);
 
         // Verify: A*X + X*B = scale*C_orig
         let x = &c;
@@ -251,15 +249,12 @@ mod tests {
 
         // Solve with unblocked
         let mut c_unblocked = c_orig.clone();
-        let (scale_u, _) = solve_triangular_sylvester(
-            a.as_ref(), b.as_ref(), c_unblocked.as_mut(), 1.0,
-        );
+        let (scale_u, _) =
+            solve_triangular_sylvester(a.as_ref(), b.as_ref(), c_unblocked.as_mut(), 1.0);
 
         // Solve with blocked (force small block size to exercise the blocked path)
         let mut c_blocked = c_orig.clone();
-        let (scale_b, _) = solve_blocked_impl(
-            a.as_ref(), b.as_ref(), c_blocked.as_mut(), 1.0, 3,
-        );
+        let (scale_b, _) = solve_blocked_impl(a.as_ref(), b.as_ref(), c_blocked.as_mut(), 1.0, 3);
 
         // Results should match
         let mut max_diff = 0.0f64;
@@ -270,7 +265,11 @@ mod tests {
                 max_diff = max_diff.max((xu - xb).abs());
             }
         }
-        assert!(max_diff < 1e-10, "Blocked and unblocked differ by {}", max_diff);
+        assert!(
+            max_diff < 1e-10,
+            "Blocked and unblocked differ by {}",
+            max_diff
+        );
     }
 
     #[test]
@@ -295,9 +294,7 @@ mod tests {
         let c_orig = Mat::from_fn(6, 6, |i, j| ((i + 1) * (j + 1)) as f64);
 
         let mut c_blocked = c_orig.clone();
-        let (scale, _ns) = solve_blocked_impl(
-            a.as_ref(), b.as_ref(), c_blocked.as_mut(), 1.0, 3,
-        );
+        let (scale, _ns) = solve_blocked_impl(a.as_ref(), b.as_ref(), c_blocked.as_mut(), 1.0, 3);
 
         // Verify residual
         let x = &c_blocked;
@@ -332,9 +329,8 @@ mod tests {
 
         // Test blocked
         let mut c_blocked = c_orig.clone();
-        let (scale_b, _ns) = solve_blocked_impl(
-            a.as_ref(), b.as_ref(), c_blocked.as_mut(), -1.0, 3,
-        );
+        let (scale_b, _ns) =
+            solve_blocked_impl(a.as_ref(), b.as_ref(), c_blocked.as_mut(), -1.0, 3);
 
         // Verify: A*X - X*B = scale*C_orig
         let x = &c_blocked;
@@ -349,9 +345,8 @@ mod tests {
 
         // Also verify that blocked matches unblocked
         let mut c_unblocked = c_orig.clone();
-        let (scale_u, _) = solve_triangular_sylvester(
-            a.as_ref(), b.as_ref(), c_unblocked.as_mut(), -1.0,
-        );
+        let (scale_u, _) =
+            solve_triangular_sylvester(a.as_ref(), b.as_ref(), c_unblocked.as_mut(), -1.0);
         let mut max_diff = 0.0f64;
         for j in 0..n {
             for i in 0..n {
@@ -360,7 +355,11 @@ mod tests {
                 max_diff = max_diff.max((xu - xb).abs());
             }
         }
-        assert!(max_diff < 1e-10, "Blocked and unblocked differ by {}", max_diff);
+        assert!(
+            max_diff < 1e-10,
+            "Blocked and unblocked differ by {}",
+            max_diff
+        );
     }
 
     #[test]

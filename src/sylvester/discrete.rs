@@ -20,13 +20,13 @@
 use faer::prelude::*;
 use faer::Accum;
 
-use crate::error::SylvesterError;
 use super::condition::{estimate_separation, SEPARATION_THRESHOLD};
-use super::types::SylvesterSolution;
 use super::triangular_discrete::solve_triangular_sylvester_discrete;
-use super::utils::compute_residual;
 use super::types::EquationType;
+use super::types::SylvesterSolution;
+use super::utils::compute_residual;
 use super::validation::{validate_dimensions, validate_finite};
+use crate::error::SylvesterError;
 
 /// Solves the discrete-time Sylvester equation `AXB + X = C`.
 ///
@@ -100,11 +100,7 @@ pub fn solve_discrete(
     let (schur_s, u2) = compute_real_schur(b)?;
 
     // Step 1b: Check eigenvalue separation
-    let sep_est = estimate_separation(
-        schur_t.as_ref(),
-        schur_s.as_ref(),
-        EquationType::Discrete,
-    );
+    let sep_est = estimate_separation(schur_t.as_ref(), schur_s.as_ref(), EquationType::Discrete);
     if sep_est.is_singular {
         return Err(SylvesterError::CommonEigenvalues {
             separation: sep_est.separation,
@@ -138,12 +134,8 @@ pub fn solve_discrete(
 
     // Step 3: Solve triangular system: Y + T*Y*S = F
     // sgn = +1 for AXB + X = C
-    let (scale, near_singular) = solve_triangular_sylvester_discrete(
-        schur_t.as_ref(),
-        schur_s.as_ref(),
-        f.as_mut(),
-        1.0,
-    );
+    let (scale, near_singular) =
+        solve_triangular_sylvester_discrete(schur_t.as_ref(), schur_s.as_ref(), f.as_mut(), 1.0);
     // f now contains Y
 
     // Step 4: Back-transform: X = U1 * Y * U2^T
@@ -218,27 +210,46 @@ pub fn solve_discrete_schur(
     {
         let mut tmp = Mat::zeros(n, m);
         faer::linalg::matmul::matmul(
-            tmp.as_mut(), Accum::Replace, u.transpose(), c, 1.0f64, Par::Seq,
+            tmp.as_mut(),
+            Accum::Replace,
+            u.transpose(),
+            c,
+            1.0f64,
+            Par::Seq,
         );
         faer::linalg::matmul::matmul(
-            f.as_mut(), Accum::Replace, tmp.as_ref(), v, 1.0f64, Par::Seq,
+            f.as_mut(),
+            Accum::Replace,
+            tmp.as_ref(),
+            v,
+            1.0f64,
+            Par::Seq,
         );
     }
 
     // Solve triangular system
-    let (scale, near_singular) = solve_triangular_sylvester_discrete(
-        schur_a, schur_b, f.as_mut(), 1.0,
-    );
+    let (scale, near_singular) =
+        solve_triangular_sylvester_discrete(schur_a, schur_b, f.as_mut(), 1.0);
 
     // Back-transform: X = U * Y * V^T
     let mut solution = Mat::zeros(n, m);
     {
         let mut tmp = Mat::zeros(n, m);
         faer::linalg::matmul::matmul(
-            tmp.as_mut(), Accum::Replace, u, f.as_ref(), 1.0f64, Par::Seq,
+            tmp.as_mut(),
+            Accum::Replace,
+            u,
+            f.as_ref(),
+            1.0f64,
+            Par::Seq,
         );
         faer::linalg::matmul::matmul(
-            solution.as_mut(), Accum::Replace, tmp.as_ref(), v.transpose(), 1.0f64, Par::Seq,
+            solution.as_mut(),
+            Accum::Replace,
+            tmp.as_ref(),
+            v.transpose(),
+            1.0f64,
+            Par::Seq,
         );
     }
 
@@ -246,27 +257,37 @@ pub fn solve_discrete_schur(
     let mut a_orig = Mat::zeros(n, n);
     {
         let mut tmp = Mat::zeros(n, n);
+        faer::linalg::matmul::matmul(tmp.as_mut(), Accum::Replace, u, schur_a, 1.0f64, Par::Seq);
         faer::linalg::matmul::matmul(
-            tmp.as_mut(), Accum::Replace, u, schur_a, 1.0f64, Par::Seq,
-        );
-        faer::linalg::matmul::matmul(
-            a_orig.as_mut(), Accum::Replace, tmp.as_ref(), u.transpose(), 1.0f64, Par::Seq,
+            a_orig.as_mut(),
+            Accum::Replace,
+            tmp.as_ref(),
+            u.transpose(),
+            1.0f64,
+            Par::Seq,
         );
     }
     let mut b_orig = Mat::zeros(m, m);
     {
         let mut tmp = Mat::zeros(m, m);
+        faer::linalg::matmul::matmul(tmp.as_mut(), Accum::Replace, v, schur_b, 1.0f64, Par::Seq);
         faer::linalg::matmul::matmul(
-            tmp.as_mut(), Accum::Replace, v, schur_b, 1.0f64, Par::Seq,
-        );
-        faer::linalg::matmul::matmul(
-            b_orig.as_mut(), Accum::Replace, tmp.as_ref(), v.transpose(), 1.0f64, Par::Seq,
+            b_orig.as_mut(),
+            Accum::Replace,
+            tmp.as_ref(),
+            v.transpose(),
+            1.0f64,
+            Par::Seq,
         );
     }
 
     let x_true = &solution * (1.0 / scale);
     let residual_norm = compute_residual(
-        a_orig.as_ref(), b_orig.as_ref(), c, x_true.as_ref(), EquationType::Discrete,
+        a_orig.as_ref(),
+        b_orig.as_ref(),
+        c,
+        x_true.as_ref(),
+        EquationType::Discrete,
     );
 
     Ok(SylvesterSolution {
@@ -285,9 +306,7 @@ pub fn solve_discrete_schur(
 ///
 /// Uses nalgebra's Schur decomposition internally, converting between
 /// faer and nalgebra matrix types.
-fn compute_real_schur(
-    a: MatRef<'_, f64>,
-) -> Result<(Mat<f64>, Mat<f64>), SylvesterError> {
+fn compute_real_schur(a: MatRef<'_, f64>) -> Result<(Mat<f64>, Mat<f64>), SylvesterError> {
     let n = a.nrows();
 
     if n == 0 {
@@ -386,48 +405,40 @@ mod tests {
         let c = mat![[1.0, 2.0], [3.0, 4.0f64]];
 
         let result = solve_discrete(a.as_ref(), b.as_ref(), c.as_ref()).unwrap();
-        assert!(result.residual_norm < 1e-10, "Residual: {}", result.residual_norm);
+        assert!(
+            result.residual_norm < 1e-10,
+            "Residual: {}",
+            result.residual_norm
+        );
     }
 
     #[test]
     fn test_solve_discrete_3x3() {
-        let a = mat![
-            [0.5, 0.1, 0.0],
-            [0.0, 0.8, 0.2],
-            [0.0, 0.0, 0.3f64]
-        ];
-        let b = mat![
-            [0.6, 0.1, 0.0],
-            [0.0, 0.9, 0.05],
-            [0.0, 0.0, 0.4f64]
-        ];
-        let c = mat![
-            [1.0, 2.0, 3.0],
-            [4.0, 5.0, 6.0],
-            [7.0, 8.0, 9.0f64]
-        ];
+        let a = mat![[0.5, 0.1, 0.0], [0.0, 0.8, 0.2], [0.0, 0.0, 0.3f64]];
+        let b = mat![[0.6, 0.1, 0.0], [0.0, 0.9, 0.05], [0.0, 0.0, 0.4f64]];
+        let c = mat![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0f64]];
 
         let result = solve_discrete(a.as_ref(), b.as_ref(), c.as_ref()).unwrap();
-        assert!(result.residual_norm < 1e-10, "Residual: {}", result.residual_norm);
+        assert!(
+            result.residual_norm < 1e-10,
+            "Residual: {}",
+            result.residual_norm
+        );
     }
 
     #[test]
     fn test_solve_discrete_rectangular_c() {
         // A is 3x3, B is 2x2, C is 3x2
-        let a = mat![
-            [0.5, 0.1, 0.0],
-            [0.0, 0.8, 0.2],
-            [0.0, 0.0, 0.3f64]
-        ];
+        let a = mat![[0.5, 0.1, 0.0], [0.0, 0.8, 0.2], [0.0, 0.0, 0.3f64]];
         let b = mat![[0.6, 0.1], [0.0, 0.9f64]];
-        let c = mat![
-            [1.0, 2.0],
-            [3.0, 4.0],
-            [5.0, 6.0f64]
-        ];
+        let c = mat![[1.0, 2.0], [3.0, 4.0], [5.0, 6.0f64]];
 
         let result = solve_discrete(a.as_ref(), b.as_ref(), c.as_ref()).unwrap();
-        assert!(result.residual_norm < 1e-10, "Residual: {}", result.residual_norm);
+        assert!(
+            result.residual_norm < 1e-10,
+            "Residual: {}",
+            result.residual_norm
+        );
     }
 
     #[test]
@@ -478,15 +489,15 @@ mod tests {
             [0.0, 0.0, 0.7, 0.1],
             [0.0, 0.0, 0.0, 0.4f64]
         ];
-        let b = mat![
-            [0.6, 0.1, 0.0],
-            [0.0, 0.8, 0.2],
-            [0.0, 0.0, 0.5f64]
-        ];
+        let b = mat![[0.6, 0.1, 0.0], [0.0, 0.8, 0.2], [0.0, 0.0, 0.5f64]];
         let c = Mat::from_fn(4, 3, |i, j| (i + j + 1) as f64);
 
         let result = solve_discrete(a.as_ref(), b.as_ref(), c.as_ref()).unwrap();
-        assert!(result.residual_norm < 1e-10, "Residual: {}", result.residual_norm);
+        assert!(
+            result.residual_norm < 1e-10,
+            "Residual: {}",
+            result.residual_norm
+        );
     }
 
     #[test]
@@ -524,6 +535,10 @@ mod tests {
         let c = Mat::from_fn(5, 4, |i, j| ((i * 4 + j + 1) as f64) * 0.1);
 
         let result = solve_discrete(a.as_ref(), b.as_ref(), c.as_ref()).unwrap();
-        assert!(result.residual_norm < 1e-10, "Residual: {}", result.residual_norm);
+        assert!(
+            result.residual_norm < 1e-10,
+            "Residual: {}",
+            result.residual_norm
+        );
     }
 }

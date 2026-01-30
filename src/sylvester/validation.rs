@@ -202,11 +202,7 @@ mod tests {
     #[test]
     fn test_validate_quasi_triangular_with_2x2_block() {
         // 2x2 block at top-left representing complex eigenvalues
-        let m = mat![
-            [1.0, 2.0, 3.0],
-            [-0.5, 1.0, 4.0],
-            [0.0, 0.0, 5.0]
-        ];
+        let m = mat![[1.0, 2.0, 3.0], [-0.5, 1.0, 4.0], [0.0, 0.0, 5.0]];
         assert!(validate_quasi_triangular(m.as_ref(), 'T').is_ok());
     }
 

@@ -15,7 +15,10 @@ fn test_continuous_c_wrong_dims() {
     let b = Mat::zeros(3, 3);
     let c = Mat::zeros(2, 2); // Should be 2x3
     let result = solve_continuous(a.as_ref(), b.as_ref(), c.as_ref());
-    assert!(matches!(result, Err(SylvesterError::DimensionMismatch { .. })));
+    assert!(matches!(
+        result,
+        Err(SylvesterError::DimensionMismatch { .. })
+    ));
 }
 
 #[test]
@@ -24,7 +27,10 @@ fn test_discrete_c_wrong_dims() {
     let b = Mat::zeros(2, 2);
     let c = Mat::zeros(3, 3); // Should be 3x2
     let result = solve_discrete(a.as_ref(), b.as_ref(), c.as_ref());
-    assert!(matches!(result, Err(SylvesterError::DimensionMismatch { .. })));
+    assert!(matches!(
+        result,
+        Err(SylvesterError::DimensionMismatch { .. })
+    ));
 }
 
 #[test]
@@ -33,7 +39,10 @@ fn test_continuous_a_not_square() {
     let b = Mat::zeros(3, 3);
     let c = Mat::zeros(2, 3);
     let result = solve_continuous(a.as_ref(), b.as_ref(), c.as_ref());
-    assert!(matches!(result, Err(SylvesterError::NotSquare { matrix: 'A', .. })));
+    assert!(matches!(
+        result,
+        Err(SylvesterError::NotSquare { matrix: 'A', .. })
+    ));
 }
 
 #[test]
@@ -42,7 +51,10 @@ fn test_discrete_b_not_square() {
     let b = Mat::zeros(3, 2);
     let c = Mat::zeros(2, 3);
     let result = solve_discrete(a.as_ref(), b.as_ref(), c.as_ref());
-    assert!(matches!(result, Err(SylvesterError::NotSquare { matrix: 'B', .. })));
+    assert!(matches!(
+        result,
+        Err(SylvesterError::NotSquare { matrix: 'B', .. })
+    ));
 }
 
 // === Invalid Input Tests ===
@@ -101,7 +113,10 @@ fn test_continuous_common_eigenvalues_1x1() {
     let b = mat![[-3.0f64]];
     let c = mat![[1.0f64]];
     let result = solve_continuous(a.as_ref(), b.as_ref(), c.as_ref());
-    assert!(matches!(result, Err(SylvesterError::CommonEigenvalues { .. })));
+    assert!(matches!(
+        result,
+        Err(SylvesterError::CommonEigenvalues { .. })
+    ));
 }
 
 #[test]
@@ -112,7 +127,10 @@ fn test_continuous_common_eigenvalues_2x2() {
     let b = mat![[-1.0, 0.0], [0.0, 3.0f64]]; // eigenvalues: -1, 3
     let c = mat![[1.0, 0.0], [0.0, 1.0f64]];
     let result = solve_continuous(a.as_ref(), b.as_ref(), c.as_ref());
-    assert!(matches!(result, Err(SylvesterError::CommonEigenvalues { .. })));
+    assert!(matches!(
+        result,
+        Err(SylvesterError::CommonEigenvalues { .. })
+    ));
 }
 
 #[test]
@@ -122,7 +140,10 @@ fn test_discrete_common_eigenvalues_1x1() {
     let b = mat![[-0.5f64]];
     let c = mat![[1.0f64]];
     let result = solve_discrete(a.as_ref(), b.as_ref(), c.as_ref());
-    assert!(matches!(result, Err(SylvesterError::CommonEigenvalues { .. })));
+    assert!(matches!(
+        result,
+        Err(SylvesterError::CommonEigenvalues { .. })
+    ));
 }
 
 // === Edge Cases ===
@@ -156,9 +177,21 @@ fn test_common_eigenvalues_error_message() {
     let c = mat![[1.0f64]];
     let err = solve_continuous(a.as_ref(), b.as_ref(), c.as_ref()).unwrap_err();
     let msg = format!("{}", err);
-    assert!(msg.contains("common eigenvalues"), "Error message should mention common eigenvalues: {}", msg);
-    assert!(msg.contains("ill-conditioned"), "Error message should mention ill-conditioning: {}", msg);
-    assert!(msg.contains("separation"), "Error message should mention separation: {}", msg);
+    assert!(
+        msg.contains("common eigenvalues"),
+        "Error message should mention common eigenvalues: {}",
+        msg
+    );
+    assert!(
+        msg.contains("ill-conditioned"),
+        "Error message should mention ill-conditioning: {}",
+        msg
+    );
+    assert!(
+        msg.contains("separation"),
+        "Error message should mention separation: {}",
+        msg
+    );
 }
 
 #[test]

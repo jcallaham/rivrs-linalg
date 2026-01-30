@@ -7,20 +7,9 @@ use faer::prelude::*;
 
 fn main() {
     // Define the matrices for AX + XB = C
-    let a = mat![
-        [1.0, 2.0, 0.0],
-        [0.0, 3.0, 1.0],
-        [0.0, 0.0, 5.0f64]
-    ];
-    let b = mat![
-        [2.0, 1.0],
-        [0.0, 4.0f64]
-    ];
-    let c = mat![
-        [10.0, 20.0],
-        [30.0, 40.0],
-        [50.0, 60.0f64]
-    ];
+    let a = mat![[1.0, 2.0, 0.0], [0.0, 3.0, 1.0], [0.0, 0.0, 5.0f64]];
+    let b = mat![[2.0, 1.0], [0.0, 4.0f64]];
+    let c = mat![[10.0, 20.0], [30.0, 40.0], [50.0, 60.0f64]];
 
     println!("Solving continuous-time Sylvester equation: AX + XB = C");
     println!("A = {:?}", &a);
@@ -38,7 +27,10 @@ fn main() {
                 println!();
             }
             println!("\nScale factor: {}", result.scale);
-            println!("Residual norm ||AX + XB - C||: {:.2e}", result.residual_norm);
+            println!(
+                "Residual norm ||AX + XB - C||: {:.2e}",
+                result.residual_norm
+            );
             println!("Near-singular: {}", result.near_singular);
         }
         Err(e) => {

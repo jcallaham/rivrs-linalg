@@ -3,7 +3,7 @@
 //! Tests `solve_discrete` against analytically known solutions and
 //! verifies residual norms for various problem sizes and structures.
 
-use csrrs::sylvester::{solve_discrete, EquationType, compute_residual};
+use csrrs::sylvester::{compute_residual, solve_discrete, EquationType};
 use faer::prelude::*;
 
 /// Helper to verify a discrete solution: ||AXB + X - C|| < tol
@@ -11,12 +11,17 @@ fn verify_discrete(a: &Mat<f64>, b: &Mat<f64>, c: &Mat<f64>, tol: f64) {
     let result = solve_discrete(a.as_ref(), b.as_ref(), c.as_ref()).unwrap();
     let x = &result.solution * (1.0 / result.scale);
     let residual = compute_residual(
-        a.as_ref(), b.as_ref(), c.as_ref(), x.as_ref(), EquationType::Discrete,
+        a.as_ref(),
+        b.as_ref(),
+        c.as_ref(),
+        x.as_ref(),
+        EquationType::Discrete,
     );
     assert!(
         residual < tol,
         "Residual {:.2e} exceeds tolerance {:.2e}",
-        residual, tol,
+        residual,
+        tol,
     );
 }
 
@@ -52,16 +57,8 @@ fn test_2x2_diagonal_analytical() {
 
 #[test]
 fn test_3x3_residual() {
-    let a = mat![
-        [0.5, 0.1, 0.0],
-        [0.0, 0.8, 0.2],
-        [0.0, 0.0, 0.3f64]
-    ];
-    let b = mat![
-        [0.6, 0.1, 0.0],
-        [0.0, 0.9, 0.05],
-        [0.0, 0.0, 0.4f64]
-    ];
+    let a = mat![[0.5, 0.1, 0.0], [0.0, 0.8, 0.2], [0.0, 0.0, 0.3f64]];
+    let b = mat![[0.6, 0.1, 0.0], [0.0, 0.9, 0.05], [0.0, 0.0, 0.4f64]];
     let c = Mat::from_fn(3, 3, |i, j| (i * 3 + j + 1) as f64);
     verify_discrete(&a, &b, &c, 1e-10);
 }
@@ -74,22 +71,14 @@ fn test_4x4_complex_eigenvalues() {
         [0.0, 0.0, 0.7, 0.1],
         [0.0, 0.0, 0.0, 0.4f64]
     ];
-    let b = mat![
-        [0.6, 0.1, 0.0],
-        [0.0, 0.8, 0.2],
-        [0.0, 0.0, 0.5f64]
-    ];
+    let b = mat![[0.6, 0.1, 0.0], [0.0, 0.8, 0.2], [0.0, 0.0, 0.5f64]];
     let c = Mat::from_fn(4, 3, |i, j| (i + j + 1) as f64);
     verify_discrete(&a, &b, &c, 1e-10);
 }
 
 #[test]
 fn test_rectangular_3x2() {
-    let a = mat![
-        [0.5, 0.1, 0.0],
-        [0.0, 0.8, 0.2],
-        [0.0, 0.0, 0.3f64]
-    ];
+    let a = mat![[0.5, 0.1, 0.0], [0.0, 0.8, 0.2], [0.0, 0.0, 0.3f64]];
     let b = mat![[0.6, 0.1], [0.0, 0.9f64]];
     let c = Mat::from_fn(3, 2, |i, j| (i + j + 1) as f64);
     verify_discrete(&a, &b, &c, 1e-10);
@@ -123,7 +112,13 @@ fn test_zero_rhs() {
     let x = &result.solution * (1.0 / result.scale);
     for j in 0..2 {
         for i in 0..2 {
-            assert!(x[(i, j)].abs() < 1e-14, "X[{},{}] = {} should be zero", i, j, x[(i, j)]);
+            assert!(
+                x[(i, j)].abs() < 1e-14,
+                "X[{},{}] = {} should be zero",
+                i,
+                j,
+                x[(i, j)]
+            );
         }
     }
 }

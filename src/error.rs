@@ -14,27 +14,17 @@ pub enum SylvesterError {
     },
 
     /// A matrix that should be square is not.
-    NotSquare {
-        matrix: char,
-        dims: (usize, usize),
-    },
+    NotSquare { matrix: char, dims: (usize, usize) },
 
     /// Input contains NaN, Inf, or other invalid floating-point values.
-    InvalidInput {
-        reason: String,
-    },
+    InvalidInput { reason: String },
 
     /// A and -B have common or nearly common eigenvalues, making the
     /// equation ill-conditioned or singular.
-    CommonEigenvalues {
-        separation: f64,
-        threshold: f64,
-    },
+    CommonEigenvalues { separation: f64, threshold: f64 },
 
     /// An iterative algorithm (e.g. Schur decomposition) failed to converge.
-    ConvergenceFailure {
-        algorithm: String,
-    },
+    ConvergenceFailure { algorithm: String },
 
     /// A matrix is not in quasi-triangular (real Schur) form when it should be.
     NotQuasiTriangular {

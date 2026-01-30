@@ -7,20 +7,9 @@ use faer::prelude::*;
 
 fn main() {
     // Define the matrices for AXB + X = C
-    let a = mat![
-        [0.5, 0.1, 0.0],
-        [0.0, 0.8, 0.2],
-        [0.0, 0.0, 0.3f64]
-    ];
-    let b = mat![
-        [0.6, 0.1],
-        [0.0, 0.9f64]
-    ];
-    let c = mat![
-        [1.0, 2.0],
-        [3.0, 4.0],
-        [5.0, 6.0f64]
-    ];
+    let a = mat![[0.5, 0.1, 0.0], [0.0, 0.8, 0.2], [0.0, 0.0, 0.3f64]];
+    let b = mat![[0.6, 0.1], [0.0, 0.9f64]];
+    let c = mat![[1.0, 2.0], [3.0, 4.0], [5.0, 6.0f64]];
 
     println!("Solving discrete-time Sylvester equation: AXB + X = C");
     println!("A = {:?}", &a);
@@ -38,7 +27,10 @@ fn main() {
                 println!();
             }
             println!("\nScale factor: {}", result.scale);
-            println!("Residual norm ||AXB + X - C||: {:.2e}", result.residual_norm);
+            println!(
+                "Residual norm ||AXB + X - C||: {:.2e}",
+                result.residual_norm
+            );
             println!("Near-singular: {}", result.near_singular);
         }
         Err(e) => {

@@ -3,7 +3,7 @@
 //! Tests `solve_continuous` against analytically known solutions and
 //! verifies residual norms for various problem sizes and structures.
 
-use csrrs::sylvester::{solve_continuous, EquationType, compute_residual};
+use csrrs::sylvester::{compute_residual, solve_continuous, EquationType};
 use faer::prelude::*;
 
 /// Helper to verify a continuous solution: ||AX + XB - C|| < tol
@@ -11,12 +11,17 @@ fn verify_continuous(a: &Mat<f64>, b: &Mat<f64>, c: &Mat<f64>, tol: f64) {
     let result = solve_continuous(a.as_ref(), b.as_ref(), c.as_ref()).unwrap();
     let x = &result.solution * (1.0 / result.scale);
     let residual = compute_residual(
-        a.as_ref(), b.as_ref(), c.as_ref(), x.as_ref(), EquationType::Continuous,
+        a.as_ref(),
+        b.as_ref(),
+        c.as_ref(),
+        x.as_ref(),
+        EquationType::Continuous,
     );
     assert!(
         residual < tol,
         "Residual {:.2e} exceeds tolerance {:.2e}",
-        residual, tol,
+        residual,
+        tol,
     );
 }
 
@@ -48,16 +53,8 @@ fn test_2x2_diagonal_analytical() {
 
 #[test]
 fn test_3x3_residual() {
-    let a = mat![
-        [2.0, 1.0, 0.5],
-        [-1.0, 3.0, 0.0],
-        [0.0, 0.0, 4.0f64]
-    ];
-    let b = mat![
-        [5.0, 0.5, 0.0],
-        [0.0, 6.0, 1.0],
-        [0.0, 0.0, 7.0f64]
-    ];
+    let a = mat![[2.0, 1.0, 0.5], [-1.0, 3.0, 0.0], [0.0, 0.0, 4.0f64]];
+    let b = mat![[5.0, 0.5, 0.0], [0.0, 6.0, 1.0], [0.0, 0.0, 7.0f64]];
     let c = Mat::from_fn(3, 3, |i, j| (i * 3 + j + 1) as f64);
     verify_continuous(&a, &b, &c, 1e-10);
 }
@@ -83,11 +80,7 @@ fn test_4x4_complex_eigenvalues() {
 
 #[test]
 fn test_rectangular_3x2() {
-    let a = mat![
-        [1.0, 0.5, 0.0],
-        [0.0, 2.0, 0.3],
-        [0.0, 0.0, 3.0f64]
-    ];
+    let a = mat![[1.0, 0.5, 0.0], [0.0, 2.0, 0.3], [0.0, 0.0, 3.0f64]];
     let b = mat![[4.0, 0.5], [0.0, 5.0f64]];
     let c = Mat::from_fn(3, 2, |i, j| (i + j + 1) as f64);
     verify_continuous(&a, &b, &c, 1e-10);
@@ -129,7 +122,13 @@ fn test_zero_rhs() {
     let x = &result.solution * (1.0 / result.scale);
     for j in 0..2 {
         for i in 0..2 {
-            assert!(x[(i, j)].abs() < 1e-14, "X[{},{}] = {} should be zero", i, j, x[(i, j)]);
+            assert!(
+                x[(i, j)].abs() < 1e-14,
+                "X[{},{}] = {} should be zero",
+                i,
+                j,
+                x[(i, j)]
+            );
         }
     }
 }
