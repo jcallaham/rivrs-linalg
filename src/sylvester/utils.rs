@@ -75,3 +75,135 @@ pub fn frobenius_norm(m: MatRef<'_, f64>) -> f64 {
     }
     sum.sqrt()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use faer::mat;
+
+    #[test]
+    fn test_frobenius_norm_identity() {
+        let m = Mat::<f64>::identity(3, 3);
+        assert!((frobenius_norm(m.as_ref()) - 3.0f64.sqrt()).abs() < 1e-14);
+    }
+
+    #[test]
+    fn test_frobenius_norm_single_element() {
+        let m = mat![[5.0f64]];
+        assert!((frobenius_norm(m.as_ref()) - 5.0).abs() < 1e-14);
+    }
+
+    #[test]
+    fn test_frobenius_norm_zero() {
+        let m = Mat::<f64>::zeros(3, 4);
+        assert_eq!(frobenius_norm(m.as_ref()), 0.0);
+    }
+
+    #[test]
+    fn test_frobenius_norm_rectangular() {
+        // [[1, 2], [3, 4], [5, 6]] -> sqrt(1+4+9+16+25+36) = sqrt(91)
+        let m = mat![[1.0, 2.0], [3.0, 4.0], [5.0, 6.0f64]];
+        assert!((frobenius_norm(m.as_ref()) - 91.0f64.sqrt()).abs() < 1e-14);
+    }
+
+    #[test]
+    fn test_residual_continuous_exact_solution() {
+        // A = [[1, 0], [0, 2]], B = [[3, 0], [0, 4]], X = [[1/4, 0], [0, 1/6]]
+        // AX + XB = [[1/4, 0], [0, 2/6]] + [[3/4, 0], [0, 4/6]] = [[1, 0], [0, 1]] = C
+        let a = mat![[1.0, 0.0], [0.0, 2.0f64]];
+        let b = mat![[3.0, 0.0], [0.0, 4.0f64]];
+        let c = mat![[1.0, 0.0], [0.0, 1.0f64]];
+        let x = mat![[0.25, 0.0], [0.0, 1.0 / 6.0f64]];
+        let r = compute_residual(
+            a.as_ref(),
+            b.as_ref(),
+            c.as_ref(),
+            x.as_ref(),
+            EquationType::Continuous,
+        );
+        assert!(
+            r < 1e-14,
+            "Residual for exact solution should be ~0, got {:.2e}",
+            r
+        );
+    }
+
+    #[test]
+    fn test_residual_continuous_wrong_solution() {
+        // Using X = I (wrong) for AX + XB = C where A=I, B=I, C=[[1,0],[0,1]]
+        // AX + XB = I + I = 2I, residual = ||2I - I|| = ||I|| = sqrt(2)
+        let a = Mat::<f64>::identity(2, 2);
+        let b = Mat::<f64>::identity(2, 2);
+        let c = Mat::<f64>::identity(2, 2);
+        let x = Mat::<f64>::identity(2, 2); // Wrong: correct is 0.5*I
+        let r = compute_residual(
+            a.as_ref(),
+            b.as_ref(),
+            c.as_ref(),
+            x.as_ref(),
+            EquationType::Continuous,
+        );
+        assert!(
+            (r - 2.0f64.sqrt()).abs() < 1e-14,
+            "Expected sqrt(2), got {}",
+            r
+        );
+    }
+
+    #[test]
+    fn test_residual_discrete_exact_solution() {
+        // A = [[2]], B = [[3]], X = [[1]], C = AXB + X = 2*1*3 + 1 = 7
+        let a = mat![[2.0f64]];
+        let b = mat![[3.0f64]];
+        let c = mat![[7.0f64]];
+        let x = mat![[1.0f64]];
+        let r = compute_residual(
+            a.as_ref(),
+            b.as_ref(),
+            c.as_ref(),
+            x.as_ref(),
+            EquationType::Discrete,
+        );
+        assert!(
+            r < 1e-14,
+            "Residual for exact solution should be ~0, got {:.2e}",
+            r
+        );
+    }
+
+    #[test]
+    fn test_residual_discrete_wrong_solution() {
+        // A = [[1]], B = [[1]], C = [[3]], X = [[1]] (wrong: correct is 3/2)
+        // AXB + X = 1*1*1 + 1 = 2, residual = |2 - 3| = 1
+        let a = mat![[1.0f64]];
+        let b = mat![[1.0f64]];
+        let c = mat![[3.0f64]];
+        let x = mat![[1.0f64]];
+        let r = compute_residual(
+            a.as_ref(),
+            b.as_ref(),
+            c.as_ref(),
+            x.as_ref(),
+            EquationType::Discrete,
+        );
+        assert!((r - 1.0).abs() < 1e-14, "Expected 1.0, got {}", r);
+    }
+
+    #[test]
+    fn test_residual_continuous_rectangular() {
+        // A (3x3), B (2x2), X (3x2), C (3x2)
+        let a = mat![[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0f64]];
+        let b = mat![[1.0, 0.0], [0.0, 1.0f64]];
+        // AX + XB = IX + XI = 2X, so if C = 2X, residual = 0
+        let x = mat![[1.0, 2.0], [3.0, 4.0], [5.0, 6.0f64]];
+        let c = &x * 2.0;
+        let r = compute_residual(
+            a.as_ref(),
+            b.as_ref(),
+            c.as_ref(),
+            x.as_ref(),
+            EquationType::Continuous,
+        );
+        assert!(r < 1e-14, "Residual should be ~0, got {:.2e}", r);
+    }
+}
