@@ -10,7 +10,7 @@ keywords = ["control-systems", "linear-algebra", "sylvester", "matrix-equation"]
 
 [dependencies]
 faer = "0.22"
-dyn-stack = "0.10"
+nalgebra = "0.34"
 
 [dev-dependencies]
 approx = "0.5"

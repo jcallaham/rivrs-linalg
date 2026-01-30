@@ -10,7 +10,12 @@
 //!   CACM 15(9):820-826
 //! - Golub & Van Loan (2013), "Matrix Computations" (4th Ed), Section 7.6.3
 
+pub mod continuous;
+pub mod triangular;
 pub mod types;
+pub mod utils;
 pub mod validation;
 
+pub use continuous::{solve_continuous, solve_continuous_schur};
 pub use types::{EquationType, Sign, SylvesterSolution, Transpose};
+pub use utils::compute_residual;
