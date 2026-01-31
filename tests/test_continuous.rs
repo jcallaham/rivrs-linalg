@@ -6,9 +6,7 @@
 mod common;
 
 use common::{build_quasi_triangular_test_matrix, compute_schur, schur_has_2x2_blocks};
-use csrrs::sylvester::{
-    compute_residual, solve_continuous, solve_continuous_schur, EquationType,
-};
+use csrrs::sylvester::{compute_residual, solve_continuous, solve_continuous_schur, EquationType};
 use faer::prelude::*;
 
 /// Helper to verify a continuous solution: ||AX + XB - C|| < tol

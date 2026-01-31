@@ -201,14 +201,7 @@ pub(crate) fn back_transform(
 
     // tmp = U * Y
     let mut tmp = Mat::zeros(n, m);
-    faer::linalg::matmul::matmul(
-        tmp.as_mut(),
-        Accum::Replace,
-        u,
-        y,
-        1.0f64,
-        Par::Seq,
-    );
+    faer::linalg::matmul::matmul(tmp.as_mut(), Accum::Replace, u, y, 1.0f64, Par::Seq);
     // X = tmp * V^T
     let mut x = Mat::zeros(n, m);
     faer::linalg::matmul::matmul(
