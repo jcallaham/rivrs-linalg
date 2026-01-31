@@ -15,8 +15,9 @@ jobs:
     name: Test (${{ matrix.rust }})
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        rust: [stable, "1.76"]
+        rust: [stable, "1.85"]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
