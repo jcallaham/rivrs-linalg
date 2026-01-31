@@ -1,0 +1,594 @@
+# API Contract: Sylvester Equation Solver
+# Feature: 001-sylvester-solver
+# Date: 2026-01-28
+#
+# This document specifies the public Rust API contracts for the Sylvester
+# equation solver. While presented in YAML for clarity, the actual API is
+# Rust code with strong type safety.
+
+version: "1.0.0"
+module: csrrs::sylvester
+
+# ==============================================================================
+# Public Functions
+# ==============================================================================
+
+functions:
+  # ----------------------------------------------------------------------------
+  # Continuous-Time Sylvester Solver
+  # ----------------------------------------------------------------------------
+  solve_continuous:
+    description: |
+      Solves the continuous-time Sylvester equation AX + XB = C for matrix X.
+      Uses the Bartels-Stewart algorithm based on Schur decomposition.
+
+    signature: |
+      pub fn solve_continuous<T: RealField>(
+          a: MatRef<T>,
+          b: MatRef<T>,
+          c: MatRef<T>,
+      ) -> Result<SylvesterSolution<T>, SylvesterError>
+
+    parameters:
+      - name: a
+        type: MatRef<T>
+        description: Square matrix A (n×n), left coefficient
+        constraints:
+          - must be square (n×n)
+          - must contain only finite values (no NaN, no Inf)
+
+      - name: b
+        type: MatRef<T>
+        description: Square matrix B (m×m), right coefficient
+        constraints:
+          - must be square (m×m)
+          - must contain only finite values
+
+      - name: c
+        type: MatRef<T>
+        description: Rectangular matrix C (n×m), right-hand side
+        constraints:
+          - dimensions must be n×m where A is n×n and B is m×m
+          - must contain only finite values
+
+    returns:
+      type: Result<SylvesterSolution<T>, SylvesterError>
+      on_success: |
+        SylvesterSolution containing:
+        - solution: Computed matrix X (may be scaled)
+        - scale: Scale factor (0 < scale ≤ 1)
+        - residual_norm: ||AX + XB - C||_F
+        - near_singular: Warning flag for ill-conditioning
+      on_error: |
+        SylvesterError variants:
+        - DimensionMismatch: Invalid matrix dimensions
+        - NotSquare: A or B not square
+        - InvalidInput: NaN/Inf detected
+        - CommonEigenvalues: A and -B have overlapping eigenvalues
+        - ConvergenceFailure: Schur decomposition failed
+
+    complexity:
+      time: O(n³ + m³ + n²m + nm²)
+      space: O(n² + m² + nm)
+
+    numerical_properties:
+      - Numerically stable via Schur decomposition
+      - Residual norm typically < 10⁻¹² for well-conditioned problems
+      - Automatic overflow prevention via SCALE parameter
+      - Accuracy degrades for ill-conditioned problems (sep(A,-B) small)
+
+    examples:
+      - name: Basic usage
+        code: |
+          let a = mat![[1.0, 0.5], [0.0, -1.0]];
+          let b = mat![[2.0, 0.0], [0.0, 3.0]];
+          let c = mat![[1.0, 2.0], [3.0, 4.0]];
+
+          let result = solve_continuous(&a, &b, &c)?;
+          let x = &result.solution / result.scale;
+          println!("Residual: {:.2e}", result.residual_norm);
+
+    references:
+      - "Bartels & Stewart (1972), CACM 15(9):820-826"
+      - "Golub & Van Loan (2013), Matrix Computations, Algorithm 7.6.2"
+
+  # ----------------------------------------------------------------------------
+  # Discrete-Time Sylvester Solver
+  # ----------------------------------------------------------------------------
+  solve_discrete:
+    description: |
+      Solves the discrete-time Sylvester equation AXB ± X = C for matrix X.
+      Uses modified Bartels-Stewart algorithm with Schur decomposition.
+
+    signature: |
+      pub fn solve_discrete<T: RealField>(
+          a: MatRef<T>,
+          b: MatRef<T>,
+          c: MatRef<T>,
+          sign: Sign,
+      ) -> Result<SylvesterSolution<T>, SylvesterError>
+
+    parameters:
+      - name: a
+        type: MatRef<T>
+        description: Square matrix A (n×n)
+        constraints: [square, finite values]
+
+      - name: b
+        type: MatRef<T>
+        description: Square matrix B (m×m)
+        constraints: [square, finite values]
+
+      - name: c
+        type: MatRef<T>
+        description: Rectangular matrix C (n×m)
+        constraints: [n×m dimensions, finite values]
+
+      - name: sign
+        type: Sign
+        description: |
+          Sign of X term:
+          - Sign::Plus for AXB + X = C
+          - Sign::Minus for AXB - X = C
+
+    returns:
+      type: Result<SylvesterSolution<T>, SylvesterError>
+      on_success: |
+        SylvesterSolution with discrete-time residual ||AXB ± X - C||_F
+      on_error: Same as solve_continuous
+
+    complexity:
+      time: O(n³ + m³ + n²m + nm²)
+      space: O(n² + m² + nm)
+
+    numerical_properties:
+      - Numerically stable via Schur decomposition
+      - Uniqueness requires no common reciprocal eigenvalues
+      - Accuracy depends on eigenvalue separation
+
+    examples:
+      - name: Basic usage
+        code: |
+          let a = mat![[0.5, 0.0], [0.0, 0.8]];
+          let b = mat![[0.6, 0.0], [0.0, 0.9]];
+          let c = mat![[1.0, 0.0], [0.0, 1.0]];
+
+          let result = solve_discrete(&a, &b, &c, Sign::Plus)?;
+          let x = &result.solution / result.scale;
+
+    references:
+      - "Golub, Nash & Van Loan (1979), IEEE Trans. Auto. Contr. AC-24:909-913"
+      - "SLICOT SB04QD documentation"
+
+  # ----------------------------------------------------------------------------
+  # Advanced: Schur Form Solver
+  # ----------------------------------------------------------------------------
+  solve_continuous_schur:
+    description: |
+      Solves AX + XB = C when A and B are already in Schur form.
+      For advanced users who have pre-computed Schur decompositions.
+
+    signature: |
+      pub fn solve_continuous_schur<T: RealField>(
+          schur_a: MatRef<T>,
+          schur_b: MatRef<T>,
+          u: MatRef<T>,
+          v: MatRef<T>,
+          c: MatRef<T>,
+      ) -> Result<SylvesterSolution<T>, SylvesterError>
+
+    parameters:
+      - name: schur_a
+        type: MatRef<T>
+        description: Matrix A in Schur form (T)
+        constraints:
+          - quasi-triangular (upper triangular with 1×1 and 2×2 blocks)
+
+      - name: schur_b
+        type: MatRef<T>
+        description: Matrix B in Schur form (S)
+        constraints:
+          - quasi-triangular
+
+      - name: u
+        type: MatRef<T>
+        description: Orthogonal Schur vectors for A (U₁ from A = U₁TU₁ᵀ)
+        constraints:
+          - orthogonal matrix (UᵀU = I)
+
+      - name: v
+        type: MatRef<T>
+        description: Orthogonal Schur vectors for B (U₂ from B = U₂SU₂ᵀ)
+        constraints:
+          - orthogonal matrix
+
+      - name: c
+        type: MatRef<T>
+        description: Right-hand side C
+        constraints: [n×m dimensions, finite values]
+
+    returns:
+      type: Result<SylvesterSolution<T>, SylvesterError>
+      on_error: |
+        Additional error:
+        - NotQuasiTriangular: schur_a or schur_b not in proper Schur form
+
+    complexity:
+      time: O(n²m + nm²)  # Skips O(n³) Schur decomposition
+      space: O(nm)
+
+    notes: |
+      Useful when solving multiple equations with same A or B matrices.
+      Pre-compute Schur forms once, reuse for multiple right-hand sides.
+
+  # ----------------------------------------------------------------------------
+  # Utility: Residual Computation
+  # ----------------------------------------------------------------------------
+  compute_residual:
+    description: |
+      Computes residual norm ||AX + XB - C|| or ||AXB + X - C|| for
+      validation and accuracy assessment.
+
+    signature: |
+      pub fn compute_residual<T: RealField>(
+          a: MatRef<T>,
+          b: MatRef<T>,
+          c: MatRef<T>,
+          x: MatRef<T>,
+          equation_type: EquationType,
+      ) -> T
+
+    parameters:
+      - name: a
+        type: MatRef<T>
+        description: Matrix A
+
+      - name: b
+        type: MatRef<T>
+        description: Matrix B
+
+      - name: c
+        type: MatRef<T>
+        description: Right-hand side C
+
+      - name: x
+        type: MatRef<T>
+        description: Candidate solution X
+
+      - name: equation_type
+        type: EquationType
+        description: |
+          EquationType::Continuous for ||AX + XB - C||
+          EquationType::Discrete for ||AXB + X - C||
+
+    returns:
+      type: T
+      description: Frobenius norm of residual
+
+    complexity:
+      time: O(n²m + nm²)
+      space: O(nm)
+
+    examples:
+      - name: Validate solution
+        code: |
+          let residual = compute_residual(&a, &b, &c, &x, EquationType::Continuous);
+          assert!(residual < 1e-10, "Solution not accurate enough");
+
+# ==============================================================================
+# Public Types
+# ==============================================================================
+
+types:
+  SylvesterSolution:
+    description: Result of solving a Sylvester equation
+    fields:
+      solution:
+        type: Mat<T>
+        description: Computed solution matrix X
+        note: Actual mathematical solution is solution/scale
+
+      scale:
+        type: T
+        description: Scale factor (0 < scale ≤ 1)
+        note: SCALE < 1 indicates overflow prevention was applied
+
+      residual_norm:
+        type: T
+        description: Residual norm of solution
+        formula: ||AX + XB - C|| or ||AXB + X - C||
+
+      near_singular:
+        type: bool
+        description: True if eigenvalues nearly overlap
+        note: Indicates ill-conditioned problem
+
+    invariants:
+      - 0 < scale <= 1
+      - residual_norm >= 0
+      - solution dimensions match C dimensions
+
+  SylvesterError:
+    description: Errors that can occur during solving
+    variants:
+      DimensionMismatch:
+        fields:
+          expected: (usize, usize)
+          got: (usize, usize)
+          context: String
+        description: Matrix dimensions incompatible
+
+      NotSquare:
+        fields:
+          matrix: char
+          dims: (usize, usize)
+        description: Matrix must be square
+
+      InvalidInput:
+        fields:
+          reason: String
+        description: Input contains NaN, Inf, or invalid values
+
+      CommonEigenvalues:
+        fields:
+          separation: f64
+          threshold: f64
+        description: A and -B have overlapping eigenvalues
+
+      ConvergenceFailure:
+        fields:
+          algorithm: String
+          iterations: usize
+        description: Algorithm failed to converge
+
+      NotQuasiTriangular:
+        fields:
+          matrix: char
+          location: (usize, usize)
+        description: Matrix not in proper Schur form
+
+  Sign:
+    description: Sign of X term in discrete-time equations
+    variants:
+      Plus: AXB + X = C
+      Minus: AXB - X = C
+
+  EquationType:
+    description: Type of Sylvester equation
+    variants:
+      Continuous: AX + XB = C
+      Discrete: AXB + X = C
+
+# ==============================================================================
+# Trait Requirements
+# ==============================================================================
+
+trait_bounds:
+  RealField:
+    description: |
+      Generic type parameter T must implement RealField trait from faer.
+      Automatically satisfied by f32 and f64.
+
+    required_operations:
+      - Field arithmetic: +, -, *, /
+      - Comparison: PartialOrd
+      - Constants: zero(), one(), epsilon()
+      - Validation: is_finite(), is_nan(), is_infinite()
+
+    supported_types:
+      - f64 (primary)
+      - f32 (secondary)
+
+    unsupported_types:
+      - Complex types (c32, c64) - out of scope
+      - Integer types - mathematical operations require field
+
+# ==============================================================================
+# Performance Characteristics
+# ==============================================================================
+
+performance:
+  small_matrices:
+    size_range: "n, m < 100"
+    typical_time: "< 10ms"
+    memory: "< 1 MB"
+
+  medium_matrices:
+    size_range: "100 ≤ n, m < 500"
+    typical_time: "< 1 second"
+    memory: "< 10 MB"
+
+  large_matrices:
+    size_range: "500 ≤ n, m ≤ 1000"
+    typical_time: "< 5 seconds"
+    memory: "< 100 MB"
+
+  asymptotic_complexity:
+    schur_decomposition: "O(n³) for n×n matrix"
+    triangular_solve: "O(n²m + nm²) for n×n and m×m matrices"
+    matrix_multiply: "O(n²m + nm²)"
+    total: "O(n³ + m³ + n²m + nm²)"
+
+# ==============================================================================
+# Numerical Guarantees
+# ==============================================================================
+
+numerical_guarantees:
+  accuracy:
+    well_conditioned: "Residual norm < 10⁻¹² (double precision)"
+    moderately_conditioned: "Residual norm < 10⁻⁸"
+    ill_conditioned: "Solution computed with warning, accuracy degraded"
+
+  stability:
+    algorithm: "Numerically stable via orthogonal transformations"
+    overflow_prevention: "Automatic scaling prevents overflow"
+    underflow_handling: "Safe minimum thresholds prevent underflow"
+
+  conditioning:
+    uniqueness_condition_continuous: "λ(A) ∩ λ(-B) = ∅"
+    uniqueness_condition_discrete: "No common reciprocal eigenvalues"
+    sensitivity_measure: "sep(A, B) = min ||AX - XB||_F / ||X||_F"
+
+# ==============================================================================
+# Usage Guidelines
+# ==============================================================================
+
+usage_guidelines:
+  basic_workflow:
+    - "1. Prepare input matrices (A, B, C) as faer Mat or MatRef"
+    - "2. Call solve_continuous or solve_discrete"
+    - "3. Check for errors (dimension mismatches, etc.)"
+    - "4. Apply scale factor: x_true = solution / scale"
+    - "5. Verify residual norm if accuracy critical"
+
+  error_handling:
+    - "Always use Result pattern (? operator or match)"
+    - "Check near_singular flag for ill-conditioned warnings"
+    - "For CommonEigenvalues error, consider preconditioning"
+
+  performance_tips:
+    - "For multiple solves with same A or B, use solve_continuous_schur"
+    - "Pre-compute Schur forms once, reuse for different RHS"
+    - "Use f64 for accuracy-critical applications"
+    - "Use f32 for memory-constrained or performance-critical applications"
+
+  numerical_best_practices:
+    - "Check condition number of A and B before solving"
+    - "Scale inputs if matrices have vastly different magnitudes"
+    - "Validate solutions by computing residual norms"
+    - "Be cautious with nearly singular matrices"
+
+# ==============================================================================
+# Examples
+# ==============================================================================
+
+complete_examples:
+  basic_solve:
+    description: "Solve a simple 2×2 continuous-time Sylvester equation"
+    code: |
+      use csrrs::sylvester::solve_continuous;
+      use faer::prelude::*;
+
+      fn main() -> Result<(), Box<dyn std::error::Error>> {
+          // Define matrices
+          let a = mat![[1.0, 0.5], [0.0, -1.0]];
+          let b = mat![[2.0, 0.0], [0.0, 3.0]];
+          let c = mat![[1.0, 2.0], [3.0, 4.0]];
+
+          // Solve AX + XB = C
+          let result = solve_continuous(&a, &b, &c)?;
+
+          // Apply scale factor
+          let x = &result.solution / result.scale;
+
+          println!("Solution X:");
+          println!("{}", x);
+          println!("Residual norm: {:.2e}", result.residual_norm);
+
+          if result.near_singular {
+              eprintln!("Warning: Problem is ill-conditioned");
+          }
+
+          Ok(())
+      }
+
+  discrete_time:
+    description: "Solve a discrete-time Sylvester equation"
+    code: |
+      use csrrs::sylvester::{solve_discrete, Sign};
+      use faer::prelude::*;
+
+      let a = mat![[0.5, 0.0], [0.0, 0.8]];
+      let b = mat![[0.6, 0.0], [0.0, 0.9]];
+      let c = mat![[1.0, 0.0], [0.0, 1.0]];
+
+      // Solve AXB + X = C
+      let result = solve_discrete(&a, &b, &c, Sign::Plus)?;
+      let x = &result.solution / result.scale;
+
+  error_handling:
+    description: "Comprehensive error handling"
+    code: |
+      use csrrs::sylvester::{solve_continuous, SylvesterError};
+
+      match solve_continuous(&a, &b, &c) {
+          Ok(result) => {
+              if result.near_singular {
+                  eprintln!("Warning: Ill-conditioned problem");
+              }
+              let x = &result.solution / result.scale;
+              // Use solution...
+          }
+          Err(SylvesterError::DimensionMismatch { expected, got, context }) => {
+              eprintln!("Dimension error: expected {:?}, got {:?}", expected, got);
+              eprintln!("Context: {}", context);
+          }
+          Err(SylvesterError::CommonEigenvalues { separation, threshold }) => {
+              eprintln!("Eigenvalues too close: sep = {:.2e} < {:.2e}",
+                        separation, threshold);
+              eprintln!("Consider preconditioning or regularization");
+          }
+          Err(e) => {
+              eprintln!("Solver failed: {}", e);
+          }
+      }
+
+  validation:
+    description: "Validate solution accuracy"
+    code: |
+      use csrrs::sylvester::{solve_continuous, compute_residual, EquationType};
+
+      let result = solve_continuous(&a, &b, &c)?;
+      let x = &result.solution / result.scale;
+
+      // Compute residual independently
+      let residual = compute_residual(&a, &b, &c, &x, EquationType::Continuous);
+
+      assert!(residual < 1e-10, "Solution not accurate: residual = {:.2e}", residual);
+      println!("Solution validated: residual = {:.2e}", residual);
+
+# ==============================================================================
+# Migration Guide
+# ==============================================================================
+
+migration_from_slicot:
+  SB04MD:
+    description: "Continuous-time Sylvester solver"
+    equivalent: "csrrs::sylvester::solve_continuous"
+    parameter_mapping:
+      DICO: "Not needed (always 'C' for this function)"
+      N: "Inferred from a.nrows()"
+      M: "Inferred from b.nrows()"
+      A: "a parameter (MatRef)"
+      LDA: "Not needed (inferred from matrix type)"
+      B: "b parameter (MatRef)"
+      LDB: "Not needed"
+      C: "c parameter (MatRef)"
+      LDC: "Not needed"
+      SCALE: "Returned in SylvesterSolution.scale"
+      INFO: "Encoded in Result type (Ok/Err)"
+
+  SB04QD:
+    description: "Discrete-time Sylvester solver"
+    equivalent: "csrrs::sylvester::solve_discrete"
+    differences:
+      - "CSRRS uses Sign parameter instead of implicit equation form"
+      - "Residual norm computed automatically"
+      - "Type-safe MatRef prevents dimension errors at compile time (when possible)"
+
+migration_from_scipy:
+  solve_sylvester:
+    description: "SciPy continuous-time solver"
+    equivalent: "csrrs::sylvester::solve_continuous"
+    code_comparison: |
+      # SciPy (Python)
+      from scipy.linalg import solve_sylvester
+      x = solve_sylvester(a, b, c)
+
+      // CSRRS (Rust)
+      use csrrs::sylvester::solve_continuous;
+      let result = solve_continuous(&a, &b, &c)?;
+      let x = &result.solution / result.scale;
+
+---
+# End of Contract

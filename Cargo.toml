@@ -1,0 +1,32 @@
+[package]
+name = "csrrs"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.87"
+description = "Control Systems Routines in Rust"
+license = "MIT OR Apache-2.0"
+categories = ["science", "mathematics"]
+keywords = ["control-systems", "linear-algebra", "rust"]
+
+[dependencies]
+faer = "0.22"
+nalgebra = "0.34"
+
+[dev-dependencies]
+approx = "0.5"
+criterion = "0.5"
+rand = "0.8"
+rand_distr = "0.4"
+
+[[bench]]
+name = "sylvester_benchmarks"
+harness = false
+
+[profile.dev]
+opt-level = 3
+
+[profile.test]
+opt-level = 3
+
+[profile.bench]
+opt-level = 3
