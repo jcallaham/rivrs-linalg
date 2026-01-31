@@ -18,8 +18,8 @@
 //! - Golub & Van Loan (2013), "Matrix Computations" (4th Ed), Algorithm 7.6.2
 //! - LAPACK dtrsyl (BSD-3-Clause) for parameter conventions and overflow prevention
 
-use faer::prelude::*;
 use faer::Accum;
+use faer::prelude::*;
 
 /// Solves the triangular Sylvester equation in-place.
 ///

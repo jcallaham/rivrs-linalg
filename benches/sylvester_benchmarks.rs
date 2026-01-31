@@ -2,7 +2,7 @@
 //!
 //! Measures performance of continuous and discrete solvers at various matrix sizes.
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use faer::prelude::*;
 use rand::prelude::*;
 use rand_distr::StandardNormal;

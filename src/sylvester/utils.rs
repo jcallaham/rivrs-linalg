@@ -1,7 +1,7 @@
 //! Utility functions for Sylvester equation solvers.
 
-use faer::prelude::*;
 use faer::Accum;
+use faer::prelude::*;
 
 use super::types::EquationType;
 use crate::error::SylvesterError;

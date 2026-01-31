@@ -19,7 +19,7 @@
 
 use faer::prelude::*;
 
-use super::condition::{estimate_separation, SEPARATION_THRESHOLD};
+use super::condition::{SEPARATION_THRESHOLD, estimate_separation};
 use super::triangular_discrete::solve_triangular_sylvester_discrete;
 use super::types::EquationType;
 use super::types::SylvesterSolution;

@@ -20,8 +20,8 @@
 //!   and Lyapunov matrix equations", ACM TOMS 28(4):416-435
 //! - LAPACK dtrsyl3 for the blocked Sylvester solver pattern
 
-use faer::prelude::*;
 use faer::Accum;
+use faer::prelude::*;
 
 use super::triangular::solve_triangular_sylvester;
 

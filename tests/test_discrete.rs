@@ -6,7 +6,7 @@
 mod common;
 
 use common::{compute_schur, schur_has_2x2_blocks};
-use csrrs::sylvester::{compute_residual, solve_discrete, solve_discrete_schur, EquationType};
+use csrrs::sylvester::{EquationType, compute_residual, solve_discrete, solve_discrete_schur};
 use faer::prelude::*;
 
 /// Helper to verify a discrete solution: ||AXB + X - C|| < tol

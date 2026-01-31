@@ -20,7 +20,7 @@ pub mod types;
 pub mod utils;
 pub mod validation;
 
-pub use condition::{estimate_separation, SeparationEstimate};
+pub use condition::{SeparationEstimate, estimate_separation};
 pub use continuous::{solve_continuous, solve_continuous_schur};
 pub use discrete::{solve_discrete, solve_discrete_schur};
 pub use types::{EquationType, Sign, SylvesterSolution, Transpose};

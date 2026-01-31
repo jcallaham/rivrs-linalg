@@ -22,8 +22,8 @@
 //!   IEEE Trans. Auto. Contr. AC-24:909-913
 //! - Sima (1996), "Algorithms for Linear-Quadratic Optimization"
 
-use faer::prelude::*;
 use faer::Accum;
+use faer::prelude::*;
 
 use super::triangular::{detect_blocks, matrix_max_abs};
 

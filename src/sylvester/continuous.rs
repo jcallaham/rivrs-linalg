@@ -18,9 +18,9 @@
 
 use faer::prelude::*;
 
-use super::condition::{estimate_separation, SEPARATION_THRESHOLD};
+use super::condition::{SEPARATION_THRESHOLD, estimate_separation};
 use super::triangular::solve_triangular_sylvester;
-use super::triangular_blocked::{solve_triangular_sylvester_blocked, BLOCKED_THRESHOLD};
+use super::triangular_blocked::{BLOCKED_THRESHOLD, solve_triangular_sylvester_blocked};
 use super::types::EquationType;
 use super::types::SylvesterSolution;
 use super::utils::{
@@ -196,8 +196,8 @@ pub fn solve_continuous_schur(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use faer::mat;
     use faer::Mat;
+    use faer::mat;
 
     /// Regression test: continuous solver produces inaccurate solutions for
     /// random dense matrices at n=10 and above. The relative residual
