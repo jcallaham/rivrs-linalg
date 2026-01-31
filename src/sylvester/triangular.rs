@@ -452,13 +452,10 @@ fn solve_2x2_linear_system(
         x1 = (r1 - a12 * x2) / pivot;
     }
 
-    // Write solution back. x1 and x2 correspond to the pivoted system.
-    // If we swapped (d11.abs() < d21.abs()), x1/x2 correspond to swapped positions.
-    let (sol1, sol2) = if d11.abs() >= d21.abs() {
-        (x1, x2)
-    } else {
-        (x2, x1)
-    };
+    // Write solution back. Row pivoting only reorders equations, not unknowns,
+    // so x1 and x2 always correspond to the first and second unknowns of the
+    // original system regardless of whether rows were swapped.
+    let (sol1, sol2) = (x1, x2);
 
     if c.nrows() == 1 {
         c[(0, 0)] = sol1;

@@ -197,6 +197,61 @@ pub fn solve_continuous_schur(
 mod tests {
     use super::*;
     use faer::mat;
+    use faer::Mat;
+
+    /// Regression test: continuous solver produces inaccurate solutions for
+    /// random dense matrices at n=10 and above. The relative residual
+    /// ||AX + XB - C||_F / ||C||_F is O(1) instead of O(machine epsilon).
+    ///
+    /// Root cause: `solve_2x2_linear_system` in `triangular.rs` incorrectly
+    /// swaps the two solution values when partial pivoting reorders rows.
+    /// Row pivoting only reorders equations, not unknowns, so the solution
+    /// vector should not be permuted. This is triggered whenever the Schur
+    /// forms of A or B contain 2x2 blocks (complex eigenvalue pairs) and the
+    /// off-diagonal element is larger than the shifted diagonal, which is
+    /// common for random matrices.
+    ///
+    /// The discrete solver is unaffected because it uses a different code path
+    /// (Kronecker product vectorization with ipiv-based pivoting) that handles
+    /// the permutation correctly.
+    #[test]
+    fn test_solve_continuous_random_10x10_accuracy() {
+        use rand::prelude::*;
+        use rand_distr::StandardNormal;
+
+        let mut rng = StdRng::seed_from_u64(42);
+        let n = 10;
+
+        // A = randn(n,n) + I, B = randn(n,n) + 5I, C = randn(n,n)
+        let mut a = Mat::from_fn(n, n, |_, _| rng.sample::<f64, _>(StandardNormal));
+        let mut b = Mat::from_fn(n, n, |_, _| rng.sample::<f64, _>(StandardNormal));
+        let c = Mat::from_fn(n, n, |_, _| rng.sample::<f64, _>(StandardNormal));
+        for i in 0..n {
+            a[(i, i)] += 1.0;
+            b[(i, i)] += 5.0;
+        }
+
+        let result = solve_continuous(a.as_ref(), b.as_ref(), c.as_ref()).unwrap();
+        let x = &result.solution * (1.0 / result.scale);
+
+        // Compute relative residual: ||AX + XB - C|| / ||C||
+        let residual_norm = super::super::utils::compute_residual(
+            a.as_ref(),
+            b.as_ref(),
+            c.as_ref(),
+            x.as_ref(),
+            super::super::types::EquationType::Continuous,
+        );
+        let c_norm = super::super::utils::frobenius_norm(c.as_ref());
+        let relative_residual = residual_norm / c_norm;
+
+        assert!(
+            relative_residual < 1e-10,
+            "Continuous solver 10x10 relative residual too large: {:.2e} (absolute: {:.2e})",
+            relative_residual,
+            residual_norm,
+        );
+    }
 
     #[test]
     fn test_solve_continuous_2x2_diagonal() {
