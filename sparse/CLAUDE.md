@@ -8,7 +8,7 @@ This directory contains sparse linear algebra solver implementations for rivrs-l
 
 **Parent Project**: rivrs-linalg - Numerical Linear Algebra for Rivrs
 **Domain**: Sparse direct solvers (SSIDS, LDL^T factorization, APTP pivoting)
-**Current Status**: Phase 0 - Scaffolding and literature review
+**Current Status**: Phase 0 - Scaffolding and literature review.  Phase 0.1 complete
 
 ### Development docs
 
@@ -150,3 +150,6 @@ When implementing a new component:
 - Rust 1.87+ with faer (>= 0.22) for linear algebra and sparse infrastructure
 - approx for test comparisons (dev dependency)
 - criterion for benchmarking (dev dependency)
+
+## Recent Changes
+- 002-test-matrix-collection: Python scripts (ssgetpy, numpy/scipy) for SuiteSparse matrix download and hand-constructed matrix generation; Git LFS for .mtx file tracking
