@@ -1,26 +1,21 @@
 [package]
-name = "rivrs-control"
+name = "rivrs-sparse"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.87"
-description = "Numerical linear algebra library for the Rivrs symbolic-numeric framework"
+description = "Sparse linear algebra solvers for the Rivrs symbolic-numeric framework"
 license = "Apache-2.0"
 categories = ["science", "mathematics"]
-keywords = ["linear-algebra", "control-systems", "numerical-computing", "rust"]
+keywords = ["linear-algebra", "sparse-solver", "numerical-computing", "rust"]
 
 [dependencies]
 faer = "0.22"
-nalgebra = "0.34"
 
 [dev-dependencies]
 approx = "0.5"
 criterion = "0.5"
 rand = "0.8"
 rand_distr = "0.4"
-
-[[bench]]
-name = "sylvester_benchmarks"
-harness = false
 
 [profile.dev]
 opt-level = 3

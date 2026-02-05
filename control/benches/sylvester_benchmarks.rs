@@ -6,6 +6,7 @@ use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use faer::prelude::*;
 use rand::prelude::*;
 use rand_distr::StandardNormal;
+use rivrs_control::sylvester;
 
 /// Generate a random dense n×n matrix with eigenvalues having real parts
 /// offset by `shift` to ensure well-conditioning.
@@ -37,8 +38,7 @@ fn bench_continuous(c: &mut Criterion) {
                 let bb = random_matrix(size, 5.0, &mut rng);
                 let cc = random_rhs(size, size, &mut rng);
                 b.iter(|| {
-                    rivrs_linalg::sylvester::solve_continuous(a.as_ref(), bb.as_ref(), cc.as_ref())
-                        .unwrap()
+                    sylvester::solve_continuous(a.as_ref(), bb.as_ref(), cc.as_ref()).unwrap()
                 });
             },
         );
@@ -60,10 +60,7 @@ fn bench_discrete(c: &mut Criterion) {
                 let a = random_matrix(size, 0.0, &mut rng) * 0.3;
                 let bb = random_matrix(size, 0.0, &mut rng) * 0.3;
                 let cc = random_rhs(size, size, &mut rng);
-                b.iter(|| {
-                    rivrs_linalg::sylvester::solve_discrete(a.as_ref(), bb.as_ref(), cc.as_ref())
-                        .unwrap()
-                });
+                b.iter(|| sylvester::solve_discrete(a.as_ref(), bb.as_ref(), cc.as_ref()).unwrap());
             },
         );
     }
@@ -95,7 +92,7 @@ fn bench_triangular(c: &mut Criterion) {
 
                 b.iter(|| {
                     let mut cc = cc_orig.clone();
-                    rivrs_linalg::sylvester::triangular::solve_triangular_sylvester(
+                    sylvester::triangular::solve_triangular_sylvester(
                         a.as_ref(),
                         bb.as_ref(),
                         cc.as_mut(),

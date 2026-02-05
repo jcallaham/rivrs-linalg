@@ -5,8 +5,8 @@
 //! solver detects and reports such cases.
 
 use faer::prelude::*;
-use rivrs_linalg::error::SylvesterError;
-use rivrs_linalg::sylvester::solve_continuous;
+use rivrs_control::error::SylvesterError;
+use rivrs_control::sylvester::solve_continuous;
 
 fn main() {
     println!("=== Singular Case Detection ===\n");

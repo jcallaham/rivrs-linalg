@@ -335,7 +335,7 @@ compute_residual:
 Minimal working example:
 
 ```rust
-use rivrs_linalg::sylvester::solve_continuous;
+use rivrs_control::sylvester::solve_continuous;
 use faer::prelude::*;
 
 // Define matrices A (2×2), B (2×2), C (2×2)

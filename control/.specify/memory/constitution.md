@@ -24,13 +24,13 @@ Follow-up TODOs:
 Ratification: 2026-01-27 (initial adoption)
 -->
 
-# rivrs-linalg Constitution
+# rivrs-control Constitution
 
 ## Core Principles
 
 ### I. Clean Room Implementation (Licensing Integrity)
 
-**NON-NEGOTIABLE**: To maintain licensing flexibility and avoid GPL virality, rivrs-linalg MUST be implemented as a clean room project.
+**NON-NEGOTIABLE**: To maintain licensing flexibility and avoid GPL virality, rivrs-control MUST be implemented as a clean room project.
 
 **Rules**:
 - NEVER read, copy, or reference SLICOT Fortran source code (slicot/src/*.f files) during algorithm implementation
@@ -40,7 +40,7 @@ Ratification: 2026-01-27 (initial adoption)
 - FREELY access SLICOT-Reference subdirectory - it is BSD-3 licensed and can be consulted without restriction
 - Document ALL academic sources used for each implementation (papers, textbooks, standards, permissively-licensed code)
 
-**Rationale**: GPL's copyleft provisions would force rivrs-linalg to adopt GPL licensing, limiting adoption in commercial and permissively-licensed projects. Clean room implementation allows Apache-2.0 licensing while still benefiting from SLICOT's test suite and documentation.
+**Rationale**: GPL's copyleft provisions would force rivrs-control to adopt GPL licensing, limiting adoption in commercial and permissively-licensed projects. Clean room implementation allows Apache-2.0 licensing while still benefiting from SLICOT's test suite and documentation.
 
 **Enforcement**: Code reviews MUST verify that academic references are cited and no GPL source code was consulted. Pull requests without proper attribution will be rejected.
 
@@ -141,7 +141,7 @@ Implementations MUST be competitive with reference implementations while maintai
 **Rationale**: Rust's zero-cost abstractions enable performance comparable to Fortran while providing memory safety. Users migrating from MATLAB/SLICOT expect performance, not just correctness. However, premature optimization undermines maintainability - benchmark first.
 
 **Benchmarking Standard**: Each major algorithm should include a benchmark comparing:
-- rivrs-linalg Rust implementation
+- rivrs-control Rust implementation
 - SLICOT via Python bindings (if available)
 - MATLAB Control Systems Toolbox (where applicable)
 - SciPy equivalent (where applicable)
@@ -174,7 +174,7 @@ Code MUST follow Rust idioms and scientific computing best practices.
 
 **Code Organization**:
 - Separate concerns: core algorithms (`src/`), Python bindings (`python/`), benchmarks (`benches/`), validation (`tests/validation/`)
-- Follow faer-rs workspace pattern: traits (`rivrs_linalg-traits`), core (`rivrs_linalg`), bindings (`rivrs_linalg-py`)
+- Follow faer-rs workspace pattern: traits (`rivrs_control-traits`), core (`rivrs_control`), bindings (`rivrs_control-py`)
 - Use modules to organize by algorithm category (state_space, frequency_domain, synthesis, reduction, etc.)
 
 ## Technical Standards
@@ -309,6 +309,6 @@ When a PR violates simplicity principles (e.g., adds unnecessary abstraction, du
 
 ### Licensing
 
-rivrs-linalg is licensed under Apache-2.0. All contributions MUST be compatible with this licensing model. Use of GPL or LGPL dependencies is PROHIBITED.
+rivrs-control is licensed under Apache-2.0. All contributions MUST be compatible with this licensing model. Use of GPL or LGPL dependencies is PROHIBITED.
 
 **Version**: 1.0.0 | **Ratified**: 2026-01-27 | **Last Amended**: 2026-01-27

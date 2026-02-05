@@ -28,7 +28,7 @@ Single Rust library project at repository root:
 
 **Purpose**: Project initialization and basic structure
 
-- [x] T001 Create Rust library crate structure with Cargo.toml (at repo root, not faer-rs/rivrs_linalg/)
+- [x] T001 Create Rust library crate structure with Cargo.toml (at repo root, not faer-rs/rivrs_control/)
 - [x] T002 Add faer dependency (0.22) to Cargo.toml
 - [~] T003 ~~Add ndarray dependency to Cargo.toml for Python interop~~ SUPERSEDED: Python bindings out of scope for this feature (see spec.md Out of Scope)
 - [x] T004 Configure Rust edition 2021 and MSRV 1.76 in Cargo.toml

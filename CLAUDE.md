@@ -59,7 +59,12 @@ See [control/CLAUDE.md](control/CLAUDE.md) for complete guidance.
 
 ### sparse/ - Sparse Solvers
 
-**Status**: Early scaffolding (no algorithms yet)
+**Status**: Phase 0 - Scaffolding and literature review
+**Focus**: SPRAL-inspired SSIDS (Sparse Symmetric Indefinite Direct Solver)
+**Current**: Project skeleton, APTP algorithm research
+**Roadmap**: Symbolic analysis, simplicial LDL^T, supernodal optimization
+
+See [sparse/CLAUDE.md](sparse/CLAUDE.md) for complete guidance.
 
 ## Clean Room Implementation - Repository-Wide Policy
 
