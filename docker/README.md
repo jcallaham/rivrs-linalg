@@ -11,7 +11,7 @@ Complete, isolated Docker development environment for rivrs-linalg with all refe
 - Claude Code AI assistant pre-installed
 - Node.js 20 + npm for Claude Code and JavaScript/TypeScript development
 - Full development tool suite (fzf, zsh, vim, jq, etc.)
-- All reference materials included (730MB: faer-rs, lapack, SLICOT-Reference, slicot)
+- All reference materials included
 - GitHub authentication via GitHub CLI token forwarding
 - sccache for fast compilation
 - Persistent Cargo and Claude Code config caches across container restarts
@@ -83,15 +83,11 @@ cd docker
 
 ```
 /workspace/rivrs-linalg/              # Project root
-├── faer-rs/                   # Rust linear algebra reference
-├── lapack/                    # BSD-licensed LAPACK (consult freely)
-├── SLICOT-Reference/          # SLICOT docs and tests ONLY
-├── slicot/                    # SLICOT docs and tests ONLY
-├── src/                       # Your Rust code
-├── tests/                     # Tests
-├── examples/                  # Examples
-├── .rustfmt.toml              # Hard tabs, 80-char width
-└── .claude/                   # Claude Code state
+├── references/                # Reference materials (e.g. academic papers, faer-rs source code)
+└── control/                   # Control algorithms submodule
+  ├── .claude/                 # Claude Code state
+  ├── tests/                   # Control algorithms tests
+  └── src/                     # Control algorithms source code
 
 /root/.cargo/                  # Rust installation
 /root/.cache/sccache/          # Compilation cache
@@ -127,14 +123,6 @@ claude --version  # Verify installation
 - **Explain algorithms** from reference materials (following clean room rules)
 - **Suggest implementations** based on academic papers and LAPACK patterns
 - **Debug issues** by analyzing error messages and code
-
-### Clean Room Compliance
-
-Claude Code is configured to follow rivrs-linalg clean room implementation rules:
-- Will NOT read SLICOT Fortran source code (slicot/src/*.f files)
-- Will use SLICOT documentation, test cases, and LAPACK source as references
-- Will help implement algorithms from academic papers and textbooks
-- Will document which references were used for each implementation
 
 ### Persistent Configuration
 
@@ -234,24 +222,6 @@ gh auth status  # Should show logged in to github.com
 
 **Inside Container**: Git and GitHub CLI operations work automatically using your host credentials.
 
-## Reference Materials
-
-### What You Can Use
-
-✅ **LAPACK source** (`lapack/`): BSD-licensed, consult freely for numerical algorithms
-
-✅ **SLICOT documentation** (`SLICOT-Reference/doc/`, `slicot/doc/`): Understand what algorithms do
-
-✅ **SLICOT test cases** (`slicot/examples/`): Validate your implementations
-
-✅ **faer-rs source** (`faer-rs/`): Learn modern Rust linear algebra patterns
-
-### What You CANNOT Use
-
-❌ **SLICOT Fortran source** (`slicot/src/*.f`): GPL-licensed, reading it contaminates clean room
-
-**Rationale**: rivrs-linalg must remain permissively licensed. Reading GPL code during implementation creates copyright issues. Use academic papers, textbooks, and BSD-licensed LAPACK instead.
-
 ## Performance Notes
 
 ### ARM64 Optimization
@@ -317,22 +287,6 @@ gh auth login
 # For docker-compose users: restart container
 docker-compose restart
 ```
-
-### "Cannot connect to Docker daemon"
-
-**Cause**: Docker Desktop not running
-
-**Fix**: Start Docker Desktop and wait for it to fully initialize
-
-### Image build fails with "COPY failed"
-
-**Cause**: Reference materials not present in project root
-
-**Fix**: Ensure `faer-rs/`, `lapack/`, `SLICOT-Reference/`, `slicot/` exist:
-```bash
-ls -l faer-rs lapack SLICOT-Reference slicot
-```
-
 ### Container won't start: "platform mismatch"
 
 **Cause**: Running on non-ARM64 system
@@ -380,19 +334,6 @@ docker system prune -a
 # Remove only rivrs-linalg volumes
 docker volume rm rivrs-linalg-cargo-cache rivrs-linalg-sccache-cache
 ```
-
-## Clean Room Implementation Reminder
-
-**This Docker environment includes reference materials, but you must still follow clean room rules**:
-
-1. **Never read** `slicot/src/*.f` files (GPL source code)
-2. **Do read**:
-   - `slicot/doc/` (what algorithms do)
-   - `slicot/examples/` (test cases)
-   - `lapack/` (BSD-licensed, freely consultable)
-   - `faer-rs/` (Rust patterns)
-3. **Implement from**: academic papers, textbooks, LAPACK source
-4. **Document**: which papers/books you used for each implementation
 
 ## Backup Strategy
 

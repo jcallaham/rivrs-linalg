@@ -52,17 +52,22 @@ See [CLAUDE.md](CLAUDE.md) for detailed development guidance.
 
 ### Docker Development Environment
 
+Use the centralized Docker environment at the repository root:
+
 ```bash
-cd docker
+cd ../docker
 ./build.sh
 ./run.sh
+# Once inside container:
+cd control/
 ```
 
-This provides an isolated environment with:
+This provides a unified environment with:
 - Rust toolchain
 - Claude Code
 - Reference materials (LAPACK, SLICOT-Reference, faer-rs)
 - GitHub CLI integration
+- Access to all monorepo projects
 
 ## Documentation
 

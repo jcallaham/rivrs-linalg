@@ -150,7 +150,7 @@ RUN mkdir -p /root/.cargo && \
 # Create welcome script
 RUN echo '#!/bin/bash' > /usr/local/bin/welcome.sh && \
 	echo 'echo "======================================"' >> /usr/local/bin/welcome.sh && \
-	echo 'echo "rivrs-linalg Development Environment (ARM64)"' >> /usr/local/bin/welcome.sh && \
+	echo 'echo "rivrs-linalg Monorepo Development Environment (ARM64)"' >> /usr/local/bin/welcome.sh && \
 	echo 'echo "======================================"' >> /usr/local/bin/welcome.sh && \
 	echo 'echo ""' >> /usr/local/bin/welcome.sh && \
 	echo 'echo "Rust:        $(rustc --version)"' >> /usr/local/bin/welcome.sh && \

@@ -27,7 +27,7 @@ export DOCKER_BUILDKIT=1
 
 # Display reference material sizes
 echo -e "${YELLOW}Reference material sizes:${NC}"
-du -sh ../faer-rs ../lapack ../SLICOT-Reference ../slicot 2>/dev/null || echo "Note: Some reference directories may not exist yet"
+du -sh ../references/* 2>/dev/null || echo "Note: Some reference directories may not exist yet"
 echo ""
 
 # Extract git config from host
@@ -43,7 +43,11 @@ echo ""
 echo -e "${GREEN}Building Docker image (ARM64)...${NC}"
 echo "This will take 10-15 minutes on first build (native ARM64 + Node.js)"
 echo ""
+echo -e "${YELLOW}Build context: repository root${NC}"
+echo -e "${YELLOW}Dockerfile: docker/Dockerfile${NC}"
+echo ""
 
+# Build from repository root so COPY references/ works
 cd ..
 docker build \
 	--platform linux/arm64 \
@@ -81,13 +85,9 @@ echo "   - Press F1 → 'Dev Containers: Reopen in Container'"
 echo "   - GitHub credentials forwarded automatically!"
 echo "   - Claude Code extension will be loaded automatically"
 echo ""
-echo "   Command line (docker-compose):"
-echo "   - Uncomment gh mount in .devcontainer/docker-compose.yml"
-echo "   - cd docker && docker-compose up -d"
-echo "   - docker exec -it rivrs-linalg-dev bash"
-echo ""
 echo "   Command line (docker):"
 echo "   - cd docker && ./run.sh"
+echo "   - Inside container: cd control/ or cd ssids/"
 echo ""
 echo "3. Claude Code is pre-installed:"
 echo "   - Run 'claude --version' inside the container to verify"
