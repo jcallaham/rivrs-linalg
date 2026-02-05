@@ -6,8 +6,10 @@
 mod common;
 
 use common::{compute_schur, schur_has_2x2_blocks};
-use rivrs_linalg::sylvester::{EquationType, compute_residual, solve_discrete, solve_discrete_schur};
 use faer::prelude::*;
+use rivrs_linalg::sylvester::{
+    EquationType, compute_residual, solve_discrete, solve_discrete_schur,
+};
 
 /// Helper to verify a discrete solution: ||AXB + X - C|| < tol
 fn verify_discrete(a: &Mat<f64>, b: &Mat<f64>, c: &Mat<f64>, tol: f64) {

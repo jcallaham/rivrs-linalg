@@ -2,8 +2,8 @@
 //!
 //! Demonstrates basic usage of the `solve_discrete` function.
 
-use rivrs_linalg::sylvester::solve_discrete;
 use faer::prelude::*;
+use rivrs_linalg::sylvester::solve_discrete;
 
 fn main() {
     // Define the matrices for AXB + X = C

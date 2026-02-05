@@ -2,8 +2,8 @@
 //!
 //! Demonstrates basic usage of the `solve_continuous` function.
 
-use rivrs_linalg::sylvester::solve_continuous;
 use faer::prelude::*;
+use rivrs_linalg::sylvester::solve_continuous;
 
 fn main() {
     // Define the matrices for AX + XB = C
