@@ -59,7 +59,3 @@ Cargo.lock
 .cache/
 
 # IMPORTANT: Do NOT exclude reference materials - they must be copied
-# faer-rs/
-# lapack/
-# SLICOT-Reference/
-# slicot/

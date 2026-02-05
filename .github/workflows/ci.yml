@@ -11,8 +11,8 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  test:
-    name: Test (${{ matrix.rust }})
+  test-control:
+    name: Test control (${{ matrix.rust }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -24,10 +24,10 @@ jobs:
         with:
           toolchain: ${{ matrix.rust }}
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --all-targets
+      - run: cd control && cargo test --all-targets
 
-  lint:
-    name: Lint
+  lint-control:
+    name: Lint control
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -35,16 +35,16 @@ jobs:
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
-      - run: cargo fmt --check
-      - run: cargo clippy --all-targets -- -D warnings
+      - run: cd control && cargo fmt --check
+      - run: cd control && cargo clippy --all-targets -- -D warnings
 
-  doc:
-    name: Documentation
+  doc-control:
+    name: Control documentation
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo doc --no-deps
+      - run: cd control && cargo doc --no-deps
         env:
           RUSTDOCFLAGS: -D warnings

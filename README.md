@@ -13,18 +13,18 @@ This repository is organized as a monorepo with isolated project directories for
 ```
 rivrs-linalg/
 ├── control/          # Control systems algorithms (Sylvester, Lyapunov, Riccati)
-├── ssids/            # Sparse symmetric indefinite direct solvers
-├── references/       # Shared reference implementations (LAPACK, SLICOT, SPRAL, faer-rs)
+├── sparse/           # Sparse direct solvers
+├── references/       # Shared reference implementations (LAPACK, SPRAL, faer-rs)
 ├── NOTICE            # Attribution and licensing information
 └── LICENSE           # Apache-2.0 license
 ```
 
-Each project directory (`control/`, `ssids/`) is a complete, standalone Rust project with:
+Each project directory (`control/`, `sparse/`) is a complete, standalone Rust project with:
 - Own `Cargo.toml` (immediately buildable with `cargo build`)
 - Own `CLAUDE.md` (domain-specific development guidance)
 - Own `README.md` (algorithm descriptions and status)
 - Own `Dockerfile` and `.devcontainer/` (isolated development environment)
-- Own `.claude/` (spec-kit configuration for feature planning)
+- Own `.claude/` and `.specify/` (coding agent and spec-kit configuration)
 - Own `specs/` (feature specifications and research)
 
 ## Current Projects
@@ -48,21 +48,6 @@ Clean room implementations of control systems algorithms similar to SLICOT, usin
 
 See [control/README.md](control/README.md) for details.
 
-### [ssids/](ssids/) - Sparse Symmetric Indefinite Direct Solvers
-
-**Status**: Early scaffolding (no algorithms implemented yet)
-**Algorithms**: Multifrontal LDLT factorization (planned)
-
-Sparse direct solvers for symmetric indefinite systems (Ax = b), based on SPRAL algorithms. Permissively-licensed alternative to HSL MA27/MA57/MA97.
-
-**Planned:**
-- 📋 AMD ordering and elimination tree
-- 📋 Multifrontal LDLT factorization
-- 📋 Threshold partial pivoting
-- 📋 Forward/backward substitution
-
-See [ssids/README.md](ssids/README.md) for details.
-
 ## Development Workflow
 
 ### Working on a Specific Domain
@@ -75,7 +60,7 @@ cargo test
 cargo bench
 
 # Sparse solvers work
-cd ssids/
+cd sparse/
 cargo build
 cargo test
 ```
@@ -92,7 +77,7 @@ cd control/docker/
 ./run.sh
 
 # Or for sparse solvers
-cd ssids/docker/
+cd sparse/docker/
 ./build.sh
 ./run.sh
 ```
@@ -136,14 +121,14 @@ rivrs-linalg/
 ├── Cargo.toml          # Workspace manifest
 ├── rivrs-core/         # Shared utilities, traits, errors
 ├── rivrs-control/      # Control systems (renamed from control/)
-├── rivrs-sparse/       # Sparse solvers (renamed from ssids/)
+├── rivrs-sparse/       # Sparse solvers (renamed from sparse/)
 └── references/         # Shared references
 ```
 
 Migration will be straightforward:
 1. Create `rivrs-core/` with shared code
 2. Move `control/` → `rivrs-control/`, update dependencies
-3. Move `ssids/` → `rivrs-sparse/`, update dependencies
+3. Move `sparse/` → `rivrs-sparse/`, update dependencies
 4. Add workspace `Cargo.toml`
 5. Git history preserved via file moves
 
@@ -155,7 +140,7 @@ Eventually, rivrs-linalg will be used by the main Rivrs symbolic-numeric framewo
 
 See individual project CLAUDE.md files for domain-specific development guidance:
 - [control/CLAUDE.md](control/CLAUDE.md) - Control systems algorithms
-- [ssids/CLAUDE.md](ssids/CLAUDE.md) - Sparse solvers
+- [sparse/CLAUDE.md](sparse/CLAUDE.md) - Sparse solvers
 
 **Key Requirements:**
 - Maintain clean room status (cite academic sources, avoid GPL code)

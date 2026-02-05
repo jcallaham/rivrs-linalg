@@ -20,11 +20,6 @@ rivrs-linalg/
 │   ├── src/          # Implementation
 │   ├── specs/        # Feature specifications
 │   └── docker/       # Isolated development environment
-├── ssids/            # Sparse solvers (early scaffolding)
-│   ├── CLAUDE.md     # Domain-specific guidance for sparse work
-│   ├── Cargo.toml    # Standalone Rust project
-│   ├── src/          # Implementation (placeholder)
-│   └── docker/       # Isolated development environment
 ├── references/       # Shared reference implementations
 │   ├── faer-rs/      # Rust linear algebra library
 │   ├── lapack/       # Reference LAPACK (BSD)
@@ -47,7 +42,6 @@ rivrs-linalg/
 
 **Use domain-specific CLAUDE.md when:**
 - Implementing algorithms in `control/` → use `control/CLAUDE.md`
-- Implementing algorithms in `ssids/` → use `ssids/CLAUDE.md`
 - Domain-specific development questions
 
 Each domain directory is self-contained with its own development guidance.
@@ -63,14 +57,9 @@ Each domain directory is self-contained with its own development guidance.
 
 See [control/CLAUDE.md](control/CLAUDE.md) for complete guidance.
 
-### ssids/ - Sparse Symmetric Indefinite Direct Solvers
+### sparse/ - Sparse Solvers
 
 **Status**: Early scaffolding (no algorithms yet)
-**Focus**: SPRAL-based multifrontal LDLT
-**Planned**: AMD ordering, symbolic analysis, numeric factorization
-**Alternative to**: HSL MA27/MA57/MA97 (permissively licensed)
-
-See [ssids/CLAUDE.md](ssids/CLAUDE.md) for complete guidance.
 
 ## Clean Room Implementation - Repository-Wide Policy
 
@@ -99,7 +88,7 @@ See [ssids/CLAUDE.md](ssids/CLAUDE.md) for complete guidance.
 - ❌ SLICOT GPL source (slicot/src/*.f): NEVER read during implementation
 - ✅ LAPACK source (BSD-3): Consult freely
 
-**ssids/** (SPRAL-based):
+**sparse/** (SPRAL-based):
 - ✅ SPRAL (BSD-3): Consult freely - primary reference
 - ✅ HSL documentation: Consult for algorithm descriptions
 - ❌ HSL source code: NEVER read (proprietary/restrictive)
@@ -111,7 +100,7 @@ See [ssids/CLAUDE.md](ssids/CLAUDE.md) for complete guidance.
 
 ```bash
 # Always cd into the domain directory
-cd control/    # or cd ssids/
+cd control/    # or cd sparse/
 
 # Standard Rust workflow
 cargo build
@@ -172,7 +161,7 @@ When domains stabilize, migrate to Cargo workspace:
 2. Create `rivrs-core/` with shared utilities, traits, errors
 3. Rename domains:
    - `control/` → `rivrs-control/`
-   - `ssids/` → `rivrs-sparse/`
+   - `sparse/` → `rivrs-sparse/`
 4. Update each domain's `Cargo.toml` to depend on `rivrs-core`
 5. Move domain `Cargo.toml` and `src/` to workspace member structure
 6. Test workspace builds: `cargo build --workspace`
@@ -220,7 +209,7 @@ rivrs-linalg/
 Each domain runs its own tests:
 ```bash
 cd control/ && cargo test
-cd ssids/ && cargo test
+cd sparse/ && cargo test
 ```
 
 ### Future CI/CD (Workspace)
@@ -272,7 +261,7 @@ New contributors must:
 
 **License**: Apache-2.0 (see [LICENSE](LICENSE))
 
-**Attribution**: See [NOTICE](NOTICE) for complete attribution to:
+**Attribution**: See NOTICE in each project for complete attribution to:
 - Academic sources (papers, textbooks)
 - LAPACK (BSD-3-Clause)
 - SLICOT-Reference (BSD-3-Clause)
@@ -281,26 +270,9 @@ New contributors must:
 
 Each domain's implementation cites specific sources used.
 
-## Current Status and Next Steps
-
-### Completed
-- ✅ Repository restructuring (CSRRS → rivrs-linalg)
-- ✅ Phase 1 structure (isolated projects)
-- ✅ control/ domain active with Sylvester solvers
-- ✅ ssids/ domain scaffolded
-- ✅ Clean room documentation and attribution
-
-### Next Steps
-1. Add SPRAL to `references/`
-2. Continue control/ development (Lyapunov, Riccati)
-3. Begin ssids/ implementation (AMD ordering, elimination tree)
-4. Add benchmarking infrastructure
-5. Plan workspace migration when domains stabilize
-
 ## Questions or Issues?
 
 For domain-specific questions, consult the appropriate CLAUDE.md:
 - Control systems: [control/CLAUDE.md](control/CLAUDE.md)
-- Sparse solvers: [ssids/CLAUDE.md](ssids/CLAUDE.md)
 
 For repository-wide questions or structural issues, refer to this file.
