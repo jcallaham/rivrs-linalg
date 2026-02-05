@@ -15,22 +15,23 @@ services:
     container_name: rivrs-linalg-dev
 
     volumes:
-      - workspace:/workspace/rivrs-linalg  # Isolated workspace (sandboxed from host)
-      - cargo-cache:/root/.cargo/registry
-      - sccache-cache:/root/.cache/sccache
-      - claude-config:/root/.claude
+      - workspace:/workspace  # Workspace volume (git clone creates rivrs-linalg/ inside)
+      - cargo-cache:/home/node/.cargo/registry
+      - sccache-cache:/home/node/.cache/sccache
+      - claude-config:/home/node/.claude
       # VS Code Dev Containers handles gh credentials via devcontainer.json mounts
       # For docker-compose CLI usage, uncomment the line below:
-      # - ${HOME}/.config/gh:/root/.config/gh:ro
+      # - ${HOME}/.config/gh:/home/node/.config/gh:ro
 
     environment:
       - RUSTFLAGS=-C target-cpu=native
       - CARGO_BUILD_JOBS=8
       - RUSTC_WRAPPER=sccache
       - NODE_OPTIONS=--max-old-space-size=4096
-      - CLAUDE_CONFIG_DIR=/root/.claude
+      - CLAUDE_CONFIG_DIR=/home/node/.claude
       - GH_TOKEN=${GH_TOKEN:-}
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - TERM=${TERM:-xterm-256color}
 
     deploy:
       resources:
@@ -38,7 +39,8 @@ services:
           cpus: '8'
           memory: 16G
 
-    command: sleep infinity
+    # Use default entrypoint + CMD from Dockerfile (runs welcome.sh + bash)
+    # command: sleep infinity
 
     stdin_open: true
     tty: true

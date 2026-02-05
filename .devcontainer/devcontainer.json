@@ -39,16 +39,16 @@
 			}
 		}
 	},
-	"remoteUser": "root",
+	"remoteUser": "node",
 	"remoteEnv": {
 		"NODE_OPTIONS": "--max-old-space-size=4096",
-		"CLAUDE_CONFIG_DIR": "/root/.claude",
+		"CLAUDE_CONFIG_DIR": "/home/node/.claude",
 		"GH_TOKEN": "${localEnv:GH_TOKEN}",
 		"GITHUB_TOKEN": "${localEnv:GITHUB_TOKEN}"
 	},
 	"postCreateCommand": "rustc --version && cargo --version && gh --version && claude --version && echo '✓ Development environment ready'",
 	"mounts": [
-		"source=${localEnv:HOME}/.config/gh,target=/root/.config/gh,type=bind,consistency=cached",
-		"source=rivrs-linalg-claude-config,target=/root/.claude,type=volume"
+		"source=${localEnv:HOME}/.config/gh,target=/home/node/.config/gh,type=bind,consistency=cached",
+		"source=rivrs-linalg-claude-config,target=/home/node/.claude,type=volume"
 	]
 }

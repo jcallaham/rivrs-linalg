@@ -32,6 +32,8 @@ docker/
 Dockerfile
 .dockerignore
 docker-compose.yml
+# Need to copy entrypoint script
+!docker/entrypoint.sh
 
 # Specification documents (not needed in container)
 specs/

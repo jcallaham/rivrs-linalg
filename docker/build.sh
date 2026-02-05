@@ -56,7 +56,7 @@ docker build \
 	--build-arg GIT_USER_NAME="$GIT_USER_NAME" \
 	--build-arg GIT_USER_EMAIL="$GIT_USER_EMAIL" \
 	-f docker/Dockerfile \
-	-t rivrs-linalg-dev:latest \
+	-t rivrs-linalg:latest \
 	--progress=plain \
 	.
 
@@ -67,7 +67,7 @@ echo -e "${GREEN}=====================================${NC}"
 echo ""
 
 # Show image size
-IMAGE_SIZE=$(docker images rivrs-linalg-dev:latest --format "{{.Size}}")
+IMAGE_SIZE=$(docker images rivrs-linalg:latest --format "{{.Size}}")
 echo -e "${YELLOW}Image size:${NC} $IMAGE_SIZE"
 echo ""
 
@@ -87,7 +87,6 @@ echo "   - Claude Code extension will be loaded automatically"
 echo ""
 echo "   Command line (docker):"
 echo "   - cd docker && ./run.sh"
-echo "   - Inside container: cd control/ or cd ssids/"
 echo ""
 echo "3. Claude Code is pre-installed:"
 echo "   - Run 'claude --version' inside the container to verify"

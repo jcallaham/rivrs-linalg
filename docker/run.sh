@@ -26,48 +26,51 @@ if ! gh auth status &>/dev/null; then
 fi
 
 # Check if container already exists
-if docker ps -a --format '{{.Names}}' | grep -q '^rivrs-linalg-dev$'; then
-	echo -e "${YELLOW}Container 'rivrs-linalg-dev' already exists${NC}"
+if docker ps -a --format '{{.Names}}' | grep -q '^rivrs-linalg$'; then
+	echo -e "${YELLOW}Container 'rivrs-linalg' already exists${NC}"
 
-	if docker ps --format '{{.Names}}' | grep -q '^rivrs-linalg-dev$'; then
+	if docker ps --format '{{.Names}}' | grep -q '^rivrs-linalg$'; then
 		echo "Container is running. Attaching..."
-		docker exec -it rivrs-linalg-dev bash
+		docker attach rivrs-linalg
 	else
-		echo "Container is stopped. Starting..."
-		docker start rivrs-linalg-dev
-		docker exec -it rivrs-linalg-dev bash
+		echo "Container is stopped. Starting and attaching..."
+		docker start -ai rivrs-linalg
 	fi
 else
-	echo -e "${GREEN}Creating new container 'rivrs-linalg-dev'...${NC}"
+	echo -e "${GREEN}Creating new container 'rivrs-linalg'...${NC}"
 	echo ""
 
 	# Create named volumes if they don't exist
+	docker volume create rivrs-linalg-workspace 2>/dev/null || true
 	docker volume create rivrs-linalg-cargo-cache 2>/dev/null || true
 	docker volume create rivrs-linalg-sccache-cache 2>/dev/null || true
+	docker volume create rivrs-linalg-claude-config 2>/dev/null || true
 
 	# Get GitHub token from host (falls back to file-based if keyring fails)
 	GH_TOKEN=$(gh auth token 2>/dev/null || echo "")
 
 	# Run the container
 	docker run -it \
-		--name rivrs-linalg-dev \
+		--name rivrs-linalg \
 		--platform linux/arm64 \
-		-v rivrs-linalg-workspace:/workspace/rivrs-linalg \
-		-v rivrs-linalg-cargo-cache:/root/.cargo/registry \
-		-v rivrs-linalg-sccache-cache:/root/.cache/sccache \
+		-v rivrs-linalg-workspace:/workspace \
+		-v rivrs-linalg-cargo-cache:/home/node/.cargo/registry \
+		-v rivrs-linalg-sccache-cache:/home/node/.cache/sccache \
+		-v rivrs-linalg-claude-config:/home/node/.claude \
 		-e GH_TOKEN="${GH_TOKEN}" \
 		-e GITHUB_TOKEN="${GH_TOKEN}" \
 		-e RUSTFLAGS="-C target-cpu=native" \
 		-e CARGO_BUILD_JOBS=8 \
 		-e RUSTC_WRAPPER=sccache \
+    	-e "TERM=${TERM:-xterm-256color}" \
 		--cpus=8 \
 		--memory=16g \
-		rivrs-linalg-dev:latest \
+		rivrs-linalg:latest \
 		/bin/bash
 fi
 
 echo ""
 echo -e "${GREEN}Exited container${NC}"
 echo ""
-echo "To restart: docker start rivrs-linalg-dev && docker exec -it rivrs-linalg-dev bash"
-echo "To remove:  docker rm rivrs-linalg-dev"
+echo "To restart: docker start rivrs-linalg && docker exec -it rivrs-linalg bash"
+echo "To remove:  docker rm rivrs-linalg"
