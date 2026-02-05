@@ -78,6 +78,10 @@ RUN git config --global user.name "${GIT_USER_NAME}" && \
 
 USER root
 
+# Install Git LFS
+RUN curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.deb.sh | bash \
+	&& apt-get install -y git-lfs && git lfs install --system
+
 # Stage 2: Reference materials (separate for caching)
 
 FROM scratch AS references
