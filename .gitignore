@@ -76,9 +76,4 @@ share/python-wheels/
 MANIFEST
 
 # Reference codes
-faer-rs
-lapack
-SLICOT-Reference
-
-# SLICOT source used only to reference documentation and validation cases
-slicot
+references
