@@ -2,120 +2,162 @@
 
 A scientific computing library providing numerical linear algebra implementations
 for the [Rivrs](https://github.com/jcallaham/rivrs) symbolic-numeric framework.
-Currently focused on control systems algorithms similar in scope to
-[SLICOT](http://www.slicot.org/), with plans to expand to sparse solvers and
-other numerical methods.
 
-## Current Features
+**Current Status**: Phase 1 - Modular development structure
+**License**: Apache-2.0
 
-### Sylvester Equation Solvers
+## Project Structure
 
-| Equation | Function | Algorithm |
-|---|---|---|
-| Continuous: `AX + XB = C` | `solve_continuous` | Bartels-Stewart (Schur-Schur) |
-| Discrete: `AXB + X = C` | `solve_discrete` | Modified Bartels-Stewart |
+This repository is organized as a monorepo with isolated project directories for different algorithm domains. This Phase 1 structure enables independent development of distinct numerical algorithms before eventual integration into a unified Cargo workspace.
 
-Both solvers include:
-
-- Eigenvalue separation estimation for detecting near-singular problems
-- Overflow prevention via scale factors
-- Blocked Level-3 BLAS triangular solver for large matrices (continuous)
-- Pre-computed Schur form API (`solve_continuous_schur`, `solve_discrete_schur`)
-
-## Quick Start
-
-Add to your `Cargo.toml`:
-
-```toml
-[dependencies]
-rivrs-linalg = { git = "https://github.com/jcallaham/rivrs-linalg" }
-faer = "0.22"
+```
+rivrs-linalg/
+├── control/          # Control systems algorithms (Sylvester, Lyapunov, Riccati)
+├── sparse/           # Sparse direct solvers
+├── references/       # Shared reference implementations (LAPACK, SPRAL, faer-rs)
+├── NOTICE            # Attribution and licensing information
+└── LICENSE           # Apache-2.0 license
 ```
 
-```rust
-use rivrs_linalg::sylvester::solve_continuous;
-use faer::mat;
+Each project directory (`control/`, `sparse/`) is a complete, standalone Rust project with:
+- Own `Cargo.toml` (immediately buildable with `cargo build`)
+- Own `CLAUDE.md` (domain-specific development guidance)
+- Own `README.md` (algorithm descriptions and status)
+- Own `Dockerfile` and `.devcontainer/` (isolated development environment)
+- Own `.claude/` and `.specify/` (coding agent and spec-kit configuration)
+- Own `specs/` (feature specifications and research)
 
-let a = mat![[1.0, 0.0], [0.0, 2.0f64]];
-let b = mat![[3.0, 0.0], [0.0, 4.0f64]];
-let c = mat![[4.0, 5.0], [6.0, 12.0f64]];
+## Current Projects
 
-let result = solve_continuous(a.as_ref(), b.as_ref(), c.as_ref()).unwrap();
-let x = &result.solution * (1.0 / result.scale);
-// x ≈ [[1.0, 1.0], [2.0, 2.0]]
+### [control/](control/) - Control Systems Algorithms
+
+**Status**: Active development
+**Algorithms**: Sylvester equations (continuous/discrete)
+
+Clean room implementations of control systems algorithms similar to SLICOT, using modern Rust with `faer` for high-performance linear algebra.
+
+**Completed:**
+- ✅ Continuous Sylvester solver (AX + XB = C) - Bartels-Stewart algorithm
+- ✅ Discrete Sylvester solver (AXB + X = C)
+- ✅ Blocked Level-3 BLAS variant for continuous case
+- ✅ Overflow prevention and condition estimation
+
+**Roadmap:**
+- 📋 Lyapunov equation solvers
+- 📋 Algebraic Riccati equation solvers
+
+See [control/README.md](control/README.md) for details.
+
+## Development Workflow
+
+### Working on a Specific Domain
+
+```bash
+# Control systems work
+cd control/
+cargo build
+cargo test
+cargo bench
+
+# Sparse solvers work
+cd sparse/
+cargo build
+cargo test
 ```
 
-## Performance Comparison with SLICOT
+Each directory is isolated and can be developed independently.
 
-Median wall-clock times (milliseconds) for solving Sylvester equations at
-various matrix sizes N, measured on the same machine in a single run.
+### Docker Development Environments
 
-### Continuous: AX + XB = C
+Each domain has its own Docker environment with domain-specific reference materials:
 
-| N | SLICOT SB04MD (ms) | rivrs-linalg (ms) | Ratio |
-|---:|---:|---:|---:|
-| 10 | 0.031 | 0.025 | 0.8x |
-| 50 | 2.59 | 1.18 | 0.5x |
-| 100 | 11.2 | 7.00 | 0.6x |
-| 200 | 139 | 50.5 | 0.4x |
-| 500 | 1154 | 669 | 0.6x |
+```bash
+cd control/docker/
+./build.sh
+./run.sh
 
-### Discrete: AXB + X = C
+# Or for sparse solvers
+cd sparse/docker/
+./build.sh
+./run.sh
+```
 
-| N | SLICOT SB04QD (ms) | rivrs-linalg (ms) | Ratio |
-|---:|---:|---:|---:|
-| 10 | 0.041 | 0.040 | 1.0x |
-| 50 | 1.47 | 2.21 | 1.5x |
-| 100 | 11.1 | 18.0 | 1.6x |
-| 200 | 83.3 | 191 | 2.3x |
-| 500 | 1203 | 5311 | 4.4x |
+### Shared References
 
-Both implementations produce residuals well below 1e-10 at all sizes.
+Reference implementations are stored in `references/` and are accessible to all projects:
+- **faer-rs/**: Pure Rust linear algebra library
+- **lapack/**: Reference LAPACK (BSD-licensed)
+- **SLICOT-Reference/**: BSD-3-licensed SLICOT implementation
+- **slicot/**: GPL SLICOT (documentation and test cases only)
+- **spral/**: SPRAL sparse library (to be added, BSD-3-licensed)
 
-### Methodology and Caveats
+## Clean Room Implementation
 
-This is an **apples-to-oranges comparison** — useful for confirming we are in
-the right ballpark, not for drawing precise conclusions. Key differences:
+**Critical**: All implementations are clean room to maintain Apache-2.0 licensing.
 
-- **SLICOT** uses the **Hessenberg-Schur** method (Golub, Nash & Van Loan 1979):
-  reduces A to Hessenberg form and B to Schur form. Lower theoretical flop
-  count but relies on Level-2 BLAS column solves.
-- **rivrs-linalg** uses the **Bartels-Stewart** method (Bartels & Stewart 1972):
-  reduces both A and B to Schur form. The continuous triangular solve uses a
-  blocked Level-3 BLAS variant (Jonsson & Kagstrom 2002) for N > 64.
-- **LAPACK version**: SLICOT is linked against **reference (Netlib) LAPACK/BLAS**,
-  not an optimized implementation like OpenBLAS or MKL. rivrs-linalg uses **faer**
-  for matrix operations and **nalgebra** for Schur decomposition, both of which
-  include their own optimized kernels.
-- **Discrete gap**: rivrs-linalg's discrete solver does not yet have a blocked
-  triangular variant. The trilinear AXB term requires 6 matrix multiplications
-  per block step (vs 2 for the continuous AX + XB case), making a blocked
-  implementation more involved.
-- **Random matrices** with diagonal shifts for conditioning (continuous) or
-  scaling (discrete). Different RNGs between Fortran and Rust, but same
-  statistical properties.
+### Permitted Sources
+- ✅ Academic papers and textbooks
+- ✅ Permissively-licensed reference code (LAPACK, SLICOT-Reference, SPRAL)
+- ✅ Documentation and test cases from any library
 
-## Implementation Sources and Attribution
+### Prohibited Sources
+- ❌ GPL SLICOT Fortran source code (slicot/src/*.f)
+- ❌ Proprietary HSL library source code
+- ❌ Any GPL-licensed implementation source code
 
-The Sylvester equation solvers are based on the following academic and open-source references:
+See [NOTICE](NOTICE) for complete attribution and licensing information.
 
-### Primary Algorithm Sources
-- **Bartels & Stewart (1972)**, "Solution of the Matrix Equation AX + XB = C",
-  *Communications of the ACM* 15(9):820-826 — fundamental Schur-based algorithm
-- **Golub & Van Loan (2013)**, *Matrix Computations* (4th Ed), Section 7.6.3 —
-  algorithm description and numerical considerations
-- **Jonsson & Kågström (2002)**, "Recursive blocked algorithms for solving
-  triangular systems", *ACM TOMS* 28(4):416-435 — Level-3 BLAS blocked variant
+## Migration Path: Phase 1 → Workspace
 
-### Reference Implementations
-- **LAPACK** — implementation closely follows `dtrsyl`/`dtrsyl3`, including
-  stability patterns, overflow prevention via scaling, and handling of quasi-triangular
-  Schur form. Source code available at https://netlib.org/lapack/
-- **SLICOT documentation and test suite** (SB04MD, SB04QD) — used only for understanding
-  algorithm purpose, API, and expected numerical accuracy.
+**Phase 1 (Current)**: Isolated projects for independent experimentation
+- Each domain is a complete standalone project
+- Enables rapid iteration and easy pivoting
+- Simple Docker isolation per domain
+- Can abandon or restructure without affecting others
 
-See [NOTICE](NOTICE) for complete licensing information.
+**Phase 2 (Future)**: Cargo workspace with shared utilities
+```
+rivrs-linalg/
+├── Cargo.toml          # Workspace manifest
+├── rivrs-core/         # Shared utilities, traits, errors
+├── rivrs-control/      # Control systems (renamed from control/)
+├── rivrs-sparse/       # Sparse solvers (renamed from sparse/)
+└── references/         # Shared references
+```
+
+Migration will be straightforward:
+1. Create `rivrs-core/` with shared code
+2. Move `control/` → `rivrs-control/`, update dependencies
+3. Move `sparse/` → `rivrs-sparse/`, update dependencies
+4. Add workspace `Cargo.toml`
+5. Git history preserved via file moves
+
+**Phase 3 (Integration)**: Rivrs dependency
+
+Eventually, rivrs-linalg will be used by the main Rivrs symbolic-numeric framework via path dependency or published crates.
+
+## Contributing
+
+See individual project CLAUDE.md files for domain-specific development guidance:
+- [control/CLAUDE.md](control/CLAUDE.md) - Control systems algorithms
+- [sparse/CLAUDE.md](sparse/CLAUDE.md) - Sparse solvers
+
+**Key Requirements:**
+- Maintain clean room status (cite academic sources, avoid GPL code)
+- Write comprehensive tests
+- Document numerical stability characteristics
+- Benchmark against reference implementations
 
 ## License
 
 Licensed under Apache License, Version 2.0 ([LICENSE](LICENSE))
+
+## Attribution
+
+See [NOTICE](NOTICE) for complete attribution to academic sources and reference implementations:
+- LAPACK (BSD-3-Clause)
+- SLICOT-Reference (BSD-3-Clause)
+- SPRAL (BSD-3-Clause, planned)
+- Academic papers and textbooks
+
+Each implementation cites the specific sources used.

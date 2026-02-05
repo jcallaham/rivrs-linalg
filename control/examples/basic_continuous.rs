@@ -1,22 +1,22 @@
-//! Example: Solving a discrete-time Sylvester equation AXB + X = C.
+//! Example: Solving a continuous-time Sylvester equation AX + XB = C.
 //!
-//! Demonstrates basic usage of the `solve_discrete` function.
+//! Demonstrates basic usage of the `solve_continuous` function.
 
-use rivrs_linalg::sylvester::solve_discrete;
 use faer::prelude::*;
+use rivrs_linalg::sylvester::solve_continuous;
 
 fn main() {
-    // Define the matrices for AXB + X = C
-    let a = mat![[0.5, 0.1, 0.0], [0.0, 0.8, 0.2], [0.0, 0.0, 0.3f64]];
-    let b = mat![[0.6, 0.1], [0.0, 0.9f64]];
-    let c = mat![[1.0, 2.0], [3.0, 4.0], [5.0, 6.0f64]];
+    // Define the matrices for AX + XB = C
+    let a = mat![[1.0, 2.0, 0.0], [0.0, 3.0, 1.0], [0.0, 0.0, 5.0f64]];
+    let b = mat![[2.0, 1.0], [0.0, 4.0f64]];
+    let c = mat![[10.0, 20.0], [30.0, 40.0], [50.0, 60.0f64]];
 
-    println!("Solving discrete-time Sylvester equation: AXB + X = C");
+    println!("Solving continuous-time Sylvester equation: AX + XB = C");
     println!("A = {:?}", &a);
     println!("B = {:?}", &b);
     println!("C = {:?}", &c);
 
-    match solve_discrete(a.as_ref(), b.as_ref(), c.as_ref()) {
+    match solve_continuous(a.as_ref(), b.as_ref(), c.as_ref()) {
         Ok(result) => {
             let x = &result.solution * (1.0 / result.scale);
             println!("\nSolution X:");
@@ -28,7 +28,7 @@ fn main() {
             }
             println!("\nScale factor: {}", result.scale);
             println!(
-                "Residual norm ||AXB + X - C||: {:.2e}",
+                "Residual norm ||AX + XB - C||: {:.2e}",
                 result.residual_norm
             );
             println!("Near-singular: {}", result.near_singular);

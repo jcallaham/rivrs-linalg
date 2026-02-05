@@ -61,7 +61,8 @@ fn bench_discrete(c: &mut Criterion) {
                 let bb = random_matrix(size, 0.0, &mut rng) * 0.3;
                 let cc = random_rhs(size, size, &mut rng);
                 b.iter(|| {
-                    rivrs_linalg::sylvester::solve_discrete(a.as_ref(), bb.as_ref(), cc.as_ref()).unwrap()
+                    rivrs_linalg::sylvester::solve_discrete(a.as_ref(), bb.as_ref(), cc.as_ref())
+                        .unwrap()
                 });
             },
         );

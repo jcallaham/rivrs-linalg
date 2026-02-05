@@ -6,8 +6,10 @@
 mod common;
 
 use common::{build_quasi_triangular_test_matrix, compute_schur, schur_has_2x2_blocks};
-use rivrs_linalg::sylvester::{EquationType, compute_residual, solve_continuous, solve_continuous_schur};
 use faer::prelude::*;
+use rivrs_linalg::sylvester::{
+    EquationType, compute_residual, solve_continuous, solve_continuous_schur,
+};
 
 /// Helper to verify a continuous solution: ||AX + XB - C|| < tol
 fn verify_continuous(a: &Mat<f64>, b: &Mat<f64>, c: &Mat<f64>, tol: f64) {
