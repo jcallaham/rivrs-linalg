@@ -74,6 +74,3 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
-
-# Reference codes
-references
