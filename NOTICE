@@ -2,18 +2,10 @@ NOTICE
 ======
 
 rivrs-linalg — Numerical Linear Algebra for Rivrs
-Copyright (c) 2026 J. Nathan Kutz and contributors
+Copyright (c) 2026 Jared Callaham
 
-This software is licensed under the MIT License or Apache License 2.0
-(see LICENSE-MIT and LICENSE-APACHE).
-
-CLEAN ROOM IMPLEMENTATION
-==========================
-
-This library is a clean room implementation of numerical linear algebra algorithms.
-To maintain permissive licensing, GPL-licensed source code (including SLICOT Fortran
-sources) was NOT consulted during implementation. All algorithms are implemented from
-academic papers, textbooks, and permissively-licensed reference code.
+This software is licensed under the Apache License 2.0
+(see LICENSE).
 
 ACADEMIC AND REFERENCE SOURCES
 ===============================
@@ -50,21 +42,17 @@ Implementation based on:
      scaling factors, handling of quasi-triangular real Schur form (1×1 and 2×2 blocks),
      and BLAS-based triangular system solving.
 
-3. SLICOT Usage (Documentation and Test Cases Only):
+3. SLICOT-Reference Usage:
    SLICOT (Subroutine Library in Systems and Control Theory)
-   Copyright (c) 2020, SLICOT
-   Licensed under GPL-2.0
-   Available at: http://www.slicot.org/
+   Copyright (c) 1996-2025, The SLICOT Team
+   Licensed under BSD-3
+   Available at: https://github.com/SLICOT/SLICOT-Reference
 
    SLICOT ROUTINES REFERENCED (documentation and test cases only):
    - SB04MD: Continuous-time Sylvester equation (Hessenberg-Schur method)
    - SB04QD: Discrete-time Sylvester equation (Hessenberg-Schur method)
 
-   **IMPORTANT**: Only SLICOT documentation (slicot/doc/*.html) and test suite
-   (slicot/examples/) were consulted. SLICOT Fortran source code (slicot/src/*.f)
-   was NOT examined during implementation to avoid GPL contamination. SLICOT test
-   cases provide non-copyrightable facts: numerical test data and expected accuracy
-   criteria.
+   **IMPORTANT**: Only BSD-3-licensed SLICOT-Reference documentation (SLICOT-Reference/doc/) and test suite (SLICOT-Reference/examples/) were consulted. SLICOT Fortran source code  was NOT examined during implementation to preserve permissive licensing.
 
 4. Validation References:
    - MatrixEquations.jl (Julia package)
@@ -77,8 +65,7 @@ Implementation based on:
 LAPACK LICENSE (BSD-3-Clause)
 ==============================
 
-Portions of the numerical algorithms were informed by LAPACK routines dtrsyl and dtrsyl3.
-LAPACK is licensed under the following terms:
+Portions of the numerical algorithms were informed by LAPACK routines dtrsyl and dtrsyl3. LAPACK is licensed under the following terms:
 
 Copyright (c) 1992-2023
 The University of Tennessee and The University of Tennessee Research Foundation.
@@ -115,6 +102,37 @@ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+SLICOT-REFERENCE LICENSE (BSD-3-Clause)
+=======================================
+
+Copyright (c) 1996-2025, The SLICOT Team
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
 DEPENDENCIES
 ============
 
@@ -125,11 +143,3 @@ This library depends on other open-source Rust crates, each with their own licen
 - criterion (Apache-2.0 OR MIT, dev dependency)
 
 See Cargo.toml and the respective crate documentation for complete dependency licensing.
-
-CONTRIBUTIONS
-=============
-
-All contributions to rivrs-linalg must maintain clean room status. Contributors must not
-examine GPL-licensed source code (including SLICOT sources) when implementing algorithms.
-Acceptable sources include: academic papers, textbooks, BSD/MIT licensed code (LAPACK, BLAS),
-and non-copyrightable facts (test data, numerical accuracy criteria).

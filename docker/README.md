@@ -250,7 +250,7 @@ gh auth status  # Should show logged in to github.com
 
 ❌ **SLICOT Fortran source** (`slicot/src/*.f`): GPL-licensed, reading it contaminates clean room
 
-**Rationale**: rivrs-linalg must remain permissively licensed (MIT/Apache-2.0). Reading GPL code during implementation creates copyright issues. Use academic papers, textbooks, and BSD-licensed LAPACK instead.
+**Rationale**: rivrs-linalg must remain permissively licensed. Reading GPL code during implementation creates copyright issues. Use academic papers, textbooks, and BSD-licensed LAPACK instead.
 
 ## Performance Notes
 

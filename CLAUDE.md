@@ -14,7 +14,7 @@ rivrs-linalg (Numerical Linear Algebra for Rivrs) is a scientific computing libr
 - Implement algorithms from: academic papers, control theory textbooks, BLAS/LAPACK source (BSD-licensed), and published standards
 - Use SLICOT only for: documentation of what algorithms do, test cases with expected outputs, and numerical accuracy criteria
 - Always document the academic sources used for each implementation
-- This approach allows rivrs-linalg to be released under a permissive license (MIT/Apache-2.0)
+- This approach allows rivrs-linalg to be released under a permissive license
 
 ## Reference Materials
 

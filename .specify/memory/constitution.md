@@ -40,7 +40,7 @@ Ratification: 2026-01-27 (initial adoption)
 - FREELY access SLICOT-Reference subdirectory - it is BSD-3 licensed and can be consulted without restriction
 - Document ALL academic sources used for each implementation (papers, textbooks, standards, permissively-licensed code)
 
-**Rationale**: GPL's copyleft provisions would force rivrs-linalg to adopt GPL licensing, limiting adoption in commercial and permissively-licensed projects. Clean room implementation allows MIT/Apache-2.0 dual licensing while still benefiting from SLICOT's test suite and documentation.
+**Rationale**: GPL's copyleft provisions would force rivrs-linalg to adopt GPL licensing, limiting adoption in commercial and permissively-licensed projects. Clean room implementation allows Apache-2.0 licensing while still benefiting from SLICOT's test suite and documentation.
 
 **Enforcement**: Code reviews MUST verify that academic references are cited and no GPL source code was consulted. Pull requests without proper attribution will be rejected.
 
@@ -309,6 +309,6 @@ When a PR violates simplicity principles (e.g., adds unnecessary abstraction, du
 
 ### Licensing
 
-rivrs-linalg is dual-licensed under MIT/Apache-2.0. All contributions MUST be compatible with this licensing model. Use of GPL or LGPL dependencies is PROHIBITED.
+rivrs-linalg is licensed under Apache-2.0. All contributions MUST be compatible with this licensing model. Use of GPL or LGPL dependencies is PROHIBITED.
 
 **Version**: 1.0.0 | **Ratified**: 2026-01-27 | **Last Amended**: 2026-01-27

@@ -1,9 +1,7 @@
 //! rivrs-linalg — Numerical Linear Algebra for Rivrs
 //!
 //! A scientific computing library providing numerical linear algebra implementations
-//! for the Rivrs symbolic-numeric framework. Currently focused on control systems
-//! algorithms, with plans to expand to sparse solvers and other numerical methods.
-//! Licensed under permissive MIT/Apache-2.0 terms.
+//! for the Rivrs symbolic-numeric framework.
 //!
 //! # Sylvester Equation Solvers
 //!

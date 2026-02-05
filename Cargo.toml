@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.87"
 description = "Numerical linear algebra library for the Rivrs symbolic-numeric framework"
-license = "MIT OR Apache-2.0"
+license = "Apache-2.0"
 categories = ["science", "mathematics"]
 keywords = ["linear-algebra", "control-systems", "numerical-computing", "rust"]
 

@@ -4,11 +4,7 @@ A scientific computing library providing numerical linear algebra implementation
 for the [Rivrs](https://github.com/jcallaham/rivrs) symbolic-numeric framework.
 Currently focused on control systems algorithms similar in scope to
 [SLICOT](http://www.slicot.org/), with plans to expand to sparse solvers and
-other numerical methods. Licensed under permissive MIT/Apache-2.0 terms.
-
-This is a **clean room implementation** — algorithms are implemented from
-academic papers, textbooks, and permissively-licensed reference implementations
-(LAPACK), not from GPL-licensed sources like SLICOT source code.
+other numerical methods.
 
 ## Current Features
 
@@ -101,35 +97,25 @@ the right ballpark, not for drawing precise conclusions. Key differences:
 
 ## Implementation Sources and Attribution
 
-The Sylvester equation solvers are clean room implementations based on the following academic and open-source references:
+The Sylvester equation solvers are based on the following academic and open-source references:
 
 ### Primary Algorithm Sources
 - **Bartels & Stewart (1972)**, "Solution of the Matrix Equation AX + XB = C",
   *Communications of the ACM* 15(9):820-826 — fundamental Schur-based algorithm
 - **Golub & Van Loan (2013)**, *Matrix Computations* (4th Ed), Section 7.6.3 —
-  detailed algorithm description and numerical considerations
+  algorithm description and numerical considerations
 - **Jonsson & Kågström (2002)**, "Recursive blocked algorithms for solving
   triangular systems", *ACM TOMS* 28(4):416-435 — Level-3 BLAS blocked variant
 
-### Reference Implementations Consulted
-- **LAPACK `dtrsyl`/`dtrsyl3`** (BSD-3-Clause licensed) — consulted for numerical
+### Reference Implementations
+- **LAPACK** — implementation closely follows `dtrsyl`/`dtrsyl3`, including
   stability patterns, overflow prevention via scaling, and handling of quasi-triangular
   Schur form. Source code available at https://netlib.org/lapack/
 - **SLICOT documentation and test suite** (SB04MD, SB04QD) — used only for understanding
-  algorithm purpose and expected numerical accuracy. **SLICOT source code was NOT
-  consulted** to maintain clean room status and avoid GPL contamination.
-
-### Validation References
-- **MatrixEquations.jl** — Julia library used for cross-validation of test cases
-- **SLICOT test suite** (slicot/examples/) — numerical test cases and pass criteria
+  algorithm purpose, API, and expected numerical accuracy.
 
 See [NOTICE](NOTICE) for complete licensing information.
 
 ## License
 
-Licensed under either of
-
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
-- MIT License ([LICENSE-MIT](LICENSE-MIT))
-
-at your option.
+Licensed under Apache License, Version 2.0 ([LICENSE](LICENSE))
