@@ -1,136 +1,306 @@
-# CLAUDE.md
+# CLAUDE.md - rivrs-linalg Monorepo
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code when working at the top level of the rivrs-linalg monorepo.
 
-## Project Overview
+## Repository Overview
 
-rivrs-linalg (Numerical Linear Algebra for Rivrs) is a scientific computing library providing numerical linear algebra implementations for the Rivrs symbolic-numeric framework. Currently focused on control systems algorithms similar to those in SLICOT (Subroutine Library in Systems and Control Theory), with plans to expand to sparse solvers and other numerical methods. The project uses modern Rust with `ndarray` and `faer` for linear algebra operations and will provide Python bindings.
+rivrs-linalg is a monorepo containing numerical linear algebra implementations for the Rivrs symbolic-numeric framework. The repository is organized into isolated project directories for different algorithm domains.
 
-## Licensing Strategy - Clean Room Implementation
+**Current Structure**: Phase 1 - Isolated projects for modular development
+**Future Structure**: Phase 2 - Cargo workspace with shared utilities
+**License**: Apache-2.0
 
-**This is a clean room implementation to maintain licensing flexibility.** SLICOT is GPL-licensed, which would force any derivative work to also be GPL. To avoid this:
+## Directory Structure
 
-- **NEVER read or copy SLICOT source code** (slicot/src/*.f files) during implementation
-- Implement algorithms from: academic papers, control theory textbooks, BLAS/LAPACK source (BSD-licensed), and published standards
-- Use SLICOT only for: documentation of what algorithms do, test cases with expected outputs, and numerical accuracy criteria
-- Always document the academic sources used for each implementation
-- This approach allows rivrs-linalg to be released under a permissive license
+```
+rivrs-linalg/
+├── control/          # Control systems algorithms (active development)
+│   ├── CLAUDE.md     # Domain-specific guidance for control work
+│   ├── Cargo.toml    # Standalone Rust project
+│   ├── src/          # Implementation
+│   ├── specs/        # Feature specifications
+│   └── docker/       # Isolated development environment
+├── ssids/            # Sparse solvers (early scaffolding)
+│   ├── CLAUDE.md     # Domain-specific guidance for sparse work
+│   ├── Cargo.toml    # Standalone Rust project
+│   ├── src/          # Implementation (placeholder)
+│   └── docker/       # Isolated development environment
+├── references/       # Shared reference implementations
+│   ├── faer-rs/      # Rust linear algebra library
+│   ├── lapack/       # Reference LAPACK (BSD)
+│   ├── SLICOT-Reference/  # BSD-3 SLICOT
+│   ├── slicot/       # GPL SLICOT (docs/tests only)
+│   └── spral/        # To be added (BSD-3)
+├── NOTICE            # Attribution and licensing
+├── LICENSE           # Apache-2.0 license
+└── CLAUDE.md         # This file (monorepo-level guidance)
+```
 
-## Reference Materials
+## When to Use This File vs Domain-Specific CLAUDE.md
 
-The repository contains three reference implementations in subdirectories:
+**Use this file when:**
+- Working at repository root level
+- Setting up new project directories
+- Managing shared infrastructure (references/, CI/CD)
+- Planning repository-wide changes
+- Understanding the overall structure
 
-- **faer-rs/**: Pure Rust linear algebra library (https://faer.veganb.tw) - primary dependency for matrix operations
-- **lapack/**: Reference LAPACK implementation (BSD-licensed) - consult freely for understanding numerical algorithms and implementation patterns
-- **slicot/**: Reference SLICOT Fortran implementation organized by categories (AB=state-space analysis, BB=benchmark problems, FB=frequency weighted balancing, IB=identification and balancing, MA=mathematical routines, MB=model reduction, SB=synthesis benchmarks, TB=transformation and block algorithms, etc.)
+**Use domain-specific CLAUDE.md when:**
+- Implementing algorithms in `control/` → use `control/CLAUDE.md`
+- Implementing algorithms in `ssids/` → use `ssids/CLAUDE.md`
+- Domain-specific development questions
 
-These directories should NOT be modified.
+Each domain directory is self-contained with its own development guidance.
 
-**CRITICAL - Clean Room Implementation:**
-To maintain licensing flexibility, SLICOT source code (.f files in slicot/src/) must NEVER be consulted during implementation. SLICOT is GPL-licensed and examining the source during development could create copyright contamination. Instead:
-- Use SLICOT only for non-copyrightable information: documentation (slicot/doc/), test cases (slicot/examples/), and expected numerical pass criteria
-- Implement algorithms from BLAS/LAPACK source (permissive BSD license), academic papers, and control theory textbooks
-- Document which academic references were used for each implementation
+## Project Domains
 
-## Technology Stack
+### control/ - Control Systems Algorithms
 
-**Core Linear Algebra:**
-- Use `faer` for high-performance dense linear algebra operations (decompositions, eigenvalues, matrix operations)
-- Use `ndarray` for array structure and Python interoperability via PyO3
-- Reference faer-rs workspace structure: note the separation of faer-traits, faer (core), faer-macros, and faer-ffi
+**Status**: Active development
+**Focus**: SLICOT-inspired algorithms using faer
+**Current**: Sylvester equation solvers (continuous, discrete)
+**Roadmap**: Lyapunov, Riccati, state-space analysis
 
-**Python Bindings:**
-- PyO3 for Rust-Python integration
-- Follow ndarray's pattern for zero-copy data sharing between Rust and NumPy
+See [control/CLAUDE.md](control/CLAUDE.md) for complete guidance.
 
-## Code Architecture Principles
+### ssids/ - Sparse Symmetric Indefinite Direct Solvers
 
-**Algorithm Categories (following SLICOT structure):**
-- State-space analysis and transformations (canonical forms, controllability/observability)
-- System interconnections (cascade, feedback, parallel)
-- Model reduction and balancing
-- Synthesis routines (Riccati equations, H-infinity control, LQG/LQR)
-- Frequency domain analysis
-- Time/frequency domain conversions
-- Descriptor systems
+**Status**: Early scaffolding (no algorithms yet)
+**Focus**: SPRAL-based multifrontal LDLT
+**Planned**: AMD ordering, symbolic analysis, numeric factorization
+**Alternative to**: HSL MA27/MA57/MA97 (permissively licensed)
 
-**Numerical Considerations:**
-- Prioritize numerical stability - consult LAPACK implementations and academic literature for proven algorithms
-- Use structured decompositions (Schur, QR, SVD) rather than direct inversion where possible
-- Implement workspace allocation patterns from faer for stack-based temporary storage
-- Follow faer's approach to SIMD and performance optimization
-- Consider condition number estimation and backward error analysis
+See [ssids/CLAUDE.md](ssids/CLAUDE.md) for complete guidance.
 
-**API Design:**
-- Provide both low-level routines (à la SLICOT individual functions) and high-level composable APIs
-- Use builder patterns for complex operations with many parameters
-- Leverage Rust's type system to enforce physical correctness (e.g., state-space system dimensions)
-- Design for both batch operations and single-system workflows
+## Clean Room Implementation - Repository-Wide Policy
 
-**Error Handling:**
-- Use Result types for operations that can fail numerically (singular matrices, non-convergence)
-- Provide informative error messages that guide users to solutions
-- Consider error recovery strategies (e.g., regularization hints)
+**Critical**: All implementations must maintain clean room status to preserve Apache-2.0 licensing.
 
-## Git Commit Practices
+### Universal Rules (Apply to All Domains)
 
-- **Commit frequently**: Create git commits after completing each logical unit of work (e.g., after finishing a phase, after getting tests passing, after adding a new module).
-- **Commit after verification**: Always commit when tests pass or a milestone is verified working.
-- **Descriptive messages**: Use clear commit messages that describe what was accomplished.
-- **Never skip commits**: Do not accumulate large amounts of uncommitted work.
+**NEVER do this:**
+- ❌ Read or copy GPL-licensed source code during algorithm implementation
+- ❌ Read proprietary/restrictive source code (HSL libraries)
+- ❌ Implement algorithms by translating GPL code line-by-line
+
+**ALWAYS do this:**
+- ✅ Implement from academic papers and textbooks
+- ✅ Consult permissively-licensed reference code (LAPACK, SLICOT-Reference, SPRAL)
+- ✅ Use documentation and test cases from any library (non-copyrightable facts)
+- ✅ Document all academic sources used for each implementation
+- ✅ Cite reference implementations consulted
+
+### Domain-Specific Guidelines
+
+**control/** (SLICOT-based):
+- ✅ SLICOT-Reference (BSD-3): Consult freely
+- ✅ SLICOT documentation (slicot/doc/): Consult freely
+- ✅ SLICOT test cases (slicot/examples/): Use for validation
+- ❌ SLICOT GPL source (slicot/src/*.f): NEVER read during implementation
+- ✅ LAPACK source (BSD-3): Consult freely
+
+**ssids/** (SPRAL-based):
+- ✅ SPRAL (BSD-3): Consult freely - primary reference
+- ✅ HSL documentation: Consult for algorithm descriptions
+- ❌ HSL source code: NEVER read (proprietary/restrictive)
+- ✅ Academic papers: Primary source for algorithms
 
 ## Development Workflow
 
-When implementing a new control systems algorithm:
-1. Review slicot/doc/ HTML documentation to understand what the algorithm does and its purpose
-2. Identify relevant academic papers, textbooks, or standards that describe the algorithm (e.g., IEEE papers, Laub, Skogestad & Postlethwaite, Golub & Van Loan, etc.)
-3. Review LAPACK source code (lapack/) if the algorithm builds on standard linear algebra operations
-4. **DO NOT examine SLICOT source code (slicot/src/*.f files)** - this would contaminate the clean room implementation
-5. Design a Rust API that is idiomatic and leverages faer's capabilities
-6. Implement using faer's matrix types and decompositions based on academic references and LAPACK patterns
-7. Document which academic references and LAPACK routines informed the implementation
-8. Add comprehensive tests comparing outputs against SLICOT test cases (slicot/examples/) - test data and pass criteria are non-copyrightable
-9. Benchmark against SLICOT to verify performance is competitive
-10. Create Python bindings that expose the functionality naturally to SciPy/NumPy users
+### Working on a Specific Domain
 
-## Rust Idioms for Scientific Computing
+```bash
+# Always cd into the domain directory
+cd control/    # or cd ssids/
 
-- Prefer generic implementations over f32/f64 duplicated code (use faer's trait abstractions)
-- Use const generics for fixed-size systems where appropriate
-- Leverage zero-cost abstractions (views, strided access) from faer and ndarray
-- Implement Clone/Copy judiciously - large matrices should be borrowed
-- Use in-place operations to minimize allocations
-- Consider no_std compatibility for embedded control applications (see faer-no-std-test for patterns)
+# Standard Rust workflow
+cargo build
+cargo test
+cargo bench
 
-## Testing Strategy
+# Docker development (isolated environment)
+cd docker/
+./build.sh
+./run.sh
+```
 
-- Unit tests for individual routines with known analytical solutions
-- Integration tests comparing outputs to SLICOT examples
-- Property-based tests for numerical stability properties
-- Benchmark suite comparing performance to SLICOT and MATLAB Control Systems Toolbox
-- Python integration tests ensuring bindings work correctly with NumPy arrays
+### Adding New Domains
 
-## Performance Optimization
+When adding a new algorithm domain (e.g., `dense/`, `iterative/`):
 
-Reference faer's optimization patterns:
-- Check faer/Cargo.toml for profile settings (note opt-level=3 for dev profile)
-- Use faer's parallelism support for large-scale operations
-- Profile before optimizing - use cargo-flamegraph or similar tools
-- Consider adding faer-traits implementations for custom types
-- Use faer's SIMD capabilities through generic abstractions
+1. Create new directory: `mkdir new-domain/`
+2. Copy template structure from existing domain
+3. Create domain-specific `CLAUDE.md`
+4. Set up `Cargo.toml` as standalone project
+5. Create `README.md` with domain overview
+6. Set up Docker and `.devcontainer/`
+7. Create `.claude/` for spec-kit
+8. Update this top-level `CLAUDE.md` and `README.md`
 
-## Documentation Standards
+### Managing Shared References
 
-- Every public function should document the mathematical operation it performs
-- **Cite academic references used during implementation** (papers, textbooks, LAPACK routines) - this is critical for clean room documentation
-- Include references to standard control theory texts (e.g., Skogestad & Postlethwaite, Zhou et al., Doyle et al.)
-- Provide usage examples for common control systems workflows
-- Document numerical stability characteristics and failure modes
-- Cross-reference equivalent SLICOT routine names for users migrating from Fortran/MATLAB, but note that rivrs-linalg implementations are based on independent academic sources
+Reference implementations in `references/` are accessible to all domains:
 
-## Active Technologies
-- Rust 1.75+ (MSRV to be determined during setup) + faer (>= 0.19) for linear algebra, ndarray (>= 0.16) for array structures, approx for test comparisons (001-sylvester-solver)
-- N/A (in-memory numerical computation library) (001-sylvester-solver)
+**Current:**
+- `faer-rs/` - Rust linear algebra library
+- `lapack/` - Reference LAPACK (BSD)
+- `SLICOT-Reference/` - BSD-3 SLICOT
+- `slicot/` - GPL SLICOT (docs/tests only, NOT source)
 
-## Recent Changes
-- 001-sylvester-solver: Added Rust 1.75+ (MSRV to be determined during setup) + faer (>= 0.19) for linear algebra, ndarray (>= 0.16) for array structures, approx for test comparisons
+**To Add:**
+- `spral/` - SPRAL sparse library (BSD-3)
+
+To add new reference:
+```bash
+cd references/
+git clone <reference-repo-url>
+# Update domain CLAUDE.md files to mention new reference
+```
+
+## Migration to Workspace (Phase 2)
+
+When domains stabilize, migrate to Cargo workspace:
+
+### Pre-Migration Checklist
+- [ ] Core algorithms in each domain are implemented and tested
+- [ ] APIs are relatively stable
+- [ ] Identify common code that should be extracted to `rivrs-core/`
+- [ ] All implementations have proper attribution
+
+### Migration Steps
+1. Create workspace `Cargo.toml` at root
+2. Create `rivrs-core/` with shared utilities, traits, errors
+3. Rename domains:
+   - `control/` → `rivrs-control/`
+   - `ssids/` → `rivrs-sparse/`
+4. Update each domain's `Cargo.toml` to depend on `rivrs-core`
+5. Move domain `Cargo.toml` and `src/` to workspace member structure
+6. Test workspace builds: `cargo build --workspace`
+7. Update documentation
+
+### Workspace Structure (Future)
+```
+rivrs-linalg/
+├── Cargo.toml              # Workspace manifest
+├── rivrs-core/
+│   ├── Cargo.toml
+│   └── src/                # Shared traits, errors, utilities
+├── rivrs-control/
+│   ├── Cargo.toml          # depends on rivrs-core
+│   ├── CLAUDE.md
+│   └── src/
+├── rivrs-sparse/
+│   ├── Cargo.toml          # depends on rivrs-core
+│   ├── CLAUDE.md
+│   └── src/
+└── references/
+```
+
+## Git Workflow
+
+### Commit Practices (Repository-Wide)
+- Commit frequently after logical units
+- Commit after tests pass or milestones are verified
+- Use clear, descriptive commit messages
+- Include Co-Authored-By for AI assistance when appropriate
+
+### Branch Strategy (Current: Simple)
+- `main` branch for all development (Phase 1)
+- Feature branches for major changes
+- No complex branching needed yet (single developer, early stage)
+
+### Branch Strategy (Future: Workspace)
+- `main` branch for stable workspace
+- Domain-specific branches: `control/*`, `sparse/*`
+- Feature branches: `feature/algorithm-name`
+
+## Testing and CI/CD
+
+### Current Testing
+Each domain runs its own tests:
+```bash
+cd control/ && cargo test
+cd ssids/ && cargo test
+```
+
+### Future CI/CD (Workspace)
+```yaml
+# GitHub Actions workflow
+- Run tests for all workspace members
+- Run benchmarks
+- Check formatting (rustfmt)
+- Check lints (clippy)
+- Verify clean room compliance (check for cited sources)
+```
+
+## Documentation Standards (Repository-Wide)
+
+### Algorithm Documentation
+Every algorithm implementation MUST include:
+1. Mathematical description of the operation
+2. **Academic sources cited** (papers, textbooks, standards)
+3. **Reference implementations consulted** (LAPACK routines, SLICOT routines, SPRAL functions)
+4. Numerical stability characteristics
+5. Complexity analysis (time, space)
+6. Usage examples
+7. Cross-references to equivalent routines in other libraries
+
+### Clean Room Audit Trail
+Each implementation should be traceable to non-GPL sources:
+- Cite specific papers, textbook sections, or permissively-licensed code
+- Document decision points where algorithm choices were made
+- Note any deviations from reference implementations
+
+## Repository Maintenance
+
+### Regular Tasks
+- Update reference implementations periodically
+- Keep Rust toolchain up to date (check MSRV)
+- Update dependencies (cargo update)
+- Review and update documentation
+- Verify clean room compliance
+
+### Adding New Contributors
+New contributors must:
+1. Read this CLAUDE.md
+2. Read domain-specific CLAUDE.md for their work area
+3. Read NOTICE file to understand attribution requirements
+4. Understand clean room methodology
+5. Know which sources they can/cannot consult
+
+## License and Attribution
+
+**License**: Apache-2.0 (see [LICENSE](LICENSE))
+
+**Attribution**: See [NOTICE](NOTICE) for complete attribution to:
+- Academic sources (papers, textbooks)
+- LAPACK (BSD-3-Clause)
+- SLICOT-Reference (BSD-3-Clause)
+- SPRAL (BSD-3-Clause, planned)
+- MatrixEquations.jl (MIT, for validation)
+
+Each domain's implementation cites specific sources used.
+
+## Current Status and Next Steps
+
+### Completed
+- ✅ Repository restructuring (CSRRS → rivrs-linalg)
+- ✅ Phase 1 structure (isolated projects)
+- ✅ control/ domain active with Sylvester solvers
+- ✅ ssids/ domain scaffolded
+- ✅ Clean room documentation and attribution
+
+### Next Steps
+1. Add SPRAL to `references/`
+2. Continue control/ development (Lyapunov, Riccati)
+3. Begin ssids/ implementation (AMD ordering, elimination tree)
+4. Add benchmarking infrastructure
+5. Plan workspace migration when domains stabilize
+
+## Questions or Issues?
+
+For domain-specific questions, consult the appropriate CLAUDE.md:
+- Control systems: [control/CLAUDE.md](control/CLAUDE.md)
+- Sparse solvers: [ssids/CLAUDE.md](ssids/CLAUDE.md)
+
+For repository-wide questions or structural issues, refer to this file.
