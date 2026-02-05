@@ -516,7 +516,7 @@ where
 ### Basic Solve
 
 ```rust
-use csrrs::sylvester::solve_continuous;
+use rivrs_linalg::sylvester::solve_continuous;
 use faer::prelude::*;
 
 let a = mat![[1.0, 0.5], [0.0, -1.0]];

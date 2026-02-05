@@ -4,8 +4,8 @@
 //! is singular and cannot be solved. This example demonstrates how the
 //! solver detects and reports such cases.
 
-use csrrs::error::SylvesterError;
-use csrrs::sylvester::solve_continuous;
+use rivrs_linalg::error::SylvesterError;
+use rivrs_linalg::sylvester::solve_continuous;
 use faer::prelude::*;
 
 fn main() {

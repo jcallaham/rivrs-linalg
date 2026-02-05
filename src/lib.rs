@@ -1,7 +1,9 @@
-//! CSRRS - Control Systems Routines in Rust
+//! rivrs-linalg — Numerical Linear Algebra for Rivrs
 //!
-//! A scientific computing library implementing control systems algorithms,
-//! similar in scope to SLICOT but with permissive (MIT/Apache-2.0) licensing.
+//! A scientific computing library providing numerical linear algebra implementations
+//! for the Rivrs symbolic-numeric framework. Currently focused on control systems
+//! algorithms, with plans to expand to sparse solvers and other numerical methods.
+//! Licensed under permissive MIT/Apache-2.0 terms.
 //!
 //! # Sylvester Equation Solvers
 //!
@@ -17,7 +19,7 @@
 //! # Example
 //!
 //! ```
-//! use csrrs::sylvester::solve_continuous;
+//! use rivrs_linalg::sylvester::solve_continuous;
 //! use faer::mat;
 //!
 //! let a = mat![[1.0, 0.0], [0.0, 2.0f64]];
@@ -36,10 +38,12 @@
 //!
 //! - Bartels & Stewart (1972), "Solution of the Matrix Equation AX + XB = C",
 //!   CACM 15(9):820-826
-//! - Golub & Van Loan (2013), "Matrix Computations" (4th Ed), Chapter 7
+//! - Golub & Van Loan (2013), "Matrix Computations" (4th Ed), Section 7.6.3
 //! - LAPACK dtrsyl/dtrsyl3 (BSD-3-Clause) for numerical stability patterns
 //! - Jonsson & Kågström (2002), "Recursive blocked algorithms for solving
 //!   triangular systems", ACM TOMS 28(4):416-435
+//!
+//! See [NOTICE](../NOTICE) for complete attribution and licensing information.
 
 pub mod error;
 pub mod sylvester;

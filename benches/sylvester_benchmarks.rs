@@ -37,7 +37,7 @@ fn bench_continuous(c: &mut Criterion) {
                 let bb = random_matrix(size, 5.0, &mut rng);
                 let cc = random_rhs(size, size, &mut rng);
                 b.iter(|| {
-                    csrrs::sylvester::solve_continuous(a.as_ref(), bb.as_ref(), cc.as_ref())
+                    rivrs_linalg::sylvester::solve_continuous(a.as_ref(), bb.as_ref(), cc.as_ref())
                         .unwrap()
                 });
             },
@@ -61,7 +61,7 @@ fn bench_discrete(c: &mut Criterion) {
                 let bb = random_matrix(size, 0.0, &mut rng) * 0.3;
                 let cc = random_rhs(size, size, &mut rng);
                 b.iter(|| {
-                    csrrs::sylvester::solve_discrete(a.as_ref(), bb.as_ref(), cc.as_ref()).unwrap()
+                    rivrs_linalg::sylvester::solve_discrete(a.as_ref(), bb.as_ref(), cc.as_ref()).unwrap()
                 });
             },
         );
@@ -94,7 +94,7 @@ fn bench_triangular(c: &mut Criterion) {
 
                 b.iter(|| {
                     let mut cc = cc_orig.clone();
-                    csrrs::sylvester::triangular::solve_triangular_sylvester(
+                    rivrs_linalg::sylvester::triangular::solve_triangular_sylvester(
                         a.as_ref(),
                         bb.as_ref(),
                         cc.as_mut(),

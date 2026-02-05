@@ -8,7 +8,7 @@ RED='\033[0;31m'
 NC='\033[0m' # No Color
 
 echo -e "${GREEN}=====================================${NC}"
-echo -e "${GREEN}CSRRS Docker Run Script${NC}"
+echo -e "${GREEN}rivrs-linalg Docker Run Script${NC}"
 echo -e "${GREEN}=====================================${NC}"
 echo ""
 
@@ -26,35 +26,35 @@ if ! gh auth status &>/dev/null; then
 fi
 
 # Check if container already exists
-if docker ps -a --format '{{.Names}}' | grep -q '^csrrs-dev$'; then
-	echo -e "${YELLOW}Container 'csrrs-dev' already exists${NC}"
+if docker ps -a --format '{{.Names}}' | grep -q '^rivrs-linalg-dev$'; then
+	echo -e "${YELLOW}Container 'rivrs-linalg-dev' already exists${NC}"
 
-	if docker ps --format '{{.Names}}' | grep -q '^csrrs-dev$'; then
+	if docker ps --format '{{.Names}}' | grep -q '^rivrs-linalg-dev$'; then
 		echo "Container is running. Attaching..."
-		docker exec -it csrrs-dev bash
+		docker exec -it rivrs-linalg-dev bash
 	else
 		echo "Container is stopped. Starting..."
-		docker start csrrs-dev
-		docker exec -it csrrs-dev bash
+		docker start rivrs-linalg-dev
+		docker exec -it rivrs-linalg-dev bash
 	fi
 else
-	echo -e "${GREEN}Creating new container 'csrrs-dev'...${NC}"
+	echo -e "${GREEN}Creating new container 'rivrs-linalg-dev'...${NC}"
 	echo ""
 
 	# Create named volumes if they don't exist
-	docker volume create csrrs-cargo-cache 2>/dev/null || true
-	docker volume create csrrs-sccache-cache 2>/dev/null || true
+	docker volume create rivrs-linalg-cargo-cache 2>/dev/null || true
+	docker volume create rivrs-linalg-sccache-cache 2>/dev/null || true
 
 	# Get GitHub token from host (falls back to file-based if keyring fails)
 	GH_TOKEN=$(gh auth token 2>/dev/null || echo "")
 
 	# Run the container
 	docker run -it \
-		--name csrrs-dev \
+		--name rivrs-linalg-dev \
 		--platform linux/arm64 \
-		-v csrrs-workspace:/workspace/csrrs \
-		-v csrrs-cargo-cache:/root/.cargo/registry \
-		-v csrrs-sccache-cache:/root/.cache/sccache \
+		-v rivrs-linalg-workspace:/workspace/rivrs-linalg \
+		-v rivrs-linalg-cargo-cache:/root/.cargo/registry \
+		-v rivrs-linalg-sccache-cache:/root/.cache/sccache \
 		-e GH_TOKEN="${GH_TOKEN}" \
 		-e GITHUB_TOKEN="${GH_TOKEN}" \
 		-e RUSTFLAGS="-C target-cpu=native" \
@@ -62,12 +62,12 @@ else
 		-e RUSTC_WRAPPER=sccache \
 		--cpus=8 \
 		--memory=16g \
-		csrrs-dev:latest \
+		rivrs-linalg-dev:latest \
 		/bin/bash
 fi
 
 echo ""
 echo -e "${GREEN}Exited container${NC}"
 echo ""
-echo "To restart: docker start csrrs-dev && docker exec -it csrrs-dev bash"
-echo "To remove:  docker rm csrrs-dev"
+echo "To restart: docker start rivrs-linalg-dev && docker exec -it rivrs-linalg-dev bash"
+echo "To remove:  docker rm rivrs-linalg-dev"

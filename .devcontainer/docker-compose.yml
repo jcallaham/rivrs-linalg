@@ -1,7 +1,7 @@
 version: '3.8'
 
 services:
-  csrrs-dev:
+  rivrs-linalg-dev:
     build:
       context: ..
       dockerfile: docker/Dockerfile
@@ -11,11 +11,11 @@ services:
         GIT_USER_NAME: "${GIT_USER_NAME:-Claude Code}"
         GIT_USER_EMAIL: "${GIT_USER_EMAIL:-claude@example.com}"
     platform: linux/arm64
-    image: csrrs-dev:latest
-    container_name: csrrs-dev
+    image: rivrs-linalg-dev:latest
+    container_name: rivrs-linalg-dev
 
     volumes:
-      - workspace:/workspace/csrrs  # Isolated workspace (sandboxed from host)
+      - workspace:/workspace/rivrs-linalg  # Isolated workspace (sandboxed from host)
       - cargo-cache:/root/.cargo/registry
       - sccache-cache:/root/.cache/sccache
       - claude-config:/root/.claude
@@ -45,10 +45,10 @@ services:
 
 volumes:
   workspace:
-    name: csrrs-workspace
+    name: rivrs-linalg-workspace
   cargo-cache:
-    name: csrrs-cargo-cache
+    name: rivrs-linalg-cargo-cache
   sccache-cache:
-    name: csrrs-sccache-cache
+    name: rivrs-linalg-sccache-cache
   claude-config:
-    name: csrrs-claude-config
+    name: rivrs-linalg-claude-config

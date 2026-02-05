@@ -55,7 +55,7 @@ use crate::error::SylvesterError;
 /// # Example
 ///
 /// ```rust
-/// use csrrs::sylvester::solve_discrete;
+/// use rivrs_linalg::sylvester::solve_discrete;
 /// use faer::prelude::*;
 ///
 /// let a = mat![[0.5, 0.1], [0.0, 0.8f64]];

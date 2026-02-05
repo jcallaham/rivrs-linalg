@@ -1,8 +1,8 @@
 {
-	"name": "CSRRS Development Container",
+	"name": "rivrs-linalg Development Container",
 	"dockerComposeFile": "docker-compose.yml",
-	"service": "csrrs-dev",
-	"workspaceFolder": "/workspace/csrrs",
+	"service": "rivrs-linalg-dev",
+	"workspaceFolder": "/workspace/rivrs-linalg",
 	"shutdownAction": "stopCompose",
 	"features": {
 		"ghcr.io/devcontainers/features/github-cli:1": {
@@ -49,6 +49,6 @@
 	"postCreateCommand": "rustc --version && cargo --version && gh --version && claude --version && echo '✓ Development environment ready'",
 	"mounts": [
 		"source=${localEnv:HOME}/.config/gh,target=/root/.config/gh,type=bind,consistency=cached",
-		"source=csrrs-claude-config,target=/root/.claude,type=volume"
+		"source=rivrs-linalg-claude-config,target=/root/.claude,type=volume"
 	]
 }

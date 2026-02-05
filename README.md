@@ -1,12 +1,14 @@
-# CSRRS — Control Systems Routines in Rust
+# rivrs-linalg — Numerical Linear Algebra for Rivrs
 
-A scientific computing library implementing control systems algorithms, similar
-in scope to [SLICOT](http://www.slicot.org/) but with permissive
-(MIT/Apache-2.0) licensing.
+A scientific computing library providing numerical linear algebra implementations
+for the [Rivrs](https://github.com/jcallaham/rivrs) symbolic-numeric framework.
+Currently focused on control systems algorithms similar in scope to
+[SLICOT](http://www.slicot.org/), with plans to expand to sparse solvers and
+other numerical methods. Licensed under permissive MIT/Apache-2.0 terms.
 
 This is a **clean room implementation** — algorithms are implemented from
-academic papers and textbooks, not from SLICOT source code, to avoid GPL
-contamination.
+academic papers, textbooks, and permissively-licensed reference implementations
+(LAPACK), not from GPL-licensed sources like SLICOT source code.
 
 ## Current Features
 
@@ -30,12 +32,12 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-csrrs = { git = "https://github.com/..." }  # update with actual URL
+rivrs-linalg = { git = "https://github.com/jcallaham/rivrs-linalg" }
 faer = "0.22"
 ```
 
 ```rust
-use csrrs::sylvester::solve_continuous;
+use rivrs_linalg::sylvester::solve_continuous;
 use faer::mat;
 
 let a = mat![[1.0, 0.0], [0.0, 2.0f64]];
@@ -54,7 +56,7 @@ various matrix sizes N, measured on the same machine in a single run.
 
 ### Continuous: AX + XB = C
 
-| N | SLICOT SB04MD (ms) | CSRRS (ms) | Ratio |
+| N | SLICOT SB04MD (ms) | rivrs-linalg (ms) | Ratio |
 |---:|---:|---:|---:|
 | 10 | 0.031 | 0.025 | 0.8x |
 | 50 | 2.59 | 1.18 | 0.5x |
@@ -64,7 +66,7 @@ various matrix sizes N, measured on the same machine in a single run.
 
 ### Discrete: AXB + X = C
 
-| N | SLICOT SB04QD (ms) | CSRRS (ms) | Ratio |
+| N | SLICOT SB04QD (ms) | rivrs-linalg (ms) | Ratio |
 |---:|---:|---:|---:|
 | 10 | 0.041 | 0.040 | 1.0x |
 | 50 | 1.47 | 2.21 | 1.5x |
@@ -82,14 +84,14 @@ the right ballpark, not for drawing precise conclusions. Key differences:
 - **SLICOT** uses the **Hessenberg-Schur** method (Golub, Nash & Van Loan 1979):
   reduces A to Hessenberg form and B to Schur form. Lower theoretical flop
   count but relies on Level-2 BLAS column solves.
-- **CSRRS** uses the **Bartels-Stewart** method (Bartels & Stewart 1972):
+- **rivrs-linalg** uses the **Bartels-Stewart** method (Bartels & Stewart 1972):
   reduces both A and B to Schur form. The continuous triangular solve uses a
   blocked Level-3 BLAS variant (Jonsson & Kagstrom 2002) for N > 64.
 - **LAPACK version**: SLICOT is linked against **reference (Netlib) LAPACK/BLAS**,
-  not an optimized implementation like OpenBLAS or MKL. CSRRS uses **faer** for
-  matrix operations and **nalgebra** for Schur decomposition, both of which
+  not an optimized implementation like OpenBLAS or MKL. rivrs-linalg uses **faer**
+  for matrix operations and **nalgebra** for Schur decomposition, both of which
   include their own optimized kernels.
-- **Discrete gap**: CSRRS's discrete solver does not yet have a blocked
+- **Discrete gap**: rivrs-linalg's discrete solver does not yet have a blocked
   triangular variant. The trilinear AXB term requires 6 matrix multiplications
   per block step (vs 2 for the continuous AX + XB case), making a blocked
   implementation more involved.
@@ -97,15 +99,31 @@ the right ballpark, not for drawing precise conclusions. Key differences:
   scaling (discrete). Different RNGs between Fortran and Rust, but same
   statistical properties.
 
-## Academic References
+## Implementation Sources and Attribution
 
-- Bartels & Stewart (1972), "Solution of the Matrix Equation AX + XB = C",
-  CACM 15(9):820-826
-- Golub & Van Loan (2013), *Matrix Computations* (4th Ed), Chapter 7
-- Jonsson & Kagstrom (2002), "Recursive blocked algorithms for solving
-  triangular systems", ACM TOMS 28(4):416-435
-- LAPACK `dtrsyl`/`dtrsyl3` (BSD-3-Clause) — consulted for numerical stability
-  patterns
+The Sylvester equation solvers are clean room implementations based on the following academic and open-source references:
+
+### Primary Algorithm Sources
+- **Bartels & Stewart (1972)**, "Solution of the Matrix Equation AX + XB = C",
+  *Communications of the ACM* 15(9):820-826 — fundamental Schur-based algorithm
+- **Golub & Van Loan (2013)**, *Matrix Computations* (4th Ed), Section 7.6.3 —
+  detailed algorithm description and numerical considerations
+- **Jonsson & Kågström (2002)**, "Recursive blocked algorithms for solving
+  triangular systems", *ACM TOMS* 28(4):416-435 — Level-3 BLAS blocked variant
+
+### Reference Implementations Consulted
+- **LAPACK `dtrsyl`/`dtrsyl3`** (BSD-3-Clause licensed) — consulted for numerical
+  stability patterns, overflow prevention via scaling, and handling of quasi-triangular
+  Schur form. Source code available at https://netlib.org/lapack/
+- **SLICOT documentation and test suite** (SB04MD, SB04QD) — used only for understanding
+  algorithm purpose and expected numerical accuracy. **SLICOT source code was NOT
+  consulted** to maintain clean room status and avoid GPL contamination.
+
+### Validation References
+- **MatrixEquations.jl** — Julia library used for cross-validation of test cases
+- **SLICOT test suite** (slicot/examples/) — numerical test cases and pass criteria
+
+See [NOTICE](NOTICE) for complete licensing information.
 
 ## License
 

@@ -99,13 +99,13 @@ RUN echo '#!/bin/bash' > /usr/local/bin/entrypoint.sh && \
 	echo 'set -e' >> /usr/local/bin/entrypoint.sh && \
 	echo '' >> /usr/local/bin/entrypoint.sh && \
 	echo '# Check if repository already exists (container restart)' >> /usr/local/bin/entrypoint.sh && \
-	echo 'if [ ! -d "/workspace/csrrs/.git" ]; then' >> /usr/local/bin/entrypoint.sh && \
+	echo 'if [ ! -d "/workspace/rivrs-linalg/.git" ]; then' >> /usr/local/bin/entrypoint.sh && \
 	echo '  echo "Cloning repository from GitHub..."' >> /usr/local/bin/entrypoint.sh && \
 	echo '  mkdir -p /workspace' >> /usr/local/bin/entrypoint.sh && \
 	echo '  cd /workspace' >> /usr/local/bin/entrypoint.sh && \
 	echo '  ' >> /usr/local/bin/entrypoint.sh && \
 	echo '  # Use gh CLI to clone (uses mounted credentials)' >> /usr/local/bin/entrypoint.sh && \
-	echo '  if ! gh repo clone jcallaham/csrrs csrrs 2>/tmp/clone_error.log; then' >> /usr/local/bin/entrypoint.sh && \
+	echo '  if ! gh repo clone jcallaham/rivrs-linalg rivrs-linalg 2>/tmp/clone_error.log; then' >> /usr/local/bin/entrypoint.sh && \
 	echo '    echo "ERROR: Failed to clone repository. Check GitHub authentication:"' >> /usr/local/bin/entrypoint.sh && \
 	echo '    cat /tmp/clone_error.log' >> /usr/local/bin/entrypoint.sh && \
 	echo '    echo ""' >> /usr/local/bin/entrypoint.sh && \
@@ -114,29 +114,29 @@ RUN echo '#!/bin/bash' > /usr/local/bin/entrypoint.sh && \
 	echo '    exit 1' >> /usr/local/bin/entrypoint.sh && \
 	echo '  fi' >> /usr/local/bin/entrypoint.sh && \
 	echo '  ' >> /usr/local/bin/entrypoint.sh && \
-	echo '  cd /workspace/csrrs' >> /usr/local/bin/entrypoint.sh && \
-	echo '  git config --local safe.directory /workspace/csrrs' >> /usr/local/bin/entrypoint.sh && \
+	echo '  cd /workspace/rivrs-linalg' >> /usr/local/bin/entrypoint.sh && \
+	echo '  git config --local safe.directory /workspace/rivrs-linalg' >> /usr/local/bin/entrypoint.sh && \
 	echo '  ' >> /usr/local/bin/entrypoint.sh && \
 	echo '  # Fix fetch refspec (gh repo clone sometimes misses this)' >> /usr/local/bin/entrypoint.sh && \
 	echo '  git config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*"' >> /usr/local/bin/entrypoint.sh && \
 	echo '  git fetch --all --quiet' >> /usr/local/bin/entrypoint.sh && \
 	echo '' >> /usr/local/bin/entrypoint.sh && \
 	echo '  # Symlink reference materials into repository' >> /usr/local/bin/entrypoint.sh && \
-	echo '  ln -s /opt/references/faer-rs /workspace/csrrs/faer-rs' >> /usr/local/bin/entrypoint.sh && \
-	echo '  ln -s /opt/references/lapack /workspace/csrrs/lapack' >> /usr/local/bin/entrypoint.sh && \
-	echo '  ln -s /opt/references/SLICOT-Reference /workspace/csrrs/SLICOT-Reference' >> /usr/local/bin/entrypoint.sh && \
-	echo '  ln -s /opt/references/slicot /workspace/csrrs/slicot' >> /usr/local/bin/entrypoint.sh && \
+	echo '  ln -s /opt/references/faer-rs /workspace/rivrs-linalg/faer-rs' >> /usr/local/bin/entrypoint.sh && \
+	echo '  ln -s /opt/references/lapack /workspace/rivrs-linalg/lapack' >> /usr/local/bin/entrypoint.sh && \
+	echo '  ln -s /opt/references/SLICOT-Reference /workspace/rivrs-linalg/SLICOT-Reference' >> /usr/local/bin/entrypoint.sh && \
+	echo '  ln -s /opt/references/slicot /workspace/rivrs-linalg/slicot' >> /usr/local/bin/entrypoint.sh && \
 	echo '  ' >> /usr/local/bin/entrypoint.sh && \
 	echo '  echo "Repository cloned successfully!"' >> /usr/local/bin/entrypoint.sh && \
 	echo 'else' >> /usr/local/bin/entrypoint.sh && \
 	echo '  echo "Repository already exists, skipping clone."' >> /usr/local/bin/entrypoint.sh && \
 	echo 'fi' >> /usr/local/bin/entrypoint.sh && \
 	echo '' >> /usr/local/bin/entrypoint.sh && \
-	echo 'cd /workspace/csrrs' >> /usr/local/bin/entrypoint.sh && \
+	echo 'cd /workspace/rivrs-linalg' >> /usr/local/bin/entrypoint.sh && \
 	echo 'exec "$@"' >> /usr/local/bin/entrypoint.sh && \
 	chmod +x /usr/local/bin/entrypoint.sh
 
-WORKDIR /workspace/csrrs
+WORKDIR /workspace/rivrs-linalg
 
 # Configure Cargo for performance
 RUN mkdir -p /root/.cargo && \
@@ -150,7 +150,7 @@ RUN mkdir -p /root/.cargo && \
 # Create welcome script
 RUN echo '#!/bin/bash' > /usr/local/bin/welcome.sh && \
 	echo 'echo "======================================"' >> /usr/local/bin/welcome.sh && \
-	echo 'echo "CSRRS Development Environment (ARM64)"' >> /usr/local/bin/welcome.sh && \
+	echo 'echo "rivrs-linalg Development Environment (ARM64)"' >> /usr/local/bin/welcome.sh && \
 	echo 'echo "======================================"' >> /usr/local/bin/welcome.sh && \
 	echo 'echo ""' >> /usr/local/bin/welcome.sh && \
 	echo 'echo "Rust:        $(rustc --version)"' >> /usr/local/bin/welcome.sh && \

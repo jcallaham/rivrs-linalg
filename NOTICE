@@ -1,0 +1,135 @@
+NOTICE
+======
+
+rivrs-linalg — Numerical Linear Algebra for Rivrs
+Copyright (c) 2026 J. Nathan Kutz and contributors
+
+This software is licensed under the MIT License or Apache License 2.0
+(see LICENSE-MIT and LICENSE-APACHE).
+
+CLEAN ROOM IMPLEMENTATION
+==========================
+
+This library is a clean room implementation of numerical linear algebra algorithms.
+To maintain permissive licensing, GPL-licensed source code (including SLICOT Fortran
+sources) was NOT consulted during implementation. All algorithms are implemented from
+academic papers, textbooks, and permissively-licensed reference code.
+
+ACADEMIC AND REFERENCE SOURCES
+===============================
+
+Sylvester Equation Solvers (src/sylvester/)
+--------------------------------------------
+
+Implementation based on:
+
+1. Academic Publications:
+   - Bartels, R.H. & Stewart, G.W. (1972). "Solution of the Matrix Equation
+     AX + XB = C". Communications of the ACM, 15(9), 820-826.
+     DOI: 10.1145/361573.361582
+
+   - Golub, G.H. & Van Loan, C.F. (2013). "Matrix Computations" (4th Edition),
+     Section 7.6.3: The Bartels-Stewart Algorithm. Johns Hopkins University Press.
+     ISBN: 978-1421407944
+
+   - Jonsson, I. & Kågström, B. (2002). "Recursive blocked algorithms for solving
+     triangular systems—Part I: one-sided and coupled Sylvester-type matrix equations".
+     ACM Transactions on Mathematical Software, 28(4), 392-415.
+     DOI: 10.1145/592843.592845
+
+2. Reference Implementation:
+   - LAPACK dtrsyl.f and dtrsyl3.f (LAPACK 3.11.0)
+     Copyright (c) 1992-2023 The University of Tennessee and The University
+     of Tennessee Research Foundation. All rights reserved.
+     Copyright (c) 2000-2023 The University of California Berkeley. All rights reserved.
+     Copyright (c) 2006-2023 The University of Colorado Denver. All rights reserved.
+     Licensed under BSD-3-Clause (see below)
+     Available at: https://netlib.org/lapack/
+
+     Used as reference for: numerical stability patterns, overflow prevention via
+     scaling factors, handling of quasi-triangular real Schur form (1×1 and 2×2 blocks),
+     and BLAS-based triangular system solving.
+
+3. SLICOT Usage (Documentation and Test Cases Only):
+   SLICOT (Subroutine Library in Systems and Control Theory)
+   Copyright (c) 2020, SLICOT
+   Licensed under GPL-2.0
+   Available at: http://www.slicot.org/
+
+   SLICOT ROUTINES REFERENCED (documentation and test cases only):
+   - SB04MD: Continuous-time Sylvester equation (Hessenberg-Schur method)
+   - SB04QD: Discrete-time Sylvester equation (Hessenberg-Schur method)
+
+   **IMPORTANT**: Only SLICOT documentation (slicot/doc/*.html) and test suite
+   (slicot/examples/) were consulted. SLICOT Fortran source code (slicot/src/*.f)
+   was NOT examined during implementation to avoid GPL contamination. SLICOT test
+   cases provide non-copyrightable facts: numerical test data and expected accuracy
+   criteria.
+
+4. Validation References:
+   - MatrixEquations.jl (Julia package)
+     Copyright (c) 2017-2024 Andreas Varga and contributors
+     Licensed under MIT License
+     Available at: https://github.com/andreasvarga/MatrixEquations.jl
+
+     Used for: Cross-validation of numerical results in test development
+
+LAPACK LICENSE (BSD-3-Clause)
+==============================
+
+Portions of the numerical algorithms were informed by LAPACK routines dtrsyl and dtrsyl3.
+LAPACK is licensed under the following terms:
+
+Copyright (c) 1992-2023
+The University of Tennessee and The University of Tennessee Research Foundation.
+All rights reserved.
+
+Copyright (c) 2000-2023
+The University of California Berkeley. All rights reserved.
+
+Copyright (c) 2006-2023
+The University of Colorado Denver.  All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+* Redistributions of source code must retain the above copyright notice, this
+  list of conditions and the following disclaimer.
+
+* Redistributions in binary form must reproduce the above copyright notice,
+  this list of conditions and the following disclaimer in the documentation
+  and/or other materials provided with the distribution.
+
+* Neither the name of the copyright holder nor the names of its contributors
+  may be used to endorse or promote products derived from this software
+  without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+DEPENDENCIES
+============
+
+This library depends on other open-source Rust crates, each with their own licenses:
+- faer (Apache-2.0 OR MIT)
+- nalgebra (Apache-2.0)
+- approx (Apache-2.0 OR MIT, dev dependency)
+- criterion (Apache-2.0 OR MIT, dev dependency)
+
+See Cargo.toml and the respective crate documentation for complete dependency licensing.
+
+CONTRIBUTIONS
+=============
+
+All contributions to rivrs-linalg must maintain clean room status. Contributors must not
+examine GPL-licensed source code (including SLICOT sources) when implementing algorithms.
+Acceptable sources include: academic papers, textbooks, BSD/MIT licensed code (LAPACK, BLAS),
+and non-copyrightable facts (test data, numerical accuracy criteria).

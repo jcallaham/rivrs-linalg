@@ -8,7 +8,7 @@ RED='\033[0;31m'
 NC='\033[0m' # No Color
 
 echo -e "${GREEN}=====================================${NC}"
-echo -e "${GREEN}CSRRS Docker Build Script (ARM64)${NC}"
+echo -e "${GREEN}rivrs-linalg Docker Build Script (ARM64)${NC}"
 echo -e "${GREEN}=====================================${NC}"
 echo ""
 
@@ -52,7 +52,7 @@ docker build \
 	--build-arg GIT_USER_NAME="$GIT_USER_NAME" \
 	--build-arg GIT_USER_EMAIL="$GIT_USER_EMAIL" \
 	-f docker/Dockerfile \
-	-t csrrs-dev:latest \
+	-t rivrs-linalg-dev:latest \
 	--progress=plain \
 	.
 
@@ -63,7 +63,7 @@ echo -e "${GREEN}=====================================${NC}"
 echo ""
 
 # Show image size
-IMAGE_SIZE=$(docker images csrrs-dev:latest --format "{{.Size}}")
+IMAGE_SIZE=$(docker images rivrs-linalg-dev:latest --format "{{.Size}}")
 echo -e "${YELLOW}Image size:${NC} $IMAGE_SIZE"
 echo ""
 
@@ -84,7 +84,7 @@ echo ""
 echo "   Command line (docker-compose):"
 echo "   - Uncomment gh mount in .devcontainer/docker-compose.yml"
 echo "   - cd docker && docker-compose up -d"
-echo "   - docker exec -it csrrs-dev bash"
+echo "   - docker exec -it rivrs-linalg-dev bash"
 echo ""
 echo "   Command line (docker):"
 echo "   - cd docker && ./run.sh"
@@ -92,6 +92,6 @@ echo ""
 echo "3. Claude Code is pre-installed:"
 echo "   - Run 'claude --version' inside the container to verify"
 echo "   - Use the Claude Code VS Code extension for AI assistance"
-echo "   - Config stored in persistent volume: csrrs-claude-config"
+echo "   - Config stored in persistent volume: rivrs-linalg-claude-config"
 echo ""
 echo -e "${GREEN}Happy coding!${NC}"

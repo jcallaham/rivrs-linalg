@@ -1,6 +1,6 @@
-# CSRRS Docker Development Environment
+# rivrs-linalg Docker Development Environment
 
-Complete, isolated Docker development environment for CSRRS with all reference materials and GitHub integration.
+Complete, isolated Docker development environment for rivrs-linalg with all reference materials and GitHub integration.
 
 ## Architecture
 
@@ -53,7 +53,7 @@ cd docker
 docker-compose up -d
 
 # Enter container
-docker exec -it csrrs-dev bash
+docker exec -it rivrs-linalg-dev bash
 
 # Inside container
 rustc --version  # Verify Rust works
@@ -82,7 +82,7 @@ cd docker
 ## Container Structure
 
 ```
-/workspace/csrrs/              # Project root
+/workspace/rivrs-linalg/              # Project root
 ├── faer-rs/                   # Rust linear algebra reference
 ├── lapack/                    # BSD-licensed LAPACK (consult freely)
 ├── SLICOT-Reference/          # SLICOT docs and tests ONLY
@@ -108,7 +108,7 @@ cd docker
 1. Reopen the project in the container (F1 → "Dev Containers: Reopen in Container")
 2. The Claude Code extension is automatically loaded
 3. Click the Claude icon in the sidebar to start interacting
-4. Claude can read/edit Rust files, run tests, and assist with CSRRS development
+4. Claude can read/edit Rust files, run tests, and assist with rivrs-linalg development
 
 **From Command Line**:
 ```bash
@@ -121,7 +121,7 @@ claude --version  # Verify installation
 
 ### What Claude Code Can Do
 
-- **Read and analyze** Rust code in the CSRRS project
+- **Read and analyze** Rust code in the rivrs-linalg project
 - **Edit files** based on your instructions
 - **Run commands** (cargo build, cargo test, etc.)
 - **Explain algorithms** from reference materials (following clean room rules)
@@ -130,7 +130,7 @@ claude --version  # Verify installation
 
 ### Clean Room Compliance
 
-Claude Code is configured to follow CSRRS clean room implementation rules:
+Claude Code is configured to follow rivrs-linalg clean room implementation rules:
 - Will NOT read SLICOT Fortran source code (slicot/src/*.f files)
 - Will use SLICOT documentation, test cases, and LAPACK source as references
 - Will help implement algorithms from academic papers and textbooks
@@ -139,14 +139,14 @@ Claude Code is configured to follow CSRRS clean room implementation rules:
 ### Persistent Configuration
 
 Claude Code configuration is stored in a persistent Docker volume:
-- Volume name: `csrrs-claude-config`
+- Volume name: `rivrs-linalg-claude-config`
 - Mount point: `/root/.claude`
 - Survives container restarts and rebuilds
 - Plugins and settings are preserved
 
 To reset Claude Code config:
 ```bash
-docker volume rm csrrs-claude-config
+docker volume rm rivrs-linalg-claude-config
 # Next container start will create a fresh volume
 ```
 
@@ -158,7 +158,7 @@ All development happens inside the container:
 
 ```bash
 # Inside container
-cd /workspace/csrrs
+cd /workspace/rivrs-linalg
 
 # Create/edit code
 vim src/lib.rs
@@ -189,7 +189,7 @@ git push origin 001-sylvester-solver
 
 ```bash
 # On host machine
-cd /Users/jared/Dropbox/projects/csrrs
+cd /Users/jared/Dropbox/projects/rivrs-linalg
 git pull origin 001-sylvester-solver
 ```
 
@@ -203,10 +203,10 @@ docker-compose down
 
 # Restart container (state restored)
 docker-compose up -d
-docker exec -it csrrs-dev bash
+docker exec -it rivrs-linalg-dev bash
 
 # Remove container (state lost)
-docker rm csrrs-dev
+docker rm rivrs-linalg-dev
 ```
 
 **Important**: Uncommitted code in the container is lost if you remove the container. Always push to GitHub!
@@ -250,7 +250,7 @@ gh auth status  # Should show logged in to github.com
 
 ❌ **SLICOT Fortran source** (`slicot/src/*.f`): GPL-licensed, reading it contaminates clean room
 
-**Rationale**: CSRRS must remain permissively licensed (MIT/Apache-2.0). Reading GPL code during implementation creates copyright issues. Use academic papers, textbooks, and BSD-licensed LAPACK instead.
+**Rationale**: rivrs-linalg must remain permissively licensed (MIT/Apache-2.0). Reading GPL code during implementation creates copyright issues. Use academic papers, textbooks, and BSD-licensed LAPACK instead.
 
 ## Performance Notes
 
@@ -355,7 +355,7 @@ ls -l faer-rs lapack SLICOT-Reference slicot
 **Fix**:
 ```bash
 # Check volume is mounted
-docker inspect csrrs-dev | grep sccache
+docker inspect rivrs-linalg-dev | grep sccache
 
 # Restart sccache
 sccache --stop-server
@@ -377,8 +377,8 @@ docker system df
 # Clean up (careful: removes unused images)
 docker system prune -a
 
-# Remove only CSRRS volumes
-docker volume rm csrrs-cargo-cache csrrs-sccache-cache
+# Remove only rivrs-linalg volumes
+docker volume rm rivrs-linalg-cargo-cache rivrs-linalg-sccache-cache
 ```
 
 ## Clean Room Implementation Reminder
@@ -432,13 +432,13 @@ deploy:
 
 ```bash
 # Terminal 1: Run tests
-docker exec -it csrrs-dev bash -c "cd /workspace/csrrs && cargo test"
+docker exec -it rivrs-linalg-dev bash -c "cd /workspace/rivrs-linalg && cargo test"
 
 # Terminal 2: Check docs
-docker exec -it csrrs-dev bash -c "cd /workspace/csrrs && cargo doc --open"
+docker exec -it rivrs-linalg-dev bash -c "cd /workspace/rivrs-linalg && cargo doc --open"
 
 # Terminal 3: Format code
-docker exec -it csrrs-dev bash -c "cd /workspace/csrrs && cargo fmt"
+docker exec -it rivrs-linalg-dev bash -c "cd /workspace/rivrs-linalg && cargo fmt"
 ```
 
 ### Custom Docker Build
@@ -450,7 +450,7 @@ docker build \
   --platform linux/arm64 \
   --build-arg RUST_VERSION=1.83.0 \
   -f Dockerfile \
-  -t csrrs-dev:custom \
+  -t rivrs-linalg-dev:custom \
   ..
 ```
 
@@ -458,10 +458,10 @@ docker build \
 
 ```bash
 # Commit container to new image
-docker commit csrrs-dev csrrs-dev:checkpoint
+docker commit rivrs-linalg-dev rivrs-linalg-dev:checkpoint
 
 # Export as tarball
-docker save csrrs-dev:checkpoint | gzip > csrrs-dev-checkpoint.tar.gz
+docker save rivrs-linalg-dev:checkpoint | gzip > rivrs-linalg-dev-checkpoint.tar.gz
 ```
 
 ## FAQ

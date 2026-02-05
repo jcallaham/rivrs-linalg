@@ -665,11 +665,11 @@ Every implemented algorithm must cite sources. Key references:
 
 Document equivalent SLICOT routines for user migration:
 
-- **Continuous-time**: CSRRS `solve_continuous` ↔ SLICOT SB04MD/SB04ND
-- **Discrete-time**: CSRRS `solve_discrete` ↔ SLICOT SB04QD/SB04PD
-- **Triangular solver**: CSRRS `solve_triangular_sylvester` ↔ LAPACK DTRSYL
+- **Continuous-time**: rivrs-linalg `solve_continuous` ↔ SLICOT SB04MD/SB04ND
+- **Discrete-time**: rivrs-linalg `solve_discrete` ↔ SLICOT SB04QD/SB04PD
+- **Triangular solver**: rivrs-linalg `solve_triangular_sylvester` ↔ LAPACK DTRSYL
 
-**Important**: Note that CSRRS is independently implemented from academic sources, not derived from SLICOT code.
+**Important**: Note that rivrs-linalg is independently implemented from academic sources, not derived from SLICOT code.
 
 ---
 

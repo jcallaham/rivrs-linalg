@@ -3,8 +3,8 @@
 //! Verifies that appropriate errors are returned for invalid inputs,
 //! singular cases, and other exceptional conditions.
 
-use csrrs::error::SylvesterError;
-use csrrs::sylvester::{solve_continuous, solve_discrete};
+use rivrs_linalg::error::SylvesterError;
+use rivrs_linalg::sylvester::{solve_continuous, solve_discrete};
 use faer::prelude::*;
 
 // === Dimension Mismatch Tests ===

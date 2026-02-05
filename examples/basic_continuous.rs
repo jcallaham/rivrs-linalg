@@ -2,7 +2,7 @@
 //!
 //! Demonstrates basic usage of the `solve_continuous` function.
 
-use csrrs::sylvester::solve_continuous;
+use rivrs_linalg::sylvester::solve_continuous;
 use faer::prelude::*;
 
 fn main() {

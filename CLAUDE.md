@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-CSRRS (Control Systems Routines in Rust) is a scientific computing library implementing control systems algorithms similar to those in SLICOT (Subroutine Library in Systems and Control Theory). The project uses modern Rust with `ndarray` and `faer` for linear algebra operations and will provide Python bindings.
+rivrs-linalg (Numerical Linear Algebra for Rivrs) is a scientific computing library providing numerical linear algebra implementations for the Rivrs symbolic-numeric framework. Currently focused on control systems algorithms similar to those in SLICOT (Subroutine Library in Systems and Control Theory), with plans to expand to sparse solvers and other numerical methods. The project uses modern Rust with `ndarray` and `faer` for linear algebra operations and will provide Python bindings.
 
 ## Licensing Strategy - Clean Room Implementation
 
@@ -14,7 +14,7 @@ CSRRS (Control Systems Routines in Rust) is a scientific computing library imple
 - Implement algorithms from: academic papers, control theory textbooks, BLAS/LAPACK source (BSD-licensed), and published standards
 - Use SLICOT only for: documentation of what algorithms do, test cases with expected outputs, and numerical accuracy criteria
 - Always document the academic sources used for each implementation
-- This approach allows CSRRS to be released under a permissive license (MIT/Apache-2.0)
+- This approach allows rivrs-linalg to be released under a permissive license (MIT/Apache-2.0)
 
 ## Reference Materials
 
@@ -126,7 +126,7 @@ Reference faer's optimization patterns:
 - Include references to standard control theory texts (e.g., Skogestad & Postlethwaite, Zhou et al., Doyle et al.)
 - Provide usage examples for common control systems workflows
 - Document numerical stability characteristics and failure modes
-- Cross-reference equivalent SLICOT routine names for users migrating from Fortran/MATLAB, but note that CSRRS implementations are based on independent academic sources
+- Cross-reference equivalent SLICOT routine names for users migrating from Fortran/MATLAB, but note that rivrs-linalg implementations are based on independent academic sources
 
 ## Active Technologies
 - Rust 1.75+ (MSRV to be determined during setup) + faer (>= 0.19) for linear algebra, ndarray (>= 0.16) for array structures, approx for test comparisons (001-sylvester-solver)

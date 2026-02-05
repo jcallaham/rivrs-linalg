@@ -27,7 +27,7 @@ The Lyapunov equation A'X + XA = C is technically a special case of the Sylveste
 2. Cholesky factor approach: SB03OU computes U directly where X = U'U, never forming the full Gramian X. This is numerically superior — it guarantees the result is positive semi-definite by construction, and uses half the storage.
 3. Single Schur decomposition: Since B = A', you only need one Schur decomposition (of A), not two independent ones.
 
-**Implications for CSRRS**
+**Implications for rivrs-linalg**
 
 This means the next algorithmic building block for model reduction would be a Lyapunov solver (equivalent to the SB03 family in SLICOT), specifically:
 

@@ -2,7 +2,7 @@
 //!
 //! Demonstrates basic usage of the `solve_discrete` function.
 
-use csrrs::sylvester::solve_discrete;
+use rivrs_linalg::sylvester::solve_discrete;
 use faer::prelude::*;
 
 fn main() {
