@@ -18,8 +18,13 @@ if [ "$(id -u)" = "0" ]; then
     echo "Cloning repository from GitHub..."
     cd /workspace
 
-    # Pass GH_TOKEN to node user's environment and clone
-    if ! su - node -c "cd /workspace && GH_TOKEN='${GH_TOKEN}' GITHUB_TOKEN='${GITHUB_TOKEN}' gh repo clone jcallaham/rivrs-linalg rivrs-linalg" 2>/tmp/clone_error.log; then
+    # Authenticate gh CLI for node user if GH_TOKEN is available
+    if [ -n "${GH_TOKEN}" ]; then
+      su - node -c "echo '${GH_TOKEN}' | gh auth login --with-token" 2>/dev/null || true
+    fi
+
+    # Clone repository as node user
+    if ! su - node -c "cd /workspace && gh repo clone jcallaham/rivrs-linalg rivrs-linalg" 2>/tmp/clone_error.log; then
       echo "ERROR: Failed to clone repository"
       cat /tmp/clone_error.log
       echo ""

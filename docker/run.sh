@@ -42,8 +42,10 @@ else
 	echo ""
 
 	# Create named volumes if they don't exist
+	docker volume create rivrs-linalg-workspace 2>/dev/null || true
 	docker volume create rivrs-linalg-cargo-cache 2>/dev/null || true
 	docker volume create rivrs-linalg-sccache-cache 2>/dev/null || true
+	docker volume create rivrs-linalg-claude-config 2>/dev/null || true
 
 	# Get GitHub token from host (falls back to file-based if keyring fails)
 	GH_TOKEN=$(gh auth token 2>/dev/null || echo "")
@@ -52,9 +54,10 @@ else
 	docker run -it \
 		--name rivrs-linalg-dev \
 		--platform linux/arm64 \
-		-v rivrs-linalg-workspace:/workspace/rivrs-linalg \
-		-v rivrs-linalg-cargo-cache:/root/.cargo/registry \
-		-v rivrs-linalg-sccache-cache:/root/.cache/sccache \
+		-v rivrs-linalg-workspace:/workspace \
+		-v rivrs-linalg-cargo-cache:/home/node/.cargo/registry \
+		-v rivrs-linalg-sccache-cache:/home/node/.cache/sccache \
+		-v rivrs-linalg-claude-config:/home/node/.claude \
 		-e GH_TOKEN="${GH_TOKEN}" \
 		-e GITHUB_TOKEN="${GH_TOKEN}" \
 		-e RUSTFLAGS="-C target-cpu=native" \
