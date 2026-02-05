@@ -281,3 +281,10 @@ For domain-specific questions, consult the appropriate CLAUDE.md:
 - Control systems: [control/CLAUDE.md](control/CLAUDE.md)
 
 For repository-wide questions or structural issues, refer to this file.
+
+## Active Technologies
+- N/A (documentation-only feature; no code written) (001-reference-library)
+- Markdown files in `references/ssids/` and `sparse/docs/references/` (001-reference-library)
+
+## Recent Changes
+- 001-reference-library: Added N/A (documentation-only feature; no code written)
