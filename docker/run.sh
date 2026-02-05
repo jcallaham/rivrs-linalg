@@ -31,11 +31,10 @@ if docker ps -a --format '{{.Names}}' | grep -q '^rivrs-linalg-dev$'; then
 
 	if docker ps --format '{{.Names}}' | grep -q '^rivrs-linalg-dev$'; then
 		echo "Container is running. Attaching..."
-		docker exec -it rivrs-linalg-dev bash
+		docker attach rivrs-linalg-dev
 	else
-		echo "Container is stopped. Starting..."
-		docker start rivrs-linalg-dev
-		docker exec -it rivrs-linalg-dev bash
+		echo "Container is stopped. Starting and attaching..."
+		docker start -ai rivrs-linalg-dev
 	fi
 else
 	echo -e "${GREEN}Creating new container 'rivrs-linalg-dev'...${NC}"

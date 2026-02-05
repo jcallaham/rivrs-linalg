@@ -53,7 +53,20 @@ if [ "$(id -u)" = "0" ]; then
       ln -sf /opt/references /workspace/rivrs-linalg/references
       chown -h node:node /workspace/rivrs-linalg/references
     fi
+
+    # Re-authenticate gh CLI if GH_TOKEN is available and gh not authenticated
+    if [ -n "${GH_TOKEN}" ]; then
+      if ! su - node -c "gh auth status" >/dev/null 2>&1; then
+        echo "Re-authenticating GitHub CLI..."
+        su - node -c "echo '${GH_TOKEN}' | gh auth login --with-token" 2>/dev/null || true
+      fi
+    fi
   fi
+
+  # Ensure ownership is correct for volumes (may have been created with wrong permissions)
+  chown -R node:node /home/node/.claude 2>/dev/null || true
+  chown -R node:node /home/node/.cargo/registry 2>/dev/null || true
+  chown -R node:node /home/node/.cache/sccache 2>/dev/null || true
 
   # Switch to node user and execute command in workspace
   cd /workspace/rivrs-linalg
