@@ -37,17 +37,13 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- \
 
 ENV PATH="/root/.cargo/bin:${PATH}"
 
-# Install Node.js 20 for Claude Code
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
-	apt-get install -y nodejs && \
-	npm install -g npm@latest && \
-	rm -rf /var/lib/apt/lists/*
+# Install additional Cargo tools (without sccache wrapper initially)
+RUN cargo install sccache cargo-watch cargo-expand
 
-# Install Claude Code
-ARG CLAUDE_CODE_VERSION=latest
-RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
+# Now set sccache as the wrapper
+ENV RUSTC_WRAPPER=sccache
 
-# Install additional development tools (full suite)
+# Install additional development tools
 RUN apt-get update && apt-get install -y \
 	fzf \
 	zsh \
@@ -60,11 +56,8 @@ RUN apt-get update && apt-get install -y \
 	jq \
 	&& rm -rf /var/lib/apt/lists/*
 
-# Install additional Cargo tools (without sccache wrapper initially)
-RUN cargo install sccache cargo-watch cargo-expand
-
-# Now set sccache as the wrapper
-ENV RUSTC_WRAPPER=sccache
+# Install Claude Code
+RUN curl -fsSL https://claude.ai/install.sh | bash
 
 # Configure git (HTTPS-based workflow)
 RUN git config --global user.name "${GIT_USER_NAME}" && \
