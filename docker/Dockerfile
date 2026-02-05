@@ -75,19 +75,14 @@ RUN git config --global user.name "${GIT_USER_NAME}" && \
 
 # Stage 2: Reference materials (separate for caching)
 FROM scratch AS references
-COPY faer-rs /references/faer-rs
-COPY lapack /references/lapack
-COPY SLICOT-Reference /references/SLICOT-Reference
-COPY slicot /references/slicot
+# Copy the entire references directory
+COPY references /references
 
 # Stage 3: Development environment
 FROM base-builder AS development
 
 # Copy reference materials to /opt/references (permanent location)
-COPY --from=references /references/faer-rs /opt/references/faer-rs
-COPY --from=references /references/lapack /opt/references/lapack
-COPY --from=references /references/SLICOT-Reference /opt/references/SLICOT-Reference
-COPY --from=references /references/slicot /opt/references/slicot
+COPY --from=references /references/ /opt/references/
 
 # Stage 4: Python environment
 
@@ -163,14 +158,6 @@ RUN echo '#!/bin/bash' > /usr/local/bin/welcome.sh && \
 	echo 'echo "Node.js:     $(node --version)"' >> /usr/local/bin/welcome.sh && \
 	echo 'echo "Claude Code: $(claude --version 2>/dev/null || echo '\''not installed'\'')"' >> /usr/local/bin/welcome.sh && \
 	echo 'echo "Platform:    $(uname -m)"' >> /usr/local/bin/welcome.sh && \
-	echo 'echo ""' >> /usr/local/bin/welcome.sh && \
-	echo 'echo "Reference materials:"' >> /usr/local/bin/welcome.sh && \
-	echo 'echo "  - faer-rs/           (Rust linear algebra)"' >> /usr/local/bin/welcome.sh && \
-	echo 'echo "  - lapack/            (BSD-licensed reference)"' >> /usr/local/bin/welcome.sh && \
-	echo 'echo "  - SLICOT-Reference/  (docs and tests only)"' >> /usr/local/bin/welcome.sh && \
-	echo 'echo "  - slicot/            (docs and tests only)"' >> /usr/local/bin/welcome.sh && \
-	echo 'echo ""' >> /usr/local/bin/welcome.sh && \
-	echo 'echo "Clean room reminder: NEVER read slicot/src/*.f files"' >> /usr/local/bin/welcome.sh && \
 	echo 'echo ""' >> /usr/local/bin/welcome.sh && \
 	chmod +x /usr/local/bin/welcome.sh
 
