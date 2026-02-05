@@ -12,7 +12,7 @@
 **Key Technical Goals:**
 - Implement A Posteriori Threshold Pivoting (APTP) algorithm
 - Achieve numerical correctness on hard indefinite problems
-- Match or exceed SPRAL's sequential performance
+- Match or exceed SPRAL's performance (sequential and shared-memory parallel)
 - Provide safe, idiomatic Rust API
 - Build on faer ecosystem and design patterns
 
@@ -37,7 +37,7 @@ Establish comprehensive understanding of algorithms, gather reference implementa
 
 ### Deliverables
 
-#### 0.1: Literature Review & Reference Library
+#### 0.1: Literature Review & Reference Library (**COMPLETE**)
 **Task:** Build a complete technical reference library
 
 **Documents to compile:**
@@ -85,11 +85,11 @@ Establish comprehensive understanding of algorithms, gather reference implementa
 ```
 
 **Success Criteria:**
-- [ ] All key papers obtained and organized
-- [ ] Algorithm pseudocode extracted and documented
-- [ ] SPRAL source code reviewed with annotations
-- [ ] faer integration points identified and documented
-- [ ] Team member can explain APTP algorithm from memory
+- [x] All key papers obtained and organized
+- [x] Algorithm pseudocode extracted and documented
+- [x] SPRAL source code reviewed with annotations
+- [x] faer integration points identified and documented
+- [x] Team member can explain APTP algorithm from memory
 
 #### 0.2: Test Matrix Collection Assembly
 **Task:** Build comprehensive test suite from all available sources
@@ -184,14 +184,14 @@ struct SPRALReference {
     // Input
     matrix_name: String,
     options: SPRALOptions,
-    
+
     // Analysis phase
     analyze_time: f64,
     elimination_tree: Vec<i32>,  // Parent pointers
     supernodes: Vec<Supernode>,
     predicted_nnz: usize,
     predicted_flops: f64,
-    
+
     // Factor phase
     factor_time: f64,
     actual_nnz: usize,
@@ -200,12 +200,12 @@ struct SPRALReference {
     num_negative_eigenvalues: i32,
     num_positive_eigenvalues: i32,
     num_zero_eigenvalues: i32,
-    
+
     // Solve phase
     solve_time: f64,
     forward_error: f64,    // ||x_computed - x_exact||
     backward_error: f64,   // ||Ax - b|| / ||b||
-    
+
     // Memory
     peak_memory_mb: f64,
 }
@@ -351,12 +351,12 @@ pub struct NumericalValidator {
 }
 
 impl NumericalValidator {
-    pub fn check_residual(&self, a: &Matrix, x: &[f64], b: &[f64]) 
+    pub fn check_residual(&self, a: &Matrix, x: &[f64], b: &[f64])
         -> ValidationResult;
-    
+
     pub fn check_inertia(&self, computed: Inertia, expected: Inertia)
         -> ValidationResult;
-    
+
     pub fn check_forward_error(&self, x: &[f64], x_ref: &[f64])
         -> ValidationResult;
 }
@@ -367,11 +367,11 @@ impl NumericalValidator {
 ```rust
 // Test matrix generators
 pub fn load_test_matrix(name: &str) -> SolverTestCase;
-pub fn generate_random_matrix(n: usize, nnz: usize, 
+pub fn generate_random_matrix(n: usize, nnz: usize,
                               props: MatrixProperties) -> SparseMatrix;
 
 // Comparison tools
-pub fn compare_with_spral(result: &SolverResult, 
+pub fn compare_with_spral(result: &SolverResult,
                          reference: &SPRALReference) -> Comparison;
 
 // Property-based testing helpers
@@ -455,23 +455,23 @@ use criterion::{criterion_group, criterion_main, Criterion, BenchmarkId};
 
 fn bench_analyze(c: &mut Criterion) {
     let mut group = c.benchmark_group("analyze");
-    
+
     for matrix_name in ["small", "medium", "large"] {
         let matrix = load_test_matrix(matrix_name);
-        
+
         group.bench_with_input(
             BenchmarkId::new("SparseLDLT", matrix_name),
             &matrix,
             |b, m| b.iter(|| analyze(m))
         );
-        
+
         group.bench_with_input(
             BenchmarkId::new("SPRAL", matrix_name),
             &matrix,
             |b, m| b.iter(|| spral_analyze(m))
         );
     }
-    
+
     group.finish();
 }
 ```
@@ -506,36 +506,36 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
         rust: [stable, beta, nightly]
-    
+
     steps:
       - uses: actions/checkout@v3
-      
+
       - name: Setup test data
         run: |
           cd test-data
           ./download_matrices.sh
-      
+
       - name: Run tests
         run: |
           cargo test --all-features
           cargo test --release --all-features
-      
+
       - name: Run numerical validation
         run: cargo test --test numerical_correctness
-  
+
   bench:
     steps:
       - name: Run benchmarks
         run: cargo bench --bench comparison
-      
+
       - name: Compare with baseline
         run: ./scripts/compare_bench.py
-  
+
   correctness:
     steps:
       - name: Test against SPRAL
         run: ./scripts/spral_comparison_test.sh
-      
+
       - name: Generate report
         run: ./scripts/generate_correctness_report.py
 ```
@@ -566,9 +566,9 @@ pub struct ProfileRecorder {
 impl ProfileRecorder {
     pub fn record_section<F, R>(&mut self, name: &str, f: F) -> R
     where F: FnOnce() -> R;
-    
+
     pub fn record_memory_snapshot(&mut self, label: &str);
-    
+
     pub fn export_chrome_trace(&self) -> String;
     pub fn export_flamegraph(&self) -> String;
 }
@@ -578,7 +578,7 @@ fn factor_node(&mut self, node: NodeId, profiler: &mut ProfileRecorder) {
     profiler.record_section("dense_factor", || {
         self.aptp_factor(node)
     });
-    
+
     profiler.record_section("update_ancestors", || {
         self.propagate_updates(node)
     });
@@ -593,10 +593,10 @@ pub struct DebugVisualizer;
 impl DebugVisualizer {
     /// Generate GraphViz DOT file of elimination tree
     pub fn visualize_elimination_tree(tree: &EliminationTree) -> String;
-    
+
     /// Generate sparsity pattern visualization
     pub fn visualize_sparsity(matrix: &SparseMatrix) -> Image;
-    
+
     /// Animate factorization process
     pub fn animate_factorization(steps: &[FactorStep]) -> Animation;
 }
@@ -1311,18 +1311,18 @@ fn metis_nested_dissection(
 #[test]
 fn test_metis_ordering() {
     let pattern = load_pattern("laplacian-2d-100");
-    
+
     let perm = compute_ordering(&pattern, OrderingMethod::METIS)
         .unwrap();
-    
+
     // Permutation should be valid
     assert!(perm.is_valid());
     assert_eq!(perm.len(), pattern.n);
-    
+
     // Should reduce fill-in
     let natural_nnz = predict_fill(&pattern, &Permutation::identity(pattern.n));
     let metis_nnz = predict_fill(&pattern, &perm);
-    
+
     assert!(metis_nnz <= natural_nnz);
 }
 
@@ -1330,20 +1330,20 @@ fn test_metis_ordering() {
 fn test_ordering_quality() {
     for case in test_cases_by_difficulty(Difficulty::Hard) {
         let pattern = case.matrix.pattern();
-        
+
         let natural = Permutation::identity(pattern.n);
         let metis = compute_ordering(pattern, OrderingMethod::METIS)
             .unwrap();
-        
+
         let natural_analysis = SymbolicAnalysis::analyze_with_ordering(
             pattern, &natural
         );
         let metis_analysis = SymbolicAnalysis::analyze_with_ordering(
             pattern, &metis
         );
-        
+
         // METIS should not increase fill-in
-        assert!(metis_analysis.predicted_nnz 
+        assert!(metis_analysis.predicted_nnz
                <= natural_analysis.predicted_nnz * 1.1);
     }
 }
@@ -1404,21 +1404,21 @@ pub struct AuctionParams {
 fn test_mc64_basic() {
     // Matrix with small diagonal elements
     let matrix = create_badly_scaled_matrix();
-    
+
     let result = mc64_matching(&matrix, MC64Job::MaximumProduct)
         .unwrap();
-    
+
     // Should find full matching
     assert_eq!(result.matched, matrix.nrows());
-    
+
     // Diagonal should be larger after permutation + scaling
     let scaled = matrix
         .permute_symmetric(&result.permutation)
         .scale_symmetric(&result.scaling);
-    
+
     let diag_before = matrix.diagonal_max();
     let diag_after = scaled.diagonal_max();
-    
+
     assert!(diag_after >= diag_before);
 }
 
@@ -1429,16 +1429,16 @@ fn test_auction_vs_mc64() {
             &case.matrix,
             MC64Job::MaximumProduct
         ).unwrap();
-        
+
         let auction_result = auction_scaling(
             &case.matrix,
             AuctionParams::default()
         ).unwrap();
-        
+
         // Both should find full matching
         assert_eq!(mc64_result.matched, case.matrix.nrows());
         assert_eq!(auction_result.matched, case.matrix.nrows());
-        
+
         // Quality should be similar (within 10%)
         let mc64_quality = measure_scaling_quality(
             &case.matrix, &mc64_result
@@ -1446,7 +1446,7 @@ fn test_auction_vs_mc64() {
         let auction_quality = measure_scaling_quality(
             &case.matrix, &auction_result
         );
-        
+
         assert!((mc64_quality - auction_quality).abs() / mc64_quality < 0.1);
     }
 }
@@ -1469,20 +1469,20 @@ pub fn matching_based_ordering(
 ) -> Result<(Permutation, Vec<f64>)> {
     // 1. Compute matching to identify large off-diagonal entries
     let matching = mc64_matching(matrix, MC64Job::MaximumProduct)?;
-    
+
     // 2. Apply matching permutation
     let matched_matrix = matrix.permute_symmetric(&matching.permutation);
-    
+
     // 3. Constrained METIS ordering that keeps matched entries near diagonal
     let ordering = constrained_metis_ordering(
         &matched_matrix,
         &matching,
         params
     )?;
-    
+
     // 4. Combine permutations
     let combined_perm = matching.permutation.compose(&ordering);
-    
+
     Ok((combined_perm, matching.scaling))
 }
 
@@ -1515,21 +1515,21 @@ fn test_matching_ordering_on_hard_indefinite() {
             &case.matrix,
             MatchingOrderingParams::default()
         ).unwrap();
-        
+
         // Analyze with this ordering
         let reordered = case.matrix
             .permute_symmetric(&perm)
             .scale_symmetric(&scaling);
-        
+
         let analysis = SymbolicAnalysis::analyze(
             reordered.pattern(),
             AnalysisOptions::default()
         );
-        
+
         // Should have reasonable fill-in
         if let Some(ref_results) = case.reference {
             // Should be within 20% of SPRAL's fill-in
-            let ratio = analysis.predicted_nnz as f64 
+            let ratio = analysis.predicted_nnz as f64
                        / ref_results.predicted_nnz as f64;
             assert!(ratio < 1.2);
         }
@@ -1571,17 +1571,17 @@ impl AnalysisWithOrdering {
             }
             // ... other methods
         };
-        
+
         // 2. Apply permutation to pattern
         let reordered_pattern = matrix.pattern()
             .permute_symmetric(&perm);
-        
+
         // 3. Perform symbolic analysis
         let analysis = SymbolicAnalysis::analyze(
             &reordered_pattern,
             options
         );
-        
+
         Ok(Self {
             analysis,
             permutation: perm,
@@ -1604,10 +1604,10 @@ fn test_full_analysis_pipeline() {
                 ..Default::default()
             }
         ).unwrap();
-        
+
         // Should produce valid analysis
         assert!(result.analysis.predicted_nnz > 0);
-        
+
         // Compare with reference
         if let Some(ref_results) = case.reference {
             compare_analysis(&result.analysis, &ref_results);
@@ -1707,13 +1707,13 @@ fn test_aptp_simple() {
     let a = Mat::from_fn(4, 4, |i, j| {
         if i == j { 4.0 } else if i.abs_diff(j) == 1 { 1.0 } else { 0.0 }
     });
-    
+
     let result = aptp_factor(a.as_ref(), 0.01, APTPOptions::default())
         .unwrap();
-    
+
     // Should have no delays
     assert_eq!(result.num_delays, 0);
-    
+
     // Check factorization: A = LDL'
     let reconstructed = reconstruct_ldlt(&result);
     assert_matrix_close(&a, &reconstructed, 1e-12);
@@ -1723,10 +1723,10 @@ fn test_aptp_simple() {
 fn test_aptp_indefinite() {
     // Indefinite matrix (some negative eigenvalues)
     let a = create_indefinite_matrix(10);
-    
+
     let result = aptp_factor(a.as_ref(), 0.01, APTPOptions::default())
         .unwrap();
-    
+
     // Should successfully factor
     let reconstructed = reconstruct_ldlt(&result);
     assert_matrix_close(&a, &reconstructed, 1e-10);
@@ -1737,17 +1737,17 @@ fn test_stability_bounds() {
     for _ in 0..100 {
         let a = random_symmetric_matrix(20);
         let threshold = 0.01;
-        
+
         let result = aptp_factor(a.as_ref(), threshold, APTPOptions::default())
             .unwrap();
-        
+
         // Check stability: all |l_ij| < 1/threshold
         let max_l_entry = result.l.as_ref()
             .iter()
             .map(|&x| x.abs())
             .max_by(|a, b| a.partial_cmp(b).unwrap())
             .unwrap();
-        
+
         assert!(max_l_entry < 1.0 / threshold + 1e-10);
     }
 }
@@ -1770,7 +1770,7 @@ fn complete_pivoting_fallback(
     block: MatMut<f64>
 ) -> FallbackResult {
     let (i, j, max_val) = find_absolute_maximum(block.as_ref());
-    
+
     if i == j {
         // Diagonal pivot
         pivot_1x1(block, i)
@@ -1806,9 +1806,9 @@ fn delay_pivots(
 fn test_complete_pivoting_fallback() {
     // Create block designed to fail APTP
     let block = create_aptp_failure_case();
-    
+
     let result = complete_pivoting_fallback(block.as_mut());
-    
+
     // Should still factor correctly
     assert!(result.is_stable());
 }
@@ -1824,7 +1824,7 @@ fn test_fallback_strategy_comparison() {
                 ..Default::default()
             }
         ).unwrap();
-        
+
         let tpp_result = aptp_factor(
             case.as_ref(),
             0.01,
@@ -1833,11 +1833,11 @@ fn test_fallback_strategy_comparison() {
                 ..Default::default()
             }
         ).unwrap();
-        
+
         // Both should produce valid factorizations
         assert!(cp_result.is_valid());
         assert!(tpp_result.is_valid());
-        
+
         // Complete pivoting may have fewer delays
         assert!(cp_result.num_delays <= tpp_result.num_delays);
     }
@@ -1872,7 +1872,7 @@ pub fn two_level_aptp_factor(
     let n = a.nrows();
     let nb_outer = options.outer_block_size;
     let nb_inner = options.inner_block_size;
-    
+
     // Outer loop: process nb_outer columns at a time
     for outer_block in (0..n).step_by(nb_outer) {
         // Recursive APTP on this outer block
@@ -1881,16 +1881,16 @@ pub fn two_level_aptp_factor(
             nb_inner,
             options.outer_threshold
         )?;
-        
+
         // Handle any failed pivots
         if !outer_result.failed_pivots.is_empty() {
             handle_failed_outer_pivots(/* ... */)?;
         }
-        
+
         // Update trailing submatrix
         update_schur_complement(/* ... */);
     }
-    
+
     Ok(/* ... */)
 }
 
@@ -1911,13 +1911,13 @@ fn aptp_block_recursive(
 #[test]
 fn test_two_level_vs_single_level() {
     let a = random_symmetric_matrix(256);
-    
+
     let single_result = aptp_factor(
         a.as_ref(),
         0.01,
         APTPOptions::default()
     ).unwrap();
-    
+
     let two_level_result = two_level_aptp_factor(
         a.as_ref(),
         TwoLevelAPTPOptions {
@@ -1927,14 +1927,14 @@ fn test_two_level_vs_single_level() {
             inner_threshold: 0.01,
         }
     ).unwrap();
-    
+
     // Both should produce equivalent results
     assert_eq!(single_result.num_delays, two_level_result.num_delays);
-    
+
     // Factorizations should be equally accurate
     let recon_single = reconstruct_ldlt(&single_result);
     let recon_two_level = reconstruct_ldlt(&two_level_result);
-    
+
     assert_matrix_close(&recon_single, &recon_two_level, 1e-12);
 }
 ```
@@ -1969,7 +1969,7 @@ fn update_schur_with_faer(
         1.0,
         parallelism
     );
-    
+
     matmul::matmul(
         schur,
         temp.as_ref(),
@@ -2000,21 +2000,21 @@ fn solve_with_l_faer(
 #[test]
 fn test_faer_integration() {
     let a = random_symmetric_matrix(100);
-    
+
     // Factor using APTP with faer operations
     let result = aptp_factor_with_faer(
         a.as_ref(),
         0.01,
         Parallelism::Rayon(4)
     ).unwrap();
-    
+
     // Should produce identical results to non-faer version
     let result_no_faer = aptp_factor(
         a.as_ref(),
         0.01,
         APTPOptions::default()
     ).unwrap();
-    
+
     assert_matrix_close(
         &reconstruct_ldlt(&result),
         &reconstruct_ldlt(&result_no_faer),
@@ -2025,10 +2025,10 @@ fn test_faer_integration() {
 #[test]
 fn test_faer_performance() {
     let sizes = [100, 500, 1000];
-    
+
     for n in sizes {
         let a = random_symmetric_matrix(n);
-        
+
         let start = Instant::now();
         let _ = aptp_factor_with_faer(
             a.as_ref(),
@@ -2036,11 +2036,11 @@ fn test_faer_performance() {
             Parallelism::Rayon(4)
         );
         let faer_time = start.elapsed();
-        
+
         let start = Instant::now();
         let _ = aptp_factor_naive(a.as_ref(), 0.01);
         let naive_time = start.elapsed();
-        
+
         println!("n={}: faer={:.2}ms, naive={:.2}ms, speedup={:.2}x",
                  n, faer_time.as_millis(), naive_time.as_millis(),
                  naive_time.as_secs_f64() / faer_time.as_secs_f64());
@@ -2062,28 +2062,28 @@ fn test_faer_performance() {
 #[test]
 fn test_hard_indefinite_suite() {
     let hard_cases = test_cases_by_difficulty(Difficulty::Hard);
-    
+
     for case in hard_cases {
         println!("Testing: {}", case.name);
-        
+
         // Extract a large frontal matrix from the problem
         // (This simulates what would happen in multifrontal factorization)
         let front = extract_representative_front(&case.matrix, 500);
-        
+
         let result = aptp_factor(
             front.as_ref(),
             0.01,
             APTPOptions::default()
         );
-        
+
         match result {
             Ok(factorization) => {
                 // Check residual
                 let residual = compute_residual(&front, &factorization);
-                
+
                 println!("  SUCCESS: residual={:.2e}, delays={}",
                          residual, factorization.num_delays);
-                
+
                 assert!(residual < 1e-6,
                         "Poor residual on {}: {:.2e}",
                         case.name, residual);
@@ -2104,10 +2104,10 @@ fn test_against_spral_dense() {
             case.threshold,
             APTPOptions::default()
         ).unwrap();
-        
+
         // Number of delays should match SPRAL (or be better)
         assert!(result.num_delays <= case.spral_delays);
-        
+
         // Residual should be similar
         let our_residual = compute_residual(&case.matrix, &result);
         assert!(our_residual <= case.spral_residual * 10.0);
@@ -2146,22 +2146,22 @@ fn critical_checkpoint_aptp_validation() {
     println!("\n========================================");
     println!("CRITICAL CHECKPOINT: APTP VALIDATION");
     println!("========================================\n");
-    
+
     let mut report = ValidationReport::new();
-    
+
     // Test 1: All hard indefinite matrices
     for case in test_cases_by_difficulty(Difficulty::Hard) {
         let result = test_aptp_on_case(&case);
         report.add_result(&case.name, result);
     }
-    
+
     // Test 2: Random matrices
     for i in 0..100 {
         let matrix = random_symmetric_indefinite(100);
         let result = test_aptp_stability(&matrix);
         report.add_result(&format!("random_{}", i), result);
     }
-    
+
     // Test 3: Pathological cases
     let pathological = vec![
         create_near_singular_matrix(),
@@ -2172,15 +2172,15 @@ fn critical_checkpoint_aptp_validation() {
         let result = test_aptp_on_matrix(matrix);
         report.add_result(&format!("pathological_{}", i), result);
     }
-    
+
     // Generate report
     report.print();
-    
+
     // Pass/fail criteria
     assert!(report.success_rate() > 0.95,
             "APTP failed on too many cases: {:.1}%",
             100.0 - report.success_rate() * 100.0);
-    
+
     println!("\n✓ CRITICAL CHECKPOINT PASSED");
 }
 ```
@@ -2211,33 +2211,33 @@ Implement the multifrontal method: assemble frontal matrices, perform dense fact
 pub struct FrontalMatrix {
     pub node_id: usize,
     pub supernode: Supernode,
-    
+
     // Frontal matrix structure: [F11  F12]
     //                           [F21  F22]
     // where F11 is the fully summed part
     pub nrows: usize,
     pub ncols: usize,
     pub fully_summed_cols: usize,
-    
+
     // Dense storage
     pub data: Mat<f64>,
-    
+
     // Row indices (mapping to global indices)
     pub row_indices: Vec<usize>,
 }
 
 impl FrontalMatrix {
     pub fn new(supernode: Supernode, row_indices: Vec<usize>) -> Self;
-    
+
     pub fn f11(&self) -> MatRef<f64>;
     pub fn f11_mut(&mut self) -> MatMut<f64>;
-    
+
     pub fn f21(&self) -> MatRef<f64>;
     pub fn f21_mut(&mut self) -> MatMut<f64>;
-    
+
     pub fn f22(&self) -> MatRef<f64>;
     pub fn f22_mut(&mut self) -> MatMut<f64>;
-    
+
     pub fn contribution_block(&self) -> MatRef<f64> {
         self.f22()
     }
@@ -2265,16 +2265,16 @@ fn test_frontal_matrix_structure() {
         last_col: 3,
         row_structure: vec![0, 1, 2, 3, 5, 7],
     };
-    
+
     let front = FrontalMatrix::new(
         supernode,
         vec![0, 1, 2, 3, 5, 7]
     );
-    
+
     assert_eq!(front.nrows, 6);
     assert_eq!(front.ncols, 4);
     assert_eq!(front.fully_summed_cols, 4);
-    
+
     // Check submatrix views
     assert_eq!(front.f11().nrows(), 4);
     assert_eq!(front.f11().ncols(), 4);
@@ -2299,7 +2299,7 @@ pub fn assemble_front(
 ) {
     // 1. Initialize front with original matrix entries
     initialize_from_sparse(front, original_matrix);
-    
+
     // 2. Add contributions from child nodes
     for contrib in child_contributions {
         add_contribution(front, contrib);
@@ -2331,7 +2331,7 @@ fn add_contribution(
 ) {
     // Map contribution's row indices to front's row indices
     // Add contribution block to appropriate part of front
-    
+
     for (i, &global_i) in contrib.row_indices.iter().enumerate() {
         if let Some(local_i) = front.global_to_local_row(global_i) {
             for (j, &global_j) in contrib.row_indices.iter().enumerate() {
@@ -2353,14 +2353,14 @@ fn test_assembly_simple() {
     let child_front = create_child_front();
     let child_factors = factor_front(&child_front);
     let child_contrib = compute_contribution(&child_factors);
-    
+
     let mut parent_front = create_parent_front();
     assemble_front(
         &mut parent_front,
         &[child_contrib],
         &original_matrix
     );
-    
+
     // Parent should contain original entries + child contribution
     verify_assembly(&parent_front, &original_matrix, &child_contrib);
 }
@@ -2369,17 +2369,17 @@ fn test_assembly_simple() {
 fn test_assembly_commutativity() {
     // Assembly order shouldn't matter
     let contribs = vec![contrib1, contrib2, contrib3];
-    
+
     let mut front1 = create_front();
     for c in &contribs {
         add_contribution(&mut front1, c);
     }
-    
+
     let mut front2 = create_front();
     for c in contribs.iter().rev() {
         add_contribution(&mut front2, c);
     }
-    
+
     assert_matrix_close(&front1.data, &front2.data, 1e-14);
 }
 ```
@@ -2405,18 +2405,18 @@ pub fn factor_front(
         options.threshold,
         options
     )?;
-    
+
     // 2. Solve for F21: F21 = F21 * inv(L11)
     let mut f21 = front.f21().to_owned();
     solve_with_l(f11_factors.l.as_ref(), f21.as_mut());
-    
+
     // 3. Compute contribution block: F22 - F21 * D11 * F21'
     let contrib = compute_schur_complement(
         front.f22(),
         f21.as_ref(),
         f11_factors.d.as_ref()
     );
-    
+
     Ok(FrontFactorization {
         l11: f11_factors.l,
         d11: f11_factors.d,
@@ -2439,14 +2439,14 @@ pub struct FrontFactorization {
 #[test]
 fn test_front_factorization() {
     let front = create_test_front(10, 10);
-    
+
     let factors = factor_front(&front, APTPOptions::default())
         .unwrap();
-    
+
     // Verify: F11 = L11 * D11 * L11'
     let f11_reconstructed = reconstruct_ldlt_from_front(&factors);
     assert_matrix_close(&f11_reconstructed, front.f11(), 1e-12);
-    
+
     // Verify contribution block
     let expected_contrib = compute_expected_contribution(&front, &factors);
     assert_matrix_close(
@@ -2474,33 +2474,33 @@ pub fn factor_tree(
     options: FactorOptions
 ) -> Result<TreeFactorization> {
     let mut factors = FactorStorage::new();
-    
+
     // Postorder traversal (children before parents)
     for node_id in assembly_tree.postorder() {
         let node = assembly_tree.node(node_id);
-        
+
         // 1. Create frontal matrix for this node
         let mut front = FrontalMatrix::new(
             node.supernode.clone(),
             node.row_indices.clone()
         );
-        
+
         // 2. Gather contributions from children
         let child_contribs: Vec<_> = node.children
             .iter()
             .map(|&child_id| factors.get_contribution(child_id))
             .collect();
-        
+
         // 3. Assemble front
         assemble_front(&mut front, &child_contribs, matrix);
-        
+
         // 4. Factor front
         let front_factors = factor_front(&front, options.aptp_options)?;
-        
+
         // 5. Store factors
         factors.store(node_id, front_factors);
     }
-    
+
     Ok(TreeFactorization {
         storage: factors,
         tree: assembly_tree.clone(),
@@ -2518,13 +2518,13 @@ fn test_tree_factorization_small() {
         &matrix,
         AnalysisOptions::default()
     ).unwrap();
-    
+
     let factorization = factor_tree(
         &analysis.analysis.assembly_tree,
         &matrix,
         FactorOptions::default()
     ).unwrap();
-    
+
     // Should have factors for every node
     assert_eq!(
         factorization.storage.len(),
@@ -2536,24 +2536,24 @@ fn test_tree_factorization_small() {
 fn test_against_dense_factorization() {
     // For small matrices, compare with dense APTP
     let matrix = create_test_matrix(20, 20);
-    
+
     let dense_factors = aptp_factor(
         matrix.to_dense().as_ref(),
         0.01,
         APTPOptions::default()
     ).unwrap();
-    
+
     let analysis = analyze(&matrix);
     let tree_factors = factor_tree(
         &analysis.assembly_tree,
         &matrix,
         FactorOptions::default()
     ).unwrap();
-    
+
     // Should produce equivalent factorizations
     let dense_reconstructed = reconstruct_from_dense(&dense_factors);
     let tree_reconstructed = reconstruct_from_tree(&tree_factors);
-    
+
     assert_matrix_close(&dense_reconstructed, &tree_reconstructed, 1e-10);
 }
 ```
@@ -2598,32 +2598,32 @@ pub fn solve_ldlt(
     rhs: &[f64]
 ) -> Vec<f64> {
     let mut x = rhs.to_vec();
-    
+
     // 1. Permute RHS
     apply_permutation(&mut x, &factorization.permutation);
-    
+
     // 2. Scale if needed
     if let Some(scaling) = &factorization.scaling {
         apply_scaling(&mut x, scaling);
     }
-    
+
     // 3. Forward solve: L * y = Pb
     forward_solve_tree(&factorization, &mut x);
-    
+
     // 4. Diagonal solve: D * z = y
     diagonal_solve(&factorization, &mut x);
-    
+
     // 5. Backward solve: L' * x = z
     backward_solve_tree(&factorization, &mut x);
-    
+
     // 6. Unscale
     if let Some(scaling) = &factorization.scaling {
         apply_scaling(&mut x, scaling);  // S is its own inverse
     }
-    
+
     // 7. Unpermute
     apply_inverse_permutation(&mut x, &factorization.permutation);
-    
+
     x
 }
 
@@ -2634,7 +2634,7 @@ fn forward_solve_tree(
     // Postorder traversal
     for node_id in factorization.tree.postorder() {
         let node_factors = factorization.storage.get(node_id);
-        
+
         // Solve with this node's L factor
         forward_solve_supernode(node_factors, x);
     }
@@ -2647,7 +2647,7 @@ fn backward_solve_tree(
     // Reverse postorder traversal
     for node_id in factorization.tree.postorder().iter().rev() {
         let node_factors = factorization.storage.get(node_id);
-        
+
         // Solve with this node's L' factor
         backward_solve_supernode(node_factors, x);
     }
@@ -2662,19 +2662,19 @@ fn test_solve_correctness() {
     for case in all_test_cases() {
         let analysis = analyze_full(&case.matrix);
         let factorization = factor_tree(&analysis, &case.matrix).unwrap();
-        
+
         // Create random RHS
         let b = random_vector(case.matrix.nrows());
-        
+
         // Solve
         let x = solve_ldlt(&factorization, &b);
-        
+
         // Check residual: ||Ax - b|| / ||b||
         let ax = case.matrix.mul_vec(&x);
         let residual = compute_residual(&ax, &b);
-        
+
         println!("{}: residual = {:.2e}", case.name, residual);
-        
+
         assert!(residual < 1e-10,
                 "Poor solve accuracy on {}: {:.2e}",
                 case.name, residual);
@@ -2686,10 +2686,10 @@ fn test_solve_multiple_rhs() {
     let matrix = load_test_matrix("medium-matrix");
     let analysis = analyze_full(&matrix);
     let factorization = factor_tree(&analysis, &matrix).unwrap();
-    
+
     let nrhs = 10;
     let b_mat = random_matrix(matrix.nrows(), nrhs);
-    
+
     // Solve each RHS
     let mut x_mat = Mat::zeros(matrix.nrows(), nrhs);
     for j in 0..nrhs {
@@ -2697,14 +2697,14 @@ fn test_solve_multiple_rhs() {
         let x_j = solve_ldlt(&factorization, b_j);
         x_mat.col_mut(j).copy_from_slice(&x_j);
     }
-    
+
     // Check all solutions
     for j in 0..nrhs {
         let b_j = b_mat.col(j).try_as_slice().unwrap();
         let x_j = x_mat.col(j).try_as_slice().unwrap();
         let ax = matrix.mul_vec(x_j);
         let residual = compute_residual(&ax, b_j);
-        
+
         assert!(residual < 1e-10);
     }
 }
@@ -2732,7 +2732,7 @@ impl SparseLDLT {
     pub fn new(matrix: SparseColMat<f64>) -> Result<Self> {
         Self::with_options(matrix, SolverOptions::default())
     }
-    
+
     pub fn with_options(
         matrix: SparseColMat<f64>,
         options: SolverOptions
@@ -2742,13 +2742,13 @@ impl SparseLDLT {
             &matrix,
             options.analysis_options
         )?;
-        
+
         Ok(Self {
             analysis,
             factorization: None,
         })
     }
-    
+
     /// Perform numerical factorization
     pub fn factor(&mut self, matrix: &SparseColMat<f64>) -> Result<()> {
         let factorization = factor_tree(
@@ -2756,19 +2756,19 @@ impl SparseLDLT {
             matrix,
             FactorOptions::default()
         )?;
-        
+
         self.factorization = Some(factorization);
         Ok(())
     }
-    
+
     /// Solve Ax = b
     pub fn solve(&self, b: &[f64]) -> Result<Vec<f64>> {
         let factorization = self.factorization.as_ref()
             .ok_or(Error::NotFactored)?;
-        
+
         Ok(solve_ldlt(factorization, b))
     }
-    
+
     /// One-shot solve: analyze + factor + solve
     pub fn solve_matrix(
         matrix: SparseColMat<f64>,
@@ -2778,19 +2778,19 @@ impl SparseLDLT {
         solver.factor(&matrix)?;
         solver.solve(b)
     }
-    
+
     /// Get inertia (num positive, num negative, num zero eigenvalues)
     pub fn inertia(&self) -> Option<(usize, usize, usize)> {
         self.factorization.as_ref().map(|f| f.inertia())
     }
-    
+
     /// Refactor with same sparsity pattern
     pub fn refactor(&mut self, matrix: &SparseColMat<f64>) -> Result<()> {
         // Check pattern matches
         if !same_pattern(&self.analysis.analysis.assembly_tree, matrix) {
             return Err(Error::PatternMismatch);
         }
-        
+
         self.factor(matrix)
     }
 }
@@ -2823,10 +2823,10 @@ impl Default for SolverOptions {
 fn test_api_basic() {
     let matrix = load_test_matrix("small-indefinite");
     let b = vec![1.0; matrix.nrows()];
-    
+
     // One-shot solve
     let x = SparseLDLT::solve_matrix(matrix, &b).unwrap();
-    
+
     // Verify
     let residual = compute_residual_sparse(&matrix, &x, &b);
     assert!(residual < 1e-10);
@@ -2836,17 +2836,17 @@ fn test_api_basic() {
 fn test_api_refactor() {
     let matrix1 = load_test_matrix("truss-1");
     let matrix2 = load_test_matrix("truss-2");  // Same pattern
-    
+
     let mut solver = SparseLDLT::new(matrix1.clone()).unwrap();
     solver.factor(&matrix1).unwrap();
-    
+
     let b = vec![1.0; matrix1.nrows()];
     let x1 = solver.solve(&b).unwrap();
-    
+
     // Refactor with same pattern
     solver.refactor(&matrix2).unwrap();
     let x2 = solver.solve(&b).unwrap();
-    
+
     // Both should be correct solutions
     assert!(compute_residual_sparse(&matrix1, &x1, &b) < 1e-10);
     assert!(compute_residual_sparse(&matrix2, &x2, &b) < 1e-10);
@@ -2855,9 +2855,9 @@ fn test_api_refactor() {
 #[test]
 fn test_api_error_handling() {
     let matrix = load_test_matrix("small-matrix");
-    
+
     let solver = SparseLDLT::new(matrix.clone()).unwrap();
-    
+
     // Should error if try to solve before factoring
     let b = vec![1.0; matrix.nrows()];
     assert!(solver.solve(&b).is_err());
@@ -2879,16 +2879,16 @@ fn test_api_error_handling() {
 #[test]
 fn test_full_suite_sequential() {
     let mut report = TestReport::new();
-    
+
     for case in all_test_cases() {
         println!("Testing: {}", case.name);
-        
+
         let result = test_full_solve(&case);
         report.add(case.name.clone(), result);
     }
-    
+
     report.print();
-    
+
     // Success criteria
     assert!(report.success_rate() > 0.95);
     assert!(report.median_residual() < 1e-9);
@@ -2897,23 +2897,23 @@ fn test_full_suite_sequential() {
 fn test_full_solve(case: &SolverTestCase) -> TestResult {
     // 1. Solve
     let b = random_vector(case.matrix.nrows());
-    
+
     let solver_result = SparseLDLT::solve_matrix(
         case.matrix.clone(),
         &b
     );
-    
+
     let x = match solver_result {
         Ok(x) => x,
         Err(e) => return TestResult::Failed(format!("{:?}", e)),
     };
-    
+
     // 2. Check residual
     let residual = compute_residual_sparse(&case.matrix, &x, &b);
-    
+
     // 3. Check inertia if available
     let inertia_ok = if let Some(ref_inertia) = case.reference.as_ref()
-        .and_then(|r| r.inertia) 
+        .and_then(|r| r.inertia)
     {
         let solver = SparseLDLT::new(case.matrix.clone()).unwrap();
         let computed_inertia = solver.inertia().unwrap();
@@ -2921,14 +2921,14 @@ fn test_full_solve(case: &SolverTestCase) -> TestResult {
     } else {
         true
     };
-    
+
     // 4. Compare with SPRAL if available
     let spral_comparison = if let Some(ref_results) = case.reference {
         compare_with_spral_results(&case, &ref_results)
     } else {
         None
     };
-    
+
     TestResult::Success {
         residual,
         inertia_ok,
@@ -2980,7 +2980,7 @@ pub fn factor_tree_parallel(
     parallelism: Parallelism
 ) -> Result<TreeFactorization> {
     let mut factors = Arc::new(Mutex::new(FactorStorage::new()));
-    
+
     match parallelism {
         Parallelism::None => {
             factor_tree_sequential(assembly_tree, matrix, options)
@@ -3010,29 +3010,29 @@ fn factor_tree_level_by_level(
 ) -> Result<TreeFactorization> {
     // Process tree level-by-level for parallelism
     let levels = assembly_tree.level_order();
-    
+
     for level_nodes in levels {
         // All nodes at same level can be factored in parallel
         level_nodes.par_iter().try_for_each(|&node_id| {
             let node = assembly_tree.node(node_id);
-            
+
             // Create and assemble front
             let mut front = create_and_assemble_front(
                 node,
                 matrix,
                 &factors.lock().unwrap()
             );
-            
+
             // Factor
             let front_factors = factor_front(&front, options.aptp_options)?;
-            
+
             // Store
             factors.lock().unwrap().store(node_id, front_factors);
-            
+
             Ok::<(), Error>(())
         })?;
     }
-    
+
     Ok(TreeFactorization {
         storage: Arc::try_unwrap(factors).unwrap().into_inner().unwrap(),
         tree: assembly_tree.clone(),
@@ -3047,7 +3047,7 @@ fn factor_tree_level_by_level(
 fn test_parallel_determinism() {
     let matrix = load_test_matrix("medium-matrix");
     let analysis = analyze_full(&matrix);
-    
+
     // Run 10 times in parallel
     let results: Vec<_> = (0..10)
         .into_par_iter()
@@ -3060,17 +3060,17 @@ fn test_parallel_determinism() {
             ).unwrap()
         })
         .collect();
-    
+
     // All results should be identical
     for (i, result) in results.iter().enumerate() {
         assert_eq!(result.inertia(), results[0].inertia(),
                    "Run {} differs from run 0", i);
-        
+
         // Solve and check residuals match
         let b = vec![1.0; matrix.nrows()];
         let x_i = solve_ldlt(result, &b);
         let x_0 = solve_ldlt(&results[0], &b);
-        
+
         assert_vector_close(&x_i, &x_0, 1e-14);
     }
 }
@@ -3079,28 +3079,28 @@ fn test_parallel_determinism() {
 fn test_parallel_vs_sequential() {
     for case in test_cases_medium() {
         let analysis = analyze_full(&case.matrix);
-        
+
         let seq = factor_tree(
             &analysis.assembly_tree,
             &case.matrix,
             FactorOptions::default()
         ).unwrap();
-        
+
         let par = factor_tree_parallel(
             &analysis.assembly_tree,
             &case.matrix,
             FactorOptions::default(),
             Parallelism::Rayon(4)
         ).unwrap();
-        
+
         // Should produce identical results
         assert_eq!(seq.inertia(), par.inertia());
-        
+
         // Test solve
         let b = vec![1.0; case.matrix.nrows()];
         let x_seq = solve_ldlt(&seq, &b);
         let x_par = solve_ldlt(&par, &b);
-        
+
         assert_vector_close(&x_seq, &x_par, 1e-13);
     }
 }
@@ -3135,14 +3135,14 @@ fn static_partition_tree(
     // Partition tree into subtrees of roughly equal work
     let total_flops = assembly_tree.total_flops();
     let target_flops_per_thread = total_flops / n_threads as f64;
-    
+
     // Greedy assignment of subtrees to threads
     let mut thread_assignments = vec![Vec::new(); n_threads];
     let mut thread_loads = vec![0.0; n_threads];
-    
+
     for node_id in assembly_tree.postorder() {
         let node_flops = assembly_tree.node(node_id).flops;
-        
+
         // Assign to thread with least work
         let min_thread = thread_loads
             .iter()
@@ -3150,11 +3150,11 @@ fn static_partition_tree(
             .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
             .unwrap()
             .0;
-        
+
         thread_assignments[min_thread].push(node_id);
         thread_loads[min_thread] += node_flops;
     }
-    
+
     thread_assignments
 }
 ```
@@ -3166,7 +3166,7 @@ fn static_partition_tree(
 fn test_load_balancing() {
     let unbalanced_matrix = create_unbalanced_tree_matrix();
     let analysis = analyze_full(&unbalanced_matrix);
-    
+
     // Time with different strategies
     let strategies = vec![
         LoadBalancingStrategy {
@@ -3178,7 +3178,7 @@ fn test_load_balancing() {
             min_work_per_thread: 1e6,
         },
     ];
-    
+
     for strategy in strategies {
         let start = Instant::now();
         let _ = factor_tree_parallel_balanced(
@@ -3189,7 +3189,7 @@ fn test_load_balancing() {
             strategy
         ).unwrap();
         let time = start.elapsed();
-        
+
         println!("{:?}: {:.2}ms", strategy.method, time.as_millis());
     }
 }
@@ -3226,18 +3226,18 @@ fn solve_ldlt_parallel_impl(
 ) -> Vec<f64> {
     // Forward/backward solve has limited parallelism
     // due to dependencies
-    // 
+    //
     // Strategy: parallelize within supernodes for large fronts
     // use level-set parallelism for small fronts
-    
+
     let mut x = rhs.to_vec();
-    
+
     // Permute/scale
     apply_permutation(&mut x, &factorization.permutation);
     if let Some(scaling) = &factorization.scaling {
         apply_scaling(&mut x, scaling);
     }
-    
+
     // Forward solve with level-set parallelism
     for level in factorization.tree.level_order() {
         level.par_iter().for_each(|&node_id| {
@@ -3245,9 +3245,9 @@ fn solve_ldlt_parallel_impl(
             forward_solve_node(factorization, node_id, &mut x);
         });
     }
-    
+
     // Similar for backward solve...
-    
+
     x
 }
 ```
@@ -3265,16 +3265,16 @@ fn test_parallel_solve() {
             FactorOptions::default(),
             Parallelism::Rayon(4)
         ).unwrap();
-        
+
         let b = random_vector(case.matrix.nrows());
-        
+
         let x_seq = solve_ldlt(&factorization, &b);
         let x_par = solve_ldlt_parallel(
             &factorization,
             &b,
             Parallelism::Rayon(4)
         );
-        
+
         // Should produce same results
         assert_vector_close(&x_seq, &x_par, 1e-13);
     }
@@ -3296,13 +3296,13 @@ fn test_parallel_solve() {
 fn bench_parallel_scaling(b: &mut Bencher) {
     let matrix = load_test_matrix("large-3d-fem");
     let analysis = analyze_full(&matrix);
-    
+
     let thread_counts = [1, 2, 4, 8];
-    
+
     for &n_threads in &thread_counts {
         b.iter_custom(|iters| {
             let mut total_time = Duration::ZERO;
-            
+
             for _ in 0..iters {
                 let start = Instant::now();
                 let _ = factor_tree_parallel(
@@ -3313,15 +3313,15 @@ fn bench_parallel_scaling(b: &mut Bencher) {
                 );
                 total_time += start.elapsed();
             }
-            
+
             total_time
         });
-        
+
         // Compute speedup
         let t1 = benchmark_time_one_thread();
         let tn = benchmark_time_n_threads(n_threads);
         let speedup = t1 / tn;
-        
+
         println!("Threads: {}, Speedup: {:.2}x", n_threads, speedup);
     }
 }
@@ -3329,12 +3329,12 @@ fn bench_parallel_scaling(b: &mut Bencher) {
 #[test]
 fn test_parallel_scaling_report() {
     let mut report = ParallelScalingReport::new();
-    
+
     for case in test_cases_large() {
         let scaling_data = measure_parallel_scaling(&case, &[1, 2, 4, 8]);
         report.add(case.name, scaling_data);
     }
-    
+
     report.print();
     report.save_csv("parallel_scaling.csv");
 }
@@ -3612,17 +3612,17 @@ Performance optimization, memory efficiency, API refinement, comprehensive docum
 #[ignore]
 fn profile_full_solve() {
     let cases = test_cases_by_difficulty(Difficulty::Hard);
-    
+
     for case in cases {
         println!("\nProfiling: {}", case.name);
-        
+
         let profiler = ProfileRecorder::new();
-        
+
         // Analyze
         profiler.start_section("analyze");
         let analysis = analyze_full(&case.matrix);
         profiler.end_section();
-        
+
         // Factor
         profiler.start_section("factor");
         let factorization = factor_tree(
@@ -3631,13 +3631,13 @@ fn profile_full_solve() {
             FactorOptions::default()
         ).unwrap();
         profiler.end_section();
-        
+
         // Solve
         profiler.start_section("solve");
         let b = random_vector(case.matrix.nrows());
         let _ = solve_ldlt(&factorization, &b);
         profiler.end_section();
-        
+
         // Report
         profiler.print_report();
         profiler.export_flamegraph(&format!("{}.svg", case.name));
@@ -3672,9 +3672,9 @@ pub struct FrontalArena {
 impl FrontalArena {
     pub fn allocate_front(&mut self, nrows: usize, ncols: usize)
         -> FrontalMatrix;
-    
+
     pub fn free_front(&mut self, front: FrontalMatrix);
-    
+
     pub fn peak_usage(&self) -> usize;
 }
 
@@ -3692,23 +3692,23 @@ pub struct CompactFactorStorage {
 fn test_memory_usage() {
     for case in test_cases() {
         let before = get_memory_usage();
-        
+
         let analysis = analyze_full(&case.matrix);
         let factorization = factor_tree(
             &analysis.assembly_tree,
             &case.matrix,
             FactorOptions::default()
         ).unwrap();
-        
+
         let peak = get_peak_memory_usage();
         let after = get_memory_usage();
-        
+
         println!("{}: peak={:.1}MB, final={:.1}MB, predicted={:.1}MB",
                  case.name,
                  peak / 1e6,
                  after / 1e6,
                  analysis.analysis.predicted_memory / 1e6);
-        
+
         // Peak should be close to prediction
         let ratio = peak as f64 / analysis.analysis.predicted_memory as f64;
         assert!(ratio < 1.5, "Memory usage higher than predicted");
@@ -3773,17 +3773,17 @@ impl SparseLDLTBuilder {
         self.ordering = method;
         self
     }
-    
+
     pub fn threshold(mut self, threshold: f64) -> Self {
         self.threshold = threshold;
         self
     }
-    
+
     pub fn parallel(mut self, n_threads: usize) -> Self {
         self.parallelism = Parallelism::Rayon(n_threads);
         self
     }
-    
+
     pub fn build(self, matrix: SparseColMat<f64>) -> Result<SparseLDLT> {
         // ...
     }
@@ -3801,15 +3801,15 @@ use sparse_ldlt::*;
 fn main() -> Result<()> {
     // Load matrix
     let matrix = io::read_matrix_market("test.mtx")?;
-    
+
     // Create RHS
     let b = vec![1.0; matrix.nrows()];
-    
+
     // Solve
     let x = SparseLDLT::solve_matrix(matrix, &b)?;
-    
+
     println!("Solution norm: {:.6}", x.iter().map(|&v| v*v).sum::<f64>().sqrt());
-    
+
     Ok(())
 }
 ```
@@ -3830,7 +3830,7 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod property_tests {
     use proptest::prelude::*;
-    
+
     proptest! {
         #[test]
         fn test_solve_always_correct(
@@ -3839,7 +3839,7 @@ mod property_tests {
             if let Ok(solver) = SparseLDLT::new(matrix.clone()) {
                 let b = random_vector(matrix.nrows());
                 let x = solver.solve(&b).unwrap();
-                
+
                 let residual = compute_residual_sparse(&matrix, &x, &b);
                 prop_assert!(residual < 1e-6);
             }
@@ -3884,7 +3884,7 @@ fn test_known_issues() {
 - Is the library ready for public use?
 - Are there any remaining bugs?
 
-**Final Checkpoint:** 
+**Final Checkpoint:**
 - Run full benchmark suite
 - Compare with SPRAL on all metrics
 - Generate final report
