@@ -75,5 +75,5 @@ share/python-wheels/
 *.egg
 MANIFEST
 
-# Reference codes
-references
+# Reference codes (symlink to /opt/references)
+/references
