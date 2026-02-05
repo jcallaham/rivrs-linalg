@@ -1,5 +1,5 @@
 #!/bin/bash
 set -euo pipefail
 
-docker rm -f rivrs-linalg-dev
+docker rm -f rivrs-linalg
 docker volume rm rivrs-linalg-workspace

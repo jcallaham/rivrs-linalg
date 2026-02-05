@@ -26,18 +26,18 @@ if ! gh auth status &>/dev/null; then
 fi
 
 # Check if container already exists
-if docker ps -a --format '{{.Names}}' | grep -q '^rivrs-linalg-dev$'; then
-	echo -e "${YELLOW}Container 'rivrs-linalg-dev' already exists${NC}"
+if docker ps -a --format '{{.Names}}' | grep -q '^rivrs-linalg$'; then
+	echo -e "${YELLOW}Container 'rivrs-linalg' already exists${NC}"
 
-	if docker ps --format '{{.Names}}' | grep -q '^rivrs-linalg-dev$'; then
+	if docker ps --format '{{.Names}}' | grep -q '^rivrs-linalg$'; then
 		echo "Container is running. Attaching..."
-		docker attach rivrs-linalg-dev
+		docker attach rivrs-linalg
 	else
 		echo "Container is stopped. Starting and attaching..."
-		docker start -ai rivrs-linalg-dev
+		docker start -ai rivrs-linalg
 	fi
 else
-	echo -e "${GREEN}Creating new container 'rivrs-linalg-dev'...${NC}"
+	echo -e "${GREEN}Creating new container 'rivrs-linalg'...${NC}"
 	echo ""
 
 	# Create named volumes if they don't exist
@@ -51,7 +51,7 @@ else
 
 	# Run the container
 	docker run -it \
-		--name rivrs-linalg-dev \
+		--name rivrs-linalg \
 		--platform linux/arm64 \
 		-v rivrs-linalg-workspace:/workspace \
 		-v rivrs-linalg-cargo-cache:/home/node/.cargo/registry \
@@ -65,12 +65,12 @@ else
     	-e "TERM=${TERM:-xterm-256color}" \
 		--cpus=8 \
 		--memory=16g \
-		rivrs-linalg-dev:latest \
+		rivrs-linalg:latest \
 		/bin/bash
 fi
 
 echo ""
 echo -e "${GREEN}Exited container${NC}"
 echo ""
-echo "To restart: docker start rivrs-linalg-dev && docker exec -it rivrs-linalg-dev bash"
-echo "To remove:  docker rm rivrs-linalg-dev"
+echo "To restart: docker start rivrs-linalg && docker exec -it rivrs-linalg bash"
+echo "To remove:  docker rm rivrs-linalg"
