@@ -63,6 +63,7 @@ else
 		-e RUSTFLAGS="-C target-cpu=native" \
 		-e CARGO_BUILD_JOBS=8 \
 		-e RUSTC_WRAPPER=sccache \
+    	-e "TERM=${TERM:-xterm-256color}" \
 		--cpus=8 \
 		--memory=16g \
 		rivrs-linalg-dev:latest \
