@@ -153,6 +153,8 @@ When implementing a new component:
 - criterion for benchmarking (dev dependency)
 - Rust 1.87+ (edition 2024) + faer 0.22 (sparse/dense LA), serde + serde_json (JSON parsing) (004-repo-setup)
 - Filesystem (test-data/ directory with .mtx and .json files) (004-repo-setup)
+- Rust 1.87+ (edition 2024) + faer 0.22 (sparse/dense LA), serde + serde_json (JSON parsing), rand + rand_distr (random generation, dev-dependency) (005-test-infrastructure)
+- Filesystem (test-data/ directory with .mtx and .json files, metadata.json registry) (005-test-infrastructure)
 
 ## Testing Strategy
 
@@ -164,6 +166,5 @@ Primary correctness validation (established in Phase 0.3 decision):
 5. **SPRAL comparison**: Deferred to Phases 2-8 (performance benchmarking, large-matrix inertia)
 
 ## Recent Changes
+- 005-test-infrastructure: Added Rust 1.87+ (edition 2024) + faer 0.22 (sparse/dense LA), serde + serde_json (JSON parsing), rand + rand_distr (random generation, dev-dependency)
 - 004-repo-setup: Added Rust 1.87+ (edition 2024) + faer 0.22 (sparse/dense LA), serde + serde_json (JSON parsing)
-- 003-spral-golden-results: Phase 0.3 deferred. SPRAL golden results infrastructure not built; reconstruction tests adopted as primary correctness oracle (stronger than cross-solver comparison). Constitution updated to v1.1.0.
-- 002-test-matrix-collection: 82 test matrices (15 hand-constructed + 67 SuiteSparse). Three-tier storage: hand-constructed in git, 10-matrix CI subset in `suitesparse-ci/` (plain git), full collection in gitignored `suitesparse/` (extracted from `references/ssids/suitesparse.tar.gz` at container build). No Git LFS.
