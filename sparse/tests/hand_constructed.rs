@@ -1,75 +1,57 @@
 //! Integration tests for hand-constructed test matrices.
 //!
-//! Loads all 15 hand-constructed matrices, verifies dimensions and nnz match
-//! metadata, and confirms reference factorizations load correctly.
+//! Uses the test infrastructure harness to load all 15 hand-constructed
+//! matrices and validate reconstruction error and inertia.
 
-use rivrs_sparse::io::registry;
-use rivrs_sparse::validate;
+use rivrs_sparse::testing::{NumericalValidator, TestCaseFilter, load_test_cases};
 
 #[test]
 fn load_all_hand_constructed_matrices() {
     let start = std::time::Instant::now();
 
-    let reg = registry::load_registry().expect("failed to load registry");
-    let hand_constructed: Vec<_> = reg
-        .iter()
-        .filter(|m| m.source == "hand-constructed")
-        .collect();
+    let cases = load_test_cases(&TestCaseFilter::hand_constructed())
+        .expect("failed to load hand-constructed test cases");
 
-    assert_eq!(
-        hand_constructed.len(),
-        15,
-        "expected 15 hand-constructed matrices"
-    );
+    assert_eq!(cases.len(), 15, "expected 15 hand-constructed matrices");
 
-    for meta in &hand_constructed {
-        let test = registry::load_test_matrix(&meta.name)
-            .unwrap_or_else(|e| panic!("failed to load '{}': {}", meta.name, e))
-            .unwrap_or_else(|| panic!("matrix '{}' should exist on disk", meta.name));
+    let validator = NumericalValidator::new();
 
-        // Verify dimensions match metadata
+    for case in &cases {
+        // Verify dimensions match properties
         assert_eq!(
-            test.matrix.nrows(),
-            meta.size,
+            case.matrix.nrows(),
+            case.properties.size,
             "dimension mismatch for '{}'",
-            meta.name
+            case.name
         );
         assert_eq!(
-            test.matrix.ncols(),
-            meta.size,
+            case.matrix.ncols(),
+            case.properties.size,
             "dimension mismatch for '{}'",
-            meta.name
+            case.name
         );
 
-        // Verify reference factorization is available for all hand-constructed matrices
+        // Verify reference factorization is available
         assert!(
-            test.reference.is_some(),
+            case.reference.is_some(),
             "hand-constructed matrix '{}' should have a reference factorization",
-            meta.name
+            case.name
         );
 
-        let refdata = test.reference.as_ref().unwrap();
+        let reference = case.reference.as_ref().unwrap();
         assert_eq!(
-            refdata.inertia.dimension(),
-            meta.size,
+            reference.inertia.dimension(),
+            case.properties.size,
             "inertia dimension mismatch for '{}'",
-            meta.name
+            case.name
         );
 
-        // Validate reconstruction error < 10^-12 (SC-008)
-        let recon_err = validate::reconstruction_error(&test.matrix, refdata);
+        // Validate reconstruction error < 10^-12
+        let result = validator.validate_factorization(case);
         assert!(
-            recon_err < 1e-12,
-            "reconstruction error for '{}': {:.2e} (expected < 1e-12)",
-            meta.name,
-            recon_err
-        );
-
-        // Validate inertia self-consistency (sanity check)
-        assert!(
-            validate::check_inertia(&refdata.inertia, &refdata.inertia),
-            "inertia self-check failed for '{}'",
-            meta.name
+            result.passed,
+            "'{}' failed validation: {}",
+            case.name, result
         );
     }
 

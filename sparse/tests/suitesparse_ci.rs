@@ -1,49 +1,50 @@
 //! Integration tests for SuiteSparse CI-subset matrices.
 //!
-//! Loads all 9 CI-subset matrices from the registry, verifies dimensions
-//! and nnz match metadata, and confirms matrix symmetry.
+//! Uses the test infrastructure harness to load all 9 CI-subset matrices
+//! and verify dimensions and symmetry.
 //!
 //! nd6k (103 MB) excluded from CI subset due to GitHub's 100 MB file size limit.
 
-use rivrs_sparse::io::registry;
+use rivrs_sparse::testing::{TestCaseFilter, load_test_cases};
 
 #[test]
 fn load_all_ci_subset_matrices() {
-    let reg = registry::load_registry().expect("failed to load registry");
-    let ci_subset: Vec<_> = reg.iter().filter(|m| m.ci_subset).collect();
+    let cases =
+        load_test_cases(&TestCaseFilter::ci_subset()).expect("failed to load CI-subset matrices");
+
+    let suitesparse: Vec<_> = cases
+        .iter()
+        .filter(|c| c.properties.source == "suitesparse")
+        .collect();
 
     assert_eq!(
-        ci_subset.len(),
+        suitesparse.len(),
         9,
-        "expected 9 CI-subset matrices, got {}",
-        ci_subset.len()
+        "expected 9 CI-subset suitesparse matrices, got {}",
+        suitesparse.len()
     );
 
-    for meta in &ci_subset {
-        let test = registry::load_test_matrix(&meta.name)
-            .unwrap_or_else(|e| panic!("failed to load '{}': {}", meta.name, e))
-            .unwrap_or_else(|| panic!("CI-subset matrix '{}' should exist on disk", meta.name));
-
-        // Verify dimensions match metadata
+    for case in &suitesparse {
+        // Verify dimensions match properties
         assert_eq!(
-            test.matrix.nrows(),
-            meta.size,
+            case.matrix.nrows(),
+            case.properties.size,
             "row dimension mismatch for '{}'",
-            meta.name
+            case.name
         );
         assert_eq!(
-            test.matrix.ncols(),
-            meta.size,
+            case.matrix.ncols(),
+            case.properties.size,
             "col dimension mismatch for '{}'",
-            meta.name
+            case.name
         );
 
         // Verify matrix is square
         assert_eq!(
-            test.matrix.nrows(),
-            test.matrix.ncols(),
+            case.matrix.nrows(),
+            case.matrix.ncols(),
             "matrix '{}' should be square",
-            meta.name
+            case.name
         );
     }
 }
