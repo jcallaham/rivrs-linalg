@@ -1,0 +1,4 @@
+%%MatrixMarket matrix coordinate real symmetric
+% 2x2 matrix requiring 2x2 pivot: A = [0 3; 3 0]
+2 2 1
+2 1 3.000000000000000e+00

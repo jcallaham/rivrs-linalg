@@ -1,0 +1,46 @@
+{
+  "matrix_name": "singular-3",
+  "permutation": [
+    0,
+    1,
+    2
+  ],
+  "l_entries": [
+    {
+      "row": 1,
+      "col": 0,
+      "value": 0.5
+    },
+    {
+      "row": 2,
+      "col": 1,
+      "value": 0.6666666666666666
+    }
+  ],
+  "d_blocks": [
+    {
+      "size": 1,
+      "values": [
+        2.0
+      ]
+    },
+    {
+      "size": 1,
+      "values": [
+        1.5
+      ]
+    },
+    {
+      "size": 1,
+      "values": [
+        -0.6666666666666666
+      ]
+    }
+  ],
+  "inertia": {
+    "positive": 2,
+    "negative": 1,
+    "zero": 0
+  },
+  "notes": "Adapted from SPRAL simple_sing_mat. Structurally rank-deficient."
+}

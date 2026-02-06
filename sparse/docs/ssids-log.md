@@ -1,5 +1,92 @@
 # SSIDS Development Log
 
+## Phase 0.2: Test Matrix Collection Assembly
+
+**Status**: Complete
+**Branch**: `002-test-matrix-collection`
+**Date**: 2026-02-05
+
+### What Was Built
+
+A comprehensive test matrix collection with 82 matrices (15 hand-constructed +
+67 SuiteSparse), organized under `sparse/test-data/`:
+
+```
+sparse/test-data/
+├── metadata.json                    # Complete index (82 matrices)
+├── README.md                        # Setup instructions
+├── hand-constructed/                # 15 matrices with exact LDL^T factorizations
+│   ├── {name}.mtx                   # Matrix Market format
+│   └── {name}.json                  # Exact L, D, P, inertia
+├── suitesparse/
+│   ├── easy-indefinite/             # 30 matrices from APTP paper benchmarks
+│   ├── hard-indefinite/             # 18 matrices (includes killer cases)
+│   └── positive-definite/           # 19 matrices for fast-path validation
+├── suitesparse-ci/                  # 10 representative matrices (plain git, ~73MB)
+│   ├── easy-indefinite/{name}.mtx
+│   ├── hard-indefinite/{name}.mtx
+│   └── positive-definite/{name}.mtx
+└── scripts/
+    ├── requirements.txt             # Python dependencies (ssgetpy, numpy, scipy)
+    ├── mtx_utils.py                 # Matrix Market I/O
+    ├── metadata_utils.py            # Metadata index builder
+    ├── factorization_utils.py       # Factorization writing and verification
+    ├── generate_hand_constructed.py  # Hand-constructed matrix generator
+    ├── download_suitesparse.py      # SuiteSparse download with curated lists
+    └── validate_collection.py       # Collection validation and reporting
+```
+
+### Hand-Constructed Matrices (15)
+
+Six categories of matrices with analytically verified LDL^T factorizations:
+
+1. **Arrow matrices** (3): 5x5 PD, 10x10 indefinite, 15x15 indefinite
+2. **Tridiagonal matrices** (3): 5x5 PD, 10x10 indefinite, 20x20 indefinite
+3. **Block diagonal** (1): 15x15 with PD, indefinite, and 2x2-pivot blocks
+4. **Bordered block diagonal** (1): 20x20 adapted from SPRAL pattern (BSD-3)
+5. **Stress tests** (3): zero diagonal (forces 2x2 pivots), dense column (fill-in), ill-conditioned
+6. **Degenerate cases** (4): 3x3 zero-diagonal, 3x3 singular, 1x1 trivial, 2x2 requiring 2x2 pivot
+
+All 15 factorizations verified: `||P^T A P - L D L^T|| / ||A|| < 1e-10`.
+
+### SuiteSparse Matrices (67)
+
+Curated from APTP benchmark papers:
+- **Easy indefinite (30)**: From Duff, Hogg, Lopez (2020) Table 1 and Hogg et al. (2016)
+- **Hard indefinite (18)**: From Duff et al. (2020) Table 2 (KKT/saddle-point systems)
+- **Positive definite (19)**: From Hogg et al. (2016) Table III (dagger-marked)
+
+Large matrices (>200K rows) stored as metadata-only with download commands.
+
+### Key Decisions
+
+1. **Curated lists from papers** (not broad queries): Provides gold-standard difficulty
+   classification from actual APTP benchmark results.
+2. **Tiered storage (no LFS)**: Hand-constructed + CI subset committed to plain git;
+   full SuiteSparse collection gitignored and extracted from archive at container build.
+   Originally planned Git LFS, replaced with three-tier approach to avoid LFS costs
+   and complexity for 4GB of immutable reference data.
+3. **CI subset (10 matrices, ~73MB)**: Representative set in `suitesparse-ci/` committed
+   to plain git (~19MB in pack). Avoids 40KB/s SuiteSparse API throttle in CI. Covers
+   all categories including 2 killer cases.
+4. **Full collection via archive**: `references/ssids/suitesparse.tar.gz` (1.3GB) stored
+   outside git as static reference data. Docker entrypoint extracts automatically.
+5. **Python scripts with uv**: Virtual environment at `scripts/.venv/`, dependencies via `uv pip`.
+6. **ssgetpy API**: `ssgetpy.search(name)` with exact group/name matching; download with
+   manual tar.gz extraction for reliable file placement.
+7. **vibrobox group correction**: SuiteSparse has `Cote/vibrobox`, not `GHS_indef/vibrobox`.
+8. **cont-201 killer case**: Added `killer_case: True` to `cont-201` (large optimization problem
+   with many zero diagonals forcing 2×2 pivots) to reach the SC-005 threshold of ≥5 killer cases.
+   Total killer cases: stokes128, cont-201, ncvxqp3, c-big, c-71.
+
+### Issues Encountered
+
+- **ssgetpy API change**: The `matname` keyword argument no longer works; must use positional
+  `name_or_id` parameter.
+- **ssgetpy extract=True**: Doesn't always place the correct `.mtx` file; rewrote to use
+  `extract=False` + manual `tarfile` extraction with name-based file selection.
+- **Slow download speeds**: SuiteSparse downloads throttled to ~40KB/s from this environment.
+
 ## Phase 0.1: Literature Review & Reference Library
 
 **Status**: Complete

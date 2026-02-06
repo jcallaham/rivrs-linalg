@@ -1,0 +1,89 @@
+{
+  "matrix_name": "stress-delayed-pivots",
+  "permutation": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9
+  ],
+  "l_entries": [],
+  "d_blocks": [
+    {
+      "size": 2,
+      "values": [
+        [
+          0.0,
+          2.0
+        ],
+        [
+          2.0,
+          0.0
+        ]
+      ]
+    },
+    {
+      "size": 2,
+      "values": [
+        [
+          0.0,
+          4.0
+        ],
+        [
+          4.0,
+          0.0
+        ]
+      ]
+    },
+    {
+      "size": 2,
+      "values": [
+        [
+          0.0,
+          6.0
+        ],
+        [
+          6.0,
+          0.0
+        ]
+      ]
+    },
+    {
+      "size": 2,
+      "values": [
+        [
+          0.0,
+          8.0
+        ],
+        [
+          8.0,
+          0.0
+        ]
+      ]
+    },
+    {
+      "size": 2,
+      "values": [
+        [
+          0.0,
+          10.0
+        ],
+        [
+          10.0,
+          0.0
+        ]
+      ]
+    }
+  ],
+  "inertia": {
+    "positive": 5,
+    "negative": 5,
+    "zero": 0
+  },
+  "notes": "Zero diagonal stress test. All pivots must be 2x2."
+}
