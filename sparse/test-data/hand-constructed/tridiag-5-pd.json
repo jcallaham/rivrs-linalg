@@ -1,0 +1,70 @@
+{
+  "matrix_name": "tridiag-5-pd",
+  "permutation": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "l_entries": [
+    {
+      "row": 1,
+      "col": 0,
+      "value": -0.25
+    },
+    {
+      "row": 2,
+      "col": 1,
+      "value": -0.26666666666666666
+    },
+    {
+      "row": 3,
+      "col": 2,
+      "value": -0.26785714285714285
+    },
+    {
+      "row": 4,
+      "col": 3,
+      "value": -0.2679425837320574
+    }
+  ],
+  "d_blocks": [
+    {
+      "size": 1,
+      "values": [
+        4.0
+      ]
+    },
+    {
+      "size": 1,
+      "values": [
+        3.75
+      ]
+    },
+    {
+      "size": 1,
+      "values": [
+        3.7333333333333334
+      ]
+    },
+    {
+      "size": 1,
+      "values": [
+        3.732142857142857
+      ]
+    },
+    {
+      "size": 1,
+      "values": [
+        3.7320574162679425
+      ]
+    }
+  ],
+  "inertia": {
+    "positive": 5,
+    "negative": 0,
+    "zero": 0
+  },
+  "notes": "Tridiag(-1, 4, -1). LDL^T via recurrence d_i = a_i - b^2/d_{i-1}."
+}

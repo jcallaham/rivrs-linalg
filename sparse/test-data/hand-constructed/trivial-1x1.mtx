@@ -1,0 +1,4 @@
+%%MatrixMarket matrix coordinate real symmetric
+% 1x1 trivial matrix: A = [5]
+1 1 1
+1 1 5.000000000000000e+00

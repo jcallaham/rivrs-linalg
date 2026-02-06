@@ -1,0 +1,100 @@
+{
+  "matrix_name": "arrow-5-pd",
+  "permutation": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "l_entries": [
+    {
+      "row": 1,
+      "col": 0,
+      "value": 0.2
+    },
+    {
+      "row": 2,
+      "col": 0,
+      "value": 0.2
+    },
+    {
+      "row": 2,
+      "col": 1,
+      "value": -0.04166666666666668
+    },
+    {
+      "row": 3,
+      "col": 0,
+      "value": 0.2
+    },
+    {
+      "row": 3,
+      "col": 1,
+      "value": -0.04166666666666668
+    },
+    {
+      "row": 3,
+      "col": 2,
+      "value": -0.04347826086956522
+    },
+    {
+      "row": 4,
+      "col": 0,
+      "value": 0.2
+    },
+    {
+      "row": 4,
+      "col": 1,
+      "value": -0.04166666666666668
+    },
+    {
+      "row": 4,
+      "col": 2,
+      "value": -0.04347826086956522
+    },
+    {
+      "row": 4,
+      "col": 3,
+      "value": -0.04545454545454546
+    }
+  ],
+  "d_blocks": [
+    {
+      "size": 1,
+      "values": [
+        5.0
+      ]
+    },
+    {
+      "size": 1,
+      "values": [
+        4.8
+      ]
+    },
+    {
+      "size": 1,
+      "values": [
+        4.791666666666667
+      ]
+    },
+    {
+      "size": 1,
+      "values": [
+        4.782608695652174
+      ]
+    },
+    {
+      "size": 1,
+      "values": [
+        4.7727272727272725
+      ]
+    }
+  ],
+  "inertia": {
+    "positive": 5,
+    "negative": 0,
+    "zero": 0
+  },
+  "notes": "Arrow matrix with diagonal dominance. LDL^T computed analytically."
+}

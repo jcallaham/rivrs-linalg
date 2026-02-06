@@ -1,0 +1,29 @@
+{
+  "matrix_name": "trivial-2x2",
+  "permutation": [
+    0,
+    1
+  ],
+  "l_entries": [],
+  "d_blocks": [
+    {
+      "size": 2,
+      "values": [
+        [
+          0.0,
+          3.0
+        ],
+        [
+          3.0,
+          0.0
+        ]
+      ]
+    }
+  ],
+  "inertia": {
+    "positive": 1,
+    "negative": 1,
+    "zero": 0
+  },
+  "notes": "Requires 2x2 Bunch-Kaufman pivot. Zero diagonal."
+}
