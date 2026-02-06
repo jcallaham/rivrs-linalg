@@ -1,0 +1,6 @@
+%%MatrixMarket matrix coordinate real symmetric
+% 3x3 zero diagonal. From SPRAL simple_mat_zero_diag (BSD-3)
+3 3 3
+2 1 2.000000000000000e+00
+3 1 1.000000000000000e+00
+3 3 3.000000000000000e+00

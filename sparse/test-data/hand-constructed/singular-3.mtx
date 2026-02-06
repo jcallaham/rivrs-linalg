@@ -1,0 +1,7 @@
+%%MatrixMarket matrix coordinate real symmetric
+% 3x3 singular matrix. From SPRAL simple_sing_mat (BSD-3)
+3 3 4
+1 1 2.000000000000000e+00
+2 1 1.000000000000000e+00
+2 2 2.000000000000000e+00
+3 2 1.000000000000000e+00

@@ -1,0 +1,21 @@
+{
+  "matrix_name": "trivial-1x1",
+  "permutation": [
+    0
+  ],
+  "l_entries": [],
+  "d_blocks": [
+    {
+      "size": 1,
+      "values": [
+        5.0
+      ]
+    }
+  ],
+  "inertia": {
+    "positive": 1,
+    "negative": 0,
+    "zero": 0
+  },
+  "notes": "Trivial 1x1 case. Factorization is trivial: L=I, D=A."
+}

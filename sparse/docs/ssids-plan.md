@@ -162,11 +162,11 @@ Establish comprehensive understanding of algorithms, gather reference implementa
 ```
 
 **Success Criteria:**
-- [ ] Minimum 70 test matrices collected
-- [ ] All matrices in standard Matrix Market format
-- [ ] Complete metadata for each matrix
-- [ ] Range from 5×5 to 1M×1M problems
-- [ ] Known "killer" cases identified (e.g., matrices that fail with static pivoting)
+- [x] Minimum 70 test matrices collected (82 total: 15 hand-constructed + 67 SuiteSparse)
+- [x] All matrices in standard Matrix Market format
+- [x] Complete metadata for each matrix (metadata.json with properties, paper references)
+- [x] Range from 1×1 to 1.6M×1.6M problems (4+ orders of magnitude)
+- [x] Known "killer" cases identified (stokes128, ncvxqp3, c-big, c-71, plus hand-constructed stress tests)
 
 #### 0.3: SPRAL Golden Results Generation
 **Task:** Run SPRAL on all test matrices to create reference outputs
