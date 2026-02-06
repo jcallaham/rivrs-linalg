@@ -1,5 +1,68 @@
 # SSIDS Development Log
 
+## Phase 0.3: SPRAL Golden Results — Deferred
+
+**Status**: Deferred
+**Branch**: `003-spral-golden-results`
+**Date**: 2026-02-06
+
+### Decision
+
+Phase 0.3 was planned to build SPRAL from source, write a C driver program, run
+SPRAL on all 82 test matrices, and capture golden reference results (timing,
+inertia, pivot statistics, backward error) as JSON files.
+
+After investigating SPRAL's C API (`spral_ssids.h`) and assessing cost-benefit,
+we decided to **defer this phase**. Full rationale in
+`specs/003-spral-golden-results/decision.md`.
+
+### Key Finding: SPRAL API Limitations
+
+SPRAL's C API exposes:
+- Aggregate statistics from the `inform` struct (num_factor, num_flops,
+  num_delay, num_neg, num_two, matrix_rank, maxfront, maxsupernode)
+- Block diagonal D entries via `spral_ssids_enquire_indef()`
+- Pivot ordering via `spral_ssids_enquire_indef()`
+- The solution vector (from which errors are computed)
+
+SPRAL does **NOT** expose: the L factor, permutation P, elimination tree parent
+pointers, supernode membership arrays, or fill-in patterns. These are internal to
+the opaque `akeep`/`fkeep` handles.
+
+### Key Decision: Reconstruction Tests as Primary Oracle
+
+The **reconstruction test** (`||P^T A P - L D L^T|| / ||A|| < epsilon`) is a
+strictly stronger correctness oracle than comparing against SPRAL's output. If
+our factorization reconstructs A to machine precision, it is correct by
+definition — regardless of what any other solver produces.
+
+This means the most valuable correctness tests require no SPRAL infrastructure:
+1. **Reconstruction**: P^T A P = L D L^T (proves mathematical correctness)
+2. **Backward error**: ||Ax - b|| / (||A|| ||x|| + ||b||) (validates solve pipeline)
+3. **Hand-constructed matrices**: Analytically known factorizations from Phase 0.2
+4. **Property-based tests**: Inertia consistency, symmetry preservation
+
+### Impact
+
+- Constitution updated to v1.1.0: reconstruction tests are primary oracle; SPRAL
+  comparison is a secondary validation layer added when available
+- Phase 0 exit criteria updated: "SPRAL reference results" requirement replaced
+  with reconstruction test strategy
+- SPRAL build infrastructure deferred to Phases 2-8 when needed for performance
+  benchmarking and inertia validation on large SuiteSparse matrices
+
+### What Was Produced
+
+No code changes. Documentation artifacts only:
+- `specs/003-spral-golden-results/decision.md` — full decision record
+- `specs/003-spral-golden-results/spec.md` — original feature specification
+- `specs/003-spral-golden-results/plan.md` — implementation plan (not executed)
+- `specs/003-spral-golden-results/research.md` — SPRAL API investigation findings
+- Updated `docs/ssids-plan.md` — Phase 0.3 marked deferred, exit criteria revised
+- Updated constitution v1.0.0 → v1.1.0
+
+---
+
 ## Phase 0.2: Test Matrix Collection Assembly
 
 **Status**: Complete
