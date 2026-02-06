@@ -22,6 +22,10 @@ sparse/test-data/
 │   ├── easy-indefinite/             # 30 matrices from APTP paper benchmarks
 │   ├── hard-indefinite/             # 18 matrices (includes killer cases)
 │   └── positive-definite/           # 19 matrices for fast-path validation
+├── suitesparse-ci/                  # 10 representative matrices (plain git, ~73MB)
+│   ├── easy-indefinite/{name}.mtx
+│   ├── hard-indefinite/{name}.mtx
+│   └── positive-definite/{name}.mtx
 └── scripts/
     ├── requirements.txt             # Python dependencies (ssgetpy, numpy, scipy)
     ├── mtx_utils.py                 # Matrix Market I/O
@@ -58,13 +62,20 @@ Large matrices (>200K rows) stored as metadata-only with download commands.
 
 1. **Curated lists from papers** (not broad queries): Provides gold-standard difficulty
    classification from actual APTP benchmark results.
-2. **Git LFS for .mtx files**: Tracking rule `sparse/test-data/**/*.mtx` in root `.gitattributes`.
-3. **50MB/200K-row threshold**: Larger matrices are download-on-demand to keep repo manageable.
-4. **Python scripts with uv**: Virtual environment at `scripts/.venv/`, dependencies via `uv pip`.
-5. **ssgetpy API**: `ssgetpy.search(name)` with exact group/name matching; download with
+2. **Tiered storage (no LFS)**: Hand-constructed + CI subset committed to plain git;
+   full SuiteSparse collection gitignored and extracted from archive at container build.
+   Originally planned Git LFS, replaced with three-tier approach to avoid LFS costs
+   and complexity for 4GB of immutable reference data.
+3. **CI subset (10 matrices, ~73MB)**: Representative set in `suitesparse-ci/` committed
+   to plain git (~19MB in pack). Avoids 40KB/s SuiteSparse API throttle in CI. Covers
+   all categories including 2 killer cases.
+4. **Full collection via archive**: `references/ssids/suitesparse.tar.gz` (1.3GB) stored
+   outside git as static reference data. Docker entrypoint extracts automatically.
+5. **Python scripts with uv**: Virtual environment at `scripts/.venv/`, dependencies via `uv pip`.
+6. **ssgetpy API**: `ssgetpy.search(name)` with exact group/name matching; download with
    manual tar.gz extraction for reliable file placement.
-6. **vibrobox group correction**: SuiteSparse has `Cote/vibrobox`, not `GHS_indef/vibrobox`.
-7. **cont-201 killer case**: Added `killer_case: True` to `cont-201` (large optimization problem
+7. **vibrobox group correction**: SuiteSparse has `Cote/vibrobox`, not `GHS_indef/vibrobox`.
+8. **cont-201 killer case**: Added `killer_case: True` to `cont-201` (large optimization problem
    with many zero diagonals forcing 2×2 pivots) to reach the SC-005 threshold of ≥5 killer cases.
    Total killer cases: stokes128, cont-201, ncvxqp3, c-big, c-71.
 
@@ -75,14 +86,6 @@ Large matrices (>200K rows) stored as metadata-only with download commands.
 - **ssgetpy extract=True**: Doesn't always place the correct `.mtx` file; rewrote to use
   `extract=False` + manual `tarfile` extraction with name-based file selection.
 - **Slow download speeds**: SuiteSparse downloads throttled to ~40KB/s from this environment.
-- **Nested extraction directories**: Some tarballs extracted into `name/name/name.mtx` instead
-  of `name/name.mtx`. Fixed by scanning for nested .mtx files and moving to expected location.
-- **Truncated downloads**: `af_0_k101.tar.gz` and `ldoor.tar.gz` were partially downloaded
-  (corrupt gzip). Removed and marked as metadata-only with download commands.
-- **No Python in final container**: Metadata rebuild done via shell + jq when Python was
-  unavailable. All 82 entries rebuilt from on-disk .mtx headers + curated list properties.
-- **7 metadata-only matrices**: BenElechi1, G3_circuit, af_0_k101, af_shell7, apache2,
-  inline_1, ldoor — all >200K rows, correctly flagged with `in_repo: false` and download commands.
 
 ## Phase 0.1: Literature Review & Reference Library
 

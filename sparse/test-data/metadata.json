@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "generated": "2026-02-06T16:53:03Z",
+  "generated": "2026-02-06T17:13:14Z",
   "total_count": 82,
   "matrices": [
     {
@@ -479,7 +479,8 @@
       "paper_references": [
         "Duff, Pralet (2005) Table 3.1"
       ],
-      "reference_results": {}
+      "reference_results": {},
+      "ci_subset": true
     },
     {
       "name": "GHS_indef/copter2",
@@ -836,7 +837,8 @@
       "paper_references": [
         "Duff, Hogg, Lopez (2020) Table 1"
       ],
-      "reference_results": {}
+      "reference_results": {},
+      "ci_subset": true
     },
     {
       "name": "GHS_indef/spmsrtls",
@@ -878,7 +880,8 @@
       "paper_references": [
         "Duff, Hogg, Lopez (2020) Table 1"
       ],
-      "reference_results": {}
+      "reference_results": {},
+      "ci_subset": true
     },
     {
       "name": "Oberwolfach/t3dh",
@@ -1025,7 +1028,8 @@
       "paper_references": [
         "Duff, Hogg, Lopez (2020) Table 2"
       ],
-      "reference_results": {}
+      "reference_results": {},
+      "ci_subset": true
     },
     {
       "name": "GHS_indef/c-71",
@@ -1134,7 +1138,8 @@
       "paper_references": [
         "Duff, Hogg, Lopez (2020) Table 2"
       ],
-      "reference_results": {}
+      "reference_results": {},
+      "ci_subset": true
     },
     {
       "name": "GHS_indef/d_pretok",
@@ -1197,7 +1202,8 @@
       "paper_references": [
         "Duff, Hogg, Lopez (2020) Table 2"
       ],
-      "reference_results": {}
+      "reference_results": {},
+      "ci_subset": true
     },
     {
       "name": "GHS_indef/ncvxqp3",
@@ -1220,7 +1226,8 @@
         "Hogg, Ovtchinnikov, Scott (2016) Table III",
         "Duff, Hogg, Lopez (2020) Table 2"
       ],
-      "reference_results": {}
+      "reference_results": {},
+      "ci_subset": true
     },
     {
       "name": "GHS_indef/ncvxqp5",
@@ -1284,7 +1291,8 @@
       "paper_references": [
         "Duff, Hogg, Lopez (2020) Table 2"
       ],
-      "reference_results": {}
+      "reference_results": {},
+      "ci_subset": true
     },
     {
       "name": "GHS_indef/turon_m",
@@ -1445,7 +1453,8 @@
       "paper_references": [
         "Hogg, Ovtchinnikov, Scott (2016) Table III"
       ],
-      "reference_results": {}
+      "reference_results": {},
+      "ci_subset": true
     },
     {
       "name": "GHS_psdef/crankseg_1",
@@ -1565,7 +1574,8 @@
       "paper_references": [
         "Hogg, Ovtchinnikov, Scott (2016) Table III"
       ],
-      "reference_results": {}
+      "reference_results": {},
+      "ci_subset": true
     },
     {
       "name": "Um/offshore",
