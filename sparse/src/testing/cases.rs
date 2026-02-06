@@ -229,9 +229,8 @@ mod tests {
 
     #[test]
     fn filter_by_category() {
-        let cases =
-            load_test_cases(&TestCaseFilter::all().with_category("hand-constructed"))
-                .expect("failed to load");
+        let cases = load_test_cases(&TestCaseFilter::all().with_category("hand-constructed"))
+            .expect("failed to load");
         for case in &cases {
             assert_eq!(case.properties.category, "hand-constructed");
         }
@@ -252,8 +251,8 @@ mod tests {
 
     #[test]
     fn require_reference_filters_correctly() {
-        let cases = load_test_cases(&TestCaseFilter::all().require_reference())
-            .expect("failed to load");
+        let cases =
+            load_test_cases(&TestCaseFilter::all().require_reference()).expect("failed to load");
         for case in &cases {
             assert!(
                 case.reference.is_some(),
@@ -267,10 +266,9 @@ mod tests {
     fn load_performance_under_100ms() {
         // Load a single matrix and time it
         let start = std::time::Instant::now();
-        let cases = load_test_cases(
-            &TestCaseFilter::hand_constructed().with_category("hand-constructed"),
-        )
-        .expect("failed to load");
+        let cases =
+            load_test_cases(&TestCaseFilter::hand_constructed().with_category("hand-constructed"))
+                .expect("failed to load");
         let elapsed = start.elapsed();
         let per_matrix = elapsed / cases.len() as u32;
         assert!(

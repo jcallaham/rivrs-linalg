@@ -3,7 +3,7 @@
 //! Uses the test infrastructure harness to load all 15 hand-constructed
 //! matrices and validate reconstruction error and inertia.
 
-use rivrs_sparse::testing::{load_test_cases, NumericalValidator, TestCaseFilter};
+use rivrs_sparse::testing::{NumericalValidator, TestCaseFilter, load_test_cases};
 
 #[test]
 fn load_all_hand_constructed_matrices() {
@@ -12,11 +12,7 @@ fn load_all_hand_constructed_matrices() {
     let cases = load_test_cases(&TestCaseFilter::hand_constructed())
         .expect("failed to load hand-constructed test cases");
 
-    assert_eq!(
-        cases.len(),
-        15,
-        "expected 15 hand-constructed matrices"
-    );
+    assert_eq!(cases.len(), 15, "expected 15 hand-constructed matrices");
 
     let validator = NumericalValidator::new();
 

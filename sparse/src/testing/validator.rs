@@ -1,7 +1,7 @@
 //! NumericalValidator — configurable validation wrapping validate.rs functions.
 
-use faer::sparse::SparseColMat;
 use faer::Col;
+use faer::sparse::SparseColMat;
 
 use crate::io::reference::{Inertia, ReferenceFactorization};
 use crate::validate;
@@ -122,7 +122,7 @@ impl Default for NumericalValidator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::cases::{load_test_cases, TestCaseFilter};
+    use crate::testing::cases::{TestCaseFilter, load_test_cases};
 
     #[test]
     fn default_tolerances_match_constitution() {
@@ -133,8 +133,7 @@ mod tests {
 
     #[test]
     fn check_reconstruction_passes_for_hand_constructed() {
-        let cases = load_test_cases(&TestCaseFilter::hand_constructed())
-            .expect("failed to load");
+        let cases = load_test_cases(&TestCaseFilter::hand_constructed()).expect("failed to load");
         let arrow = cases.iter().find(|c| c.name == "arrow-5-pd").unwrap();
         let reference = arrow.reference.as_ref().unwrap();
 
@@ -146,8 +145,7 @@ mod tests {
 
     #[test]
     fn check_reconstruction_fails_for_perturbed() {
-        let cases = load_test_cases(&TestCaseFilter::hand_constructed())
-            .expect("failed to load");
+        let cases = load_test_cases(&TestCaseFilter::hand_constructed()).expect("failed to load");
         let arrow = cases.iter().find(|c| c.name == "arrow-5-pd").unwrap();
         let mut reference = arrow.reference.clone().unwrap();
 
@@ -164,8 +162,7 @@ mod tests {
 
     #[test]
     fn custom_tolerance_relaxes_check() {
-        let cases = load_test_cases(&TestCaseFilter::hand_constructed())
-            .expect("failed to load");
+        let cases = load_test_cases(&TestCaseFilter::hand_constructed()).expect("failed to load");
         let arrow = cases.iter().find(|c| c.name == "arrow-5-pd").unwrap();
         let mut reference = arrow.reference.clone().unwrap();
 
@@ -213,18 +210,13 @@ mod tests {
 
     #[test]
     fn validate_all_15_hand_constructed() {
-        let cases = load_test_cases(&TestCaseFilter::hand_constructed())
-            .expect("failed to load");
+        let cases = load_test_cases(&TestCaseFilter::hand_constructed()).expect("failed to load");
         assert_eq!(cases.len(), 15);
 
         let v = NumericalValidator::new();
         for case in &cases {
             let result = v.validate_factorization(case);
-            assert!(
-                result.passed,
-                "{} failed validation: {}",
-                case.name, result
-            );
+            assert!(result.passed, "{} failed validation: {}", case.name, result);
         }
     }
 }

@@ -5,7 +5,7 @@
 //!
 //! nd6k (103 MB) excluded from CI subset due to GitHub's 100 MB file size limit.
 
-use rivrs_sparse::testing::{load_test_cases, TestCaseFilter};
+use rivrs_sparse::testing::{TestCaseFilter, load_test_cases};
 
 #[test]
 fn load_all_ci_subset_matrices() {

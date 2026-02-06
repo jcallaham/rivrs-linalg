@@ -27,10 +27,10 @@ pub mod generators;
 pub mod harness;
 pub mod validator;
 
-pub use cases::{load_test_cases, SolverTestCase, TestCaseFilter, TestMatrixProperties};
+pub use cases::{SolverTestCase, TestCaseFilter, TestMatrixProperties, load_test_cases};
 pub use generators::{
-    generate_arrow, generate_banded, generate_random_symmetric, generate_tridiagonal,
-    RandomMatrixConfig,
+    RandomMatrixConfig, generate_arrow, generate_banded, generate_random_symmetric,
+    generate_tridiagonal,
 };
 pub use harness::{MetricResult, MockSolver, SolverTest, TestKind, TestResult};
 pub use validator::NumericalValidator;

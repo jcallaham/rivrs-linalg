@@ -154,9 +154,9 @@ impl SolverTest for MockSolver {
 
         if let Some(ref reference) = case.reference {
             let recon = self.validator.check_reconstruction(&case.matrix, reference);
-            let inertia =
-                self.validator
-                    .check_inertia(&reference.inertia, &reference.inertia);
+            let inertia = self
+                .validator
+                .check_inertia(&reference.inertia, &reference.inertia);
             metrics.push(recon);
             metrics.push(inertia);
         } else {
@@ -195,7 +195,9 @@ impl SolverTest for MockSolver {
         );
         let b = Col::from_fn(n, |i| ax[(i, 0)]);
 
-        let berr = self.validator.check_backward_error(&case.matrix, &x_exact, &b);
+        let berr = self
+            .validator
+            .check_backward_error(&case.matrix, &x_exact, &b);
         metrics.push(berr);
 
         let passed = metrics.iter().all(|m| m.passed);
@@ -220,9 +222,9 @@ impl SolverTest for MockSolver {
             let recon = self.validator.check_reconstruction(&case.matrix, reference);
             metrics.push(recon);
 
-            let inertia =
-                self.validator
-                    .check_inertia(&reference.inertia, &reference.inertia);
+            let inertia = self
+                .validator
+                .check_inertia(&reference.inertia, &reference.inertia);
             metrics.push(inertia);
         }
 
@@ -240,7 +242,9 @@ impl SolverTest for MockSolver {
             Par::Seq,
         );
         let b = Col::from_fn(n, |i| ax[(i, 0)]);
-        let berr = self.validator.check_backward_error(&case.matrix, &x_exact, &b);
+        let berr = self
+            .validator
+            .check_backward_error(&case.matrix, &x_exact, &b);
         metrics.push(berr);
 
         let passed = metrics.iter().all(|m| m.passed);
@@ -257,7 +261,7 @@ impl SolverTest for MockSolver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::cases::{load_test_cases, TestCaseFilter};
+    use crate::testing::cases::{TestCaseFilter, load_test_cases};
 
     #[test]
     fn metric_result_display_pass() {
@@ -317,8 +321,7 @@ mod tests {
 
     #[test]
     fn mock_solver_test_roundtrip_passes() {
-        let cases = load_test_cases(&TestCaseFilter::hand_constructed())
-            .expect("failed to load");
+        let cases = load_test_cases(&TestCaseFilter::hand_constructed()).expect("failed to load");
         let arrow = cases.iter().find(|c| c.name == "arrow-5-pd").unwrap();
 
         let solver = MockSolver::new();
@@ -328,8 +331,7 @@ mod tests {
 
     #[test]
     fn mock_solver_test_analyze_passes() {
-        let cases = load_test_cases(&TestCaseFilter::hand_constructed())
-            .expect("failed to load");
+        let cases = load_test_cases(&TestCaseFilter::hand_constructed()).expect("failed to load");
         let arrow = cases.iter().find(|c| c.name == "arrow-5-pd").unwrap();
 
         let solver = MockSolver::new();
@@ -339,8 +341,7 @@ mod tests {
 
     #[test]
     fn mock_solver_test_factor_passes() {
-        let cases = load_test_cases(&TestCaseFilter::hand_constructed())
-            .expect("failed to load");
+        let cases = load_test_cases(&TestCaseFilter::hand_constructed()).expect("failed to load");
         let arrow = cases.iter().find(|c| c.name == "arrow-5-pd").unwrap();
 
         let solver = MockSolver::new();
@@ -350,8 +351,7 @@ mod tests {
 
     #[test]
     fn mock_solver_test_solve_passes() {
-        let cases = load_test_cases(&TestCaseFilter::hand_constructed())
-            .expect("failed to load");
+        let cases = load_test_cases(&TestCaseFilter::hand_constructed()).expect("failed to load");
         let arrow = cases.iter().find(|c| c.name == "arrow-5-pd").unwrap();
 
         let solver = MockSolver::new();
@@ -361,8 +361,7 @@ mod tests {
 
     #[test]
     fn solver_test_all_hand_constructed() {
-        let cases = load_test_cases(&TestCaseFilter::hand_constructed())
-            .expect("failed to load");
+        let cases = load_test_cases(&TestCaseFilter::hand_constructed()).expect("failed to load");
         assert_eq!(cases.len(), 15);
 
         let solver = MockSolver::new();
