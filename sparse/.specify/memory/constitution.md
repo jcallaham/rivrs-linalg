@@ -1,28 +1,26 @@
 <!--
-Sync Impact Report - Constitution v1.0.0
+Sync Impact Report - Constitution v1.1.0
 ========================================
 
-Version Change: Initial creation → v1.0.0
+Version Change: v1.0.0 → v1.1.0
 
-Principles Established:
-- I. Correctness First (NON-NEGOTIABLE)
-- II. Clean Room Implementation (Licensing Integrity)
-- III. Test-Driven Development (NON-NEGOTIABLE)
-- IV. Algorithm Documentation & Academic Attribution
-- V. Numerical Stability & Robustness
-- VI. Structured Development Discipline
-- VII. Code Quality & Rust Best Practices
+Changes in v1.1.0:
+- Principle I (Correctness First): Updated validation language from
+  "SPRAL reference results" as prerequisite to reconstruction tests
+  as primary oracle with SPRAL comparison as secondary layer
+- Principle III (TDD): Reorganized test categories to establish
+  reconstruction tests (P^T A P = L D L^T) as the primary correctness
+  oracle. SPRAL comparison tests moved to secondary category, added
+  when infrastructure is available. Added reconstruction error standard
+  (< 10^-12). Backward error formula updated to scaled form.
 
-Templates Requiring Updates:
-✅ plan-template.md - Constitution Check section aligns with principles
-✅ spec-template.md - Requirements section compatible with validation standards
-✅ tasks-template.md - Task organization supports TDD and phased workflow
-⚠ No command files exist yet in .specify/templates/commands/
-
-Follow-up TODOs:
-- None - all placeholders filled
+Rationale: Phase 0.3 analysis revealed that SPRAL's C API does not
+expose full factorization matrices (L, P), only aggregate statistics.
+Reconstruction tests are mathematically stronger than cross-solver
+comparison and require no external infrastructure.
 
 Ratification: 2026-02-05 (initial adoption)
+Amendment: 2026-02-06 (v1.1.0 - reconstruction test primacy)
 -->
 
 # rivrs-sparse Constitution
@@ -40,11 +38,13 @@ slowly is infinitely more valuable.
 
 **Rules**:
 - Every algorithm MUST produce mathematically correct results, verified
-  against analytical solutions, reference implementations, and published
+  against analytical solutions, reconstruction tests, and published
   test cases before being considered complete
-- No implementation is "done" until it passes comprehensive validation
-  against SPRAL reference results, hand-constructed matrices with known
-  factorizations, and SuiteSparse Matrix Collection test cases
+- No implementation is "done" until it passes comprehensive validation:
+  reconstruction tests (P^T A P = L D L^T), backward error checks,
+  hand-constructed matrices with known factorizations, and SuiteSparse
+  Matrix Collection test cases. SPRAL comparison is a secondary
+  validation layer added when available, not a prerequisite.
 - When correctness conflicts with performance, correctness wins.
   Performance optimization MUST NOT compromise numerical accuracy
 - When correctness conflicts with schedule, correctness wins.
@@ -110,21 +110,35 @@ the specification; implementation follows.
 5. Refactor for clarity and performance while maintaining passing tests
 
 **Test Categories (all REQUIRED for solver components)**:
+- **Reconstruction tests** (primary oracle): Verify that the
+  factorization reconstructs the original matrix:
+  `||P^T A P - L D L^T|| / ||A|| < epsilon`. This is the strongest
+  possible correctness test — it proves mathematical correctness by
+  definition, independent of any reference solver.
 - **Unit tests**: Small hand-constructed matrices with analytically
-  known results (e.g., 5x5 arrow matrix with known LDL^T factorization)
-- **Reference comparison tests**: Compare outputs against SPRAL golden
-  results (residual norms, inertia counts, pivot statistics)
+  known results (e.g., 5x5 arrow matrix with known LDL^T factorization,
+  inertia, and pivot structure)
+- **Backward error tests**: Verify solution quality via
+  `||Ax - b|| / (||A|| ||x|| + ||b||)` — computed independently,
+  no reference solver needed
 - **Property-based tests**: Verify structural invariants
-  (e.g., P^T A P = L D L^T, correct inertia, symmetry preservation)
+  (correct inertia, symmetry preservation, permutation validity)
 - **Edge case tests**: Singular matrices, zero pivots, maximally
   delayed pivots, ill-conditioned systems, empty inputs, 1x1 matrices
+- **SPRAL comparison tests** (secondary, when available): Compare
+  outputs against SPRAL (inertia, backward error, performance).
+  Added when SPRAL build infrastructure is in place (deferred from
+  Phase 0.3 to Phases 2-8). Not a prerequisite for correctness.
 - **Regression tests**: Any bug fix MUST include a test that reproduces
   the bug before the fix and passes after
 
 **Numerical Accuracy Standards**:
-- Backward error (||Ax - b|| / ||b||) MUST be < 10^-10 for
-  well-conditioned double-precision problems
-- Inertia counts MUST match SPRAL reference exactly
+- Reconstruction error (||P^T A P - L D L^T|| / ||A||) MUST be
+  < 10^-12 for double-precision problems
+- Backward error (||Ax - b|| / (||A|| ||x|| + ||b||)) MUST be
+  < 10^-10 for well-conditioned double-precision problems
+- Inertia counts MUST be correct (verified analytically for
+  hand-constructed matrices; cross-checked against SPRAL when available)
 - Pivot decisions (1x1 vs 2x2) need not match SPRAL exactly, but
   the resulting factorization MUST satisfy accuracy requirements
 
@@ -389,4 +403,4 @@ rivrs-sparse is licensed under Apache-2.0. All contributions MUST be
 compatible with this licensing model. Use of GPL, LGPL, or proprietary
 dependencies is PROHIBITED.
 
-**Version**: 1.0.0 | **Ratified**: 2026-02-05 | **Last Amended**: 2026-02-05
+**Version**: 1.1.0 | **Ratified**: 2026-02-05 | **Last Amended**: 2026-02-06
