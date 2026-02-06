@@ -28,10 +28,10 @@
 
 **Purpose**: Configure Cargo feature flag and create module skeleton
 
-- [ ] T001 Add `test-util` feature flag and self-dev-dependency to `Cargo.toml`: add `[features] test-util = []` section and add `rivrs-sparse = { path = ".", features = ["test-util"] }` under `[dev-dependencies]`
-- [ ] T002 Create `src/testing/mod.rs` with feature-gated module declarations for `cases`, `harness`, `validator`, `generators` submodules and public re-exports
-- [ ] T003 Add feature-gated `pub mod testing` to `src/lib.rs` with `#[cfg(feature = "test-util")]` gate
-- [ ] T004 Verify setup compiles: run `cargo test --no-run` and `cargo build` (production build must not include testing module)
+- [X] T001 Add `test-util` feature flag and self-dev-dependency to `Cargo.toml`: add `[features] test-util = []` section and add `rivrs-sparse = { path = ".", features = ["test-util"] }` under `[dev-dependencies]`
+- [X] T002 Create `src/testing/mod.rs` with feature-gated module declarations for `cases`, `harness`, `validator`, `generators` submodules and public re-exports
+- [X] T003 Add feature-gated `pub mod testing` to `src/lib.rs` with `#[cfg(feature = "test-util")]` gate
+- [X] T004 Verify setup compiles: run `cargo test --no-run` and `cargo build` (production build must not include testing module)
 
 **Checkpoint**: `src/testing/` module exists, feature gate works, production build unaffected
 
@@ -43,13 +43,13 @@
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete
 
-- [ ] T005 [P] Implement `TestKind` enum (`Analyze`, `Factor`, `Solve`, `Roundtrip`) with `Debug`, `Clone`, `PartialEq` derives in `src/testing/harness.rs`
-- [ ] T006 [P] Implement `MetricResult` struct (`name: String`, `value: f64`, `threshold: f64`, `passed: bool`) with `Debug`, `Clone` derives and `Display` impl that formats as `"{name}: {value:.2e} (threshold: {threshold:.2e}) — {PASS|FAIL}"` in `src/testing/harness.rs`
-- [ ] T007 [P] Implement `TestResult` struct (`passed: bool`, `test_kind: TestKind`, `matrix_name: String`, `metrics: Vec<MetricResult>`, `diagnostics: Vec<String>`) with `Debug`, `Clone` derives and a `Display` impl summarizing pass/fail with all diagnostics in `src/testing/harness.rs`
-- [ ] T008 [P] Implement `TestMatrixProperties` struct (fields: `size`, `nnz`, `symmetric`, `positive_definite`, `indefinite`, `difficulty`, `structure`, `source`, `category`) with `Debug`, `Clone` derives in `src/testing/cases.rs`
-- [ ] T009 [P] Implement `SolverTestCase` struct (`name: String`, `matrix: SparseColMat<usize, f64>`, `properties: TestMatrixProperties`, `reference: Option<ReferenceFactorization>`) with `Debug`, `Clone` derives in `src/testing/cases.rs`
-- [ ] T010 Write unit tests for foundational types: construct `MetricResult` for pass/fail cases, verify `Display` output includes metric name and values; construct `TestResult` with mixed pass/fail metrics and verify `passed` field is false when any metric fails. Tests in `src/testing/harness.rs` `#[cfg(test)] mod tests`
-- [ ] T011 Verify `cargo test` passes with all foundational types
+- [X] T005 [P] Implement `TestKind` enum (`Analyze`, `Factor`, `Solve`, `Roundtrip`) with `Debug`, `Clone`, `PartialEq` derives in `src/testing/harness.rs`
+- [X] T006 [P] Implement `MetricResult` struct (`name: String`, `value: f64`, `threshold: f64`, `passed: bool`) with `Debug`, `Clone` derives and `Display` impl that formats as `"{name}: {value:.2e} (threshold: {threshold:.2e}) — {PASS|FAIL}"` in `src/testing/harness.rs`
+- [X] T007 [P] Implement `TestResult` struct (`passed: bool`, `test_kind: TestKind`, `matrix_name: String`, `metrics: Vec<MetricResult>`, `diagnostics: Vec<String>`) with `Debug`, `Clone` derives and a `Display` impl summarizing pass/fail with all diagnostics in `src/testing/harness.rs`
+- [X] T008 [P] Implement `TestMatrixProperties` struct (fields: `size`, `nnz`, `symmetric`, `positive_definite`, `indefinite`, `difficulty`, `structure`, `source`, `category`) with `Debug`, `Clone` derives in `src/testing/cases.rs`
+- [X] T009 [P] Implement `SolverTestCase` struct (`name: String`, `matrix: SparseColMat<usize, f64>`, `properties: TestMatrixProperties`, `reference: Option<ReferenceFactorization>`) with `Debug`, `Clone` derives in `src/testing/cases.rs`
+- [X] T010 Write unit tests for foundational types: construct `MetricResult` for pass/fail cases, verify `Display` output includes metric name and values; construct `TestResult` with mixed pass/fail metrics and verify `passed` field is false when any metric fails. Tests in `src/testing/harness.rs` `#[cfg(test)] mod tests`
+- [X] T011 Verify `cargo test` passes with all foundational types
 
 **Checkpoint**: Foundation ready — all shared types compile and have basic tests
 
@@ -65,19 +65,19 @@
 
 ### Tests for User Story 4
 
-- [ ] T012 [P] [US4] Write test `load_hand_constructed_returns_15` in `src/testing/cases.rs`: call `load_test_cases(&TestCaseFilter::hand_constructed())`, assert 15 cases returned, each with `reference.is_some()` and `properties.source == "hand-constructed"`
-- [ ] T013 [P] [US4] Write test `load_ci_subset_returns_9` in `src/testing/cases.rs`: call `load_test_cases(&TestCaseFilter::ci_subset())`, assert 9 cases returned, each with `properties.source == "suitesparse"`
-- [ ] T014 [P] [US4] Write test `filter_by_category` in `src/testing/cases.rs`: filter by `"hand-constructed"` category, verify all returned cases have matching category; filter by `"hard-indefinite"`, verify all returned are indefinite
-- [ ] T015 [P] [US4] Write test `require_reference_filters_correctly` in `src/testing/cases.rs`: call with `require_reference(true)`, verify all returned cases have `reference.is_some()`
-- [ ] T016 [P] [US4] Write test `load_performance_under_100ms` in `src/testing/cases.rs`: time a single matrix load via `load_test_cases`, assert elapsed < 100ms per matrix (FR-011)
-- [ ] T017 [US4] Verify US4 tests FAIL (types exist but functions not yet implemented)
+- [X] T012 [P] [US4] Write test `load_hand_constructed_returns_15` in `src/testing/cases.rs`: call `load_test_cases(&TestCaseFilter::hand_constructed())`, assert 15 cases returned, each with `reference.is_some()` and `properties.source == "hand-constructed"`
+- [X] T013 [P] [US4] Write test `load_ci_subset_returns_9` in `src/testing/cases.rs`: call `load_test_cases(&TestCaseFilter::ci_subset())`, assert 9 cases returned, each with `properties.source == "suitesparse"`
+- [X] T014 [P] [US4] Write test `filter_by_category` in `src/testing/cases.rs`: filter by `"hand-constructed"` category, verify all returned cases have matching category; filter by `"hard-indefinite"`, verify all returned are indefinite
+- [X] T015 [P] [US4] Write test `require_reference_filters_correctly` in `src/testing/cases.rs`: call with `require_reference(true)`, verify all returned cases have `reference.is_some()`
+- [X] T016 [P] [US4] Write test `load_performance_under_100ms` in `src/testing/cases.rs`: time a single matrix load via `load_test_cases`, assert elapsed < 100ms per matrix (FR-011)
+- [X] T017 [US4] Verify US4 tests FAIL (types exist but functions not yet implemented)
 
 ### Implementation for User Story 4
 
-- [ ] T018 [US4] Implement `TestCaseFilter` struct and builder methods (`all()`, `hand_constructed()`, `ci_subset()`, `with_source()`, `with_category()`, `with_difficulty()`, `ci_only()`, `require_reference()`) in `src/testing/cases.rs`
-- [ ] T019 [US4] Implement conversion from `registry::MatrixMetadata` + `registry::MatrixProperties` → `TestMatrixProperties` (helper function or `From` impl) in `src/testing/cases.rs`
-- [ ] T020 [US4] Implement `load_test_cases(filter: &TestCaseFilter) -> Result<Vec<SolverTestCase>, SparseError>` in `src/testing/cases.rs`: load registry, apply filter predicates, call `registry::load_test_matrix()` for each match, convert to `SolverTestCase`, skip missing .mtx files gracefully
-- [ ] T021 [US4] Verify all US4 tests PASS: `cargo test testing::cases`
+- [X] T018 [US4] Implement `TestCaseFilter` struct and builder methods (`all()`, `hand_constructed()`, `ci_subset()`, `with_source()`, `with_category()`, `with_difficulty()`, `ci_only()`, `require_reference()`) in `src/testing/cases.rs`
+- [X] T019 [US4] Implement conversion from `registry::MatrixMetadata` + `registry::MatrixProperties` → `TestMatrixProperties` (helper function or `From` impl) in `src/testing/cases.rs`
+- [X] T020 [US4] Implement `load_test_cases(filter: &TestCaseFilter) -> Result<Vec<SolverTestCase>, SparseError>` in `src/testing/cases.rs`: load registry, apply filter predicates, call `registry::load_test_matrix()` for each match, convert to `SolverTestCase`, skip missing .mtx files gracefully
+- [X] T021 [US4] Verify all US4 tests PASS: `cargo test testing::cases`
 
 **Checkpoint**: `load_test_cases()` returns correct, filtered `SolverTestCase` instances from the registry
 
@@ -91,22 +91,22 @@
 
 ### Tests for User Story 2
 
-- [ ] T022 [P] [US2] Write test `default_tolerances_match_constitution` in `src/testing/validator.rs`: create `NumericalValidator::new()`, assert `reconstruction_tol == 1e-12` and `backward_error_tol == 1e-10` (FR-004)
-- [ ] T023 [P] [US2] Write test `check_reconstruction_passes_for_hand_constructed` in `src/testing/validator.rs`: load `arrow-5-pd` as `SolverTestCase`, call `check_reconstruction()`, assert `result.passed == true` and `result.value < 1e-12`
-- [ ] T024 [P] [US2] Write test `check_reconstruction_fails_for_perturbed` in `src/testing/validator.rs`: load `arrow-5-pd`, perturb an L entry, call `check_reconstruction()`, assert `result.passed == false` and `result.name == "reconstruction_error"` (FR-005)
-- [ ] T025 [P] [US2] Write test `custom_tolerance_relaxes_check` in `src/testing/validator.rs`: create validator with `with_reconstruction_tol(1e-6)`, validate a moderately perturbed factorization, assert it passes
-- [ ] T026 [P] [US2] Write test `check_inertia_pass_and_fail` in `src/testing/validator.rs`: test matching inertia returns `passed == true`; mismatched inertia returns `passed == false` with diagnostic
-- [ ] T027 [P] [US2] Write test `validate_all_15_hand_constructed` in `src/testing/validator.rs`: load all hand-constructed cases via `load_test_cases`, run `validate_factorization()` on each, assert all pass (SC-001)
-- [ ] T028 [US2] Verify US2 tests FAIL (struct exists but methods not yet implemented)
+- [X] T022 [P] [US2] Write test `default_tolerances_match_constitution` in `src/testing/validator.rs`: create `NumericalValidator::new()`, assert `reconstruction_tol == 1e-12` and `backward_error_tol == 1e-10` (FR-004)
+- [X] T023 [P] [US2] Write test `check_reconstruction_passes_for_hand_constructed` in `src/testing/validator.rs`: load `arrow-5-pd` as `SolverTestCase`, call `check_reconstruction()`, assert `result.passed == true` and `result.value < 1e-12`
+- [X] T024 [P] [US2] Write test `check_reconstruction_fails_for_perturbed` in `src/testing/validator.rs`: load `arrow-5-pd`, perturb an L entry, call `check_reconstruction()`, assert `result.passed == false` and `result.name == "reconstruction_error"` (FR-005)
+- [X] T025 [P] [US2] Write test `custom_tolerance_relaxes_check` in `src/testing/validator.rs`: create validator with `with_reconstruction_tol(1e-6)`, validate a moderately perturbed factorization, assert it passes
+- [X] T026 [P] [US2] Write test `check_inertia_pass_and_fail` in `src/testing/validator.rs`: test matching inertia returns `passed == true`; mismatched inertia returns `passed == false` with diagnostic
+- [X] T027 [P] [US2] Write test `validate_all_15_hand_constructed` in `src/testing/validator.rs`: load all hand-constructed cases via `load_test_cases`, run `validate_factorization()` on each, assert all pass (SC-001)
+- [X] T028 [US2] Verify US2 tests FAIL (struct exists but methods not yet implemented)
 
 ### Implementation for User Story 2
 
-- [ ] T029 [US2] Implement `NumericalValidator` struct with `new()`, `Default`, `with_reconstruction_tol()`, `with_backward_error_tol()` builder methods in `src/testing/validator.rs`
-- [ ] T030 [US2] Implement `check_reconstruction(&self, matrix, reference) -> MetricResult` in `src/testing/validator.rs`: call `validate::reconstruction_error()`, compare against `self.reconstruction_tol`, populate `MetricResult` with name, value, threshold, passed
-- [ ] T031 [US2] Implement `check_backward_error(&self, matrix, x, b) -> MetricResult` in `src/testing/validator.rs`: call `validate::backward_error()`, compare against `self.backward_error_tol`, populate `MetricResult`
-- [ ] T032 [US2] Implement `check_inertia(&self, computed, expected) -> MetricResult` in `src/testing/validator.rs`: call `validate::check_inertia()`, return `MetricResult` with `name = "inertia"`, value = 0.0 or 1.0 (match/mismatch), threshold = 0.5
-- [ ] T033 [US2] Implement `validate_factorization(&self, case: &SolverTestCase) -> TestResult` in `src/testing/validator.rs`: if reference available, run `check_reconstruction` + `check_inertia`; aggregate into `TestResult` with diagnostics including matrix name and dimensions (FR-005)
-- [ ] T034 [US2] Verify all US2 tests PASS: `cargo test testing::validator`
+- [X] T029 [US2] Implement `NumericalValidator` struct with `new()`, `Default`, `with_reconstruction_tol()`, `with_backward_error_tol()` builder methods in `src/testing/validator.rs`
+- [X] T030 [US2] Implement `check_reconstruction(&self, matrix, reference) -> MetricResult` in `src/testing/validator.rs`: call `validate::reconstruction_error()`, compare against `self.reconstruction_tol`, populate `MetricResult` with name, value, threshold, passed
+- [X] T031 [US2] Implement `check_backward_error(&self, matrix, x, b) -> MetricResult` in `src/testing/validator.rs`: call `validate::backward_error()`, compare against `self.backward_error_tol`, populate `MetricResult`
+- [X] T032 [US2] Implement `check_inertia(&self, computed, expected) -> MetricResult` in `src/testing/validator.rs`: call `validate::check_inertia()`, return `MetricResult` with `name = "inertia"`, value = 0.0 or 1.0 (match/mismatch), threshold = 0.5
+- [X] T033 [US2] Implement `validate_factorization(&self, case: &SolverTestCase) -> TestResult` in `src/testing/validator.rs`: if reference available, run `check_reconstruction` + `check_inertia`; aggregate into `TestResult` with diagnostics including matrix name and dimensions (FR-005)
+- [X] T034 [US2] Verify all US2 tests PASS: `cargo test testing::validator`
 
 **Checkpoint**: `NumericalValidator` validates factorizations with configurable tolerances and structured diagnostics
 
@@ -120,18 +120,18 @@
 
 ### Tests for User Story 1
 
-- [ ] T035 [P] [US1] Write test `mock_solver_test_roundtrip_passes` in `src/testing/harness.rs`: implement `MockSolver` that uses identity permutation and reference factorization, run `test_roundtrip` on `arrow-5-pd`, assert `result.passed == true`
-- [ ] T036 [P] [US1] Write test `mock_solver_test_analyze_passes` in `src/testing/harness.rs`: run `test_analyze` on `arrow-5-pd` with mock solver, assert valid permutation check passes
-- [ ] T037 [P] [US1] Write test `mock_solver_test_factor_passes` in `src/testing/harness.rs`: run `test_factor` on `arrow-5-pd` with mock solver, assert reconstruction error metric passes
-- [ ] T038 [P] [US1] Write test `mock_solver_test_solve_passes` in `src/testing/harness.rs`: run `test_solve` on `arrow-5-pd` with mock solver, assert backward error metric passes
-- [ ] T039 [P] [US1] Write test `solver_test_all_hand_constructed` in `src/testing/harness.rs`: run mock solver `test_roundtrip` on all 15 hand-constructed cases, assert all pass (SC-004)
-- [ ] T040 [US1] Verify US1 tests FAIL (trait defined but mock solver not yet implemented)
+- [X] T035 [P] [US1] Write test `mock_solver_test_roundtrip_passes` in `src/testing/harness.rs`: implement `MockSolver` that uses identity permutation and reference factorization, run `test_roundtrip` on `arrow-5-pd`, assert `result.passed == true`
+- [X] T036 [P] [US1] Write test `mock_solver_test_analyze_passes` in `src/testing/harness.rs`: run `test_analyze` on `arrow-5-pd` with mock solver, assert valid permutation check passes
+- [X] T037 [P] [US1] Write test `mock_solver_test_factor_passes` in `src/testing/harness.rs`: run `test_factor` on `arrow-5-pd` with mock solver, assert reconstruction error metric passes
+- [X] T038 [P] [US1] Write test `mock_solver_test_solve_passes` in `src/testing/harness.rs`: run `test_solve` on `arrow-5-pd` with mock solver, assert backward error metric passes
+- [X] T039 [P] [US1] Write test `solver_test_all_hand_constructed` in `src/testing/harness.rs`: run mock solver `test_roundtrip` on all 15 hand-constructed cases, assert all pass (SC-004)
+- [X] T040 [US1] Verify US1 tests FAIL (trait defined but mock solver not yet implemented)
 
 ### Implementation for User Story 1
 
-- [ ] T041 [US1] Define `SolverTest` trait with `test_analyze`, `test_factor`, `test_solve`, `test_roundtrip` method signatures in `src/testing/harness.rs` per contracts/testing-api.md
-- [ ] T042 [US1] Implement `MockSolver` struct (test-only) that uses identity permutation and reference factorization from the test case, implementing all four `SolverTest` methods. `test_roundtrip` runs the full pipeline independently, using `NumericalValidator` for metrics. In `src/testing/harness.rs`
-- [ ] T043 [US1] Verify all US1 tests PASS: `cargo test testing::harness`
+- [X] T041 [US1] Define `SolverTest` trait with `test_analyze`, `test_factor`, `test_solve`, `test_roundtrip` method signatures in `src/testing/harness.rs` per contracts/testing-api.md
+- [X] T042 [US1] Implement `MockSolver` struct (test-only) that uses identity permutation and reference factorization from the test case, implementing all four `SolverTest` methods. `test_roundtrip` runs the full pipeline independently, using `NumericalValidator` for metrics. In `src/testing/harness.rs`
+- [X] T043 [US1] Verify all US1 tests PASS: `cargo test testing::harness`
 
 **Checkpoint**: `SolverTest` trait is defined and validated with a mock implementation on all hand-constructed matrices
 
@@ -145,24 +145,24 @@
 
 ### Tests for User Story 3
 
-- [ ] T044 [P] [US3] Write test `random_pd_matrix_properties` in `src/testing/generators.rs`: generate 100x100 PD matrix with ~500 nnz, assert symmetric (A == A^T via dense), correct dimension, PD (all diagonal entries > 0 after LDL^T), nnz within 20% of target
-- [ ] T045 [P] [US3] Write test `random_indefinite_matrix_has_mixed_signs` in `src/testing/generators.rs`: generate 50x50 indefinite matrix, convert to dense, verify presence of both positive and negative diagonal entries (Gershgorin guarantee)
-- [ ] T046 [P] [US3] Write test `generate_arrow_pattern` in `src/testing/generators.rs`: generate 20x20 arrow, verify first row/column are dense (n-1 off-diag entries), remaining rows have only diagonal
-- [ ] T047 [P] [US3] Write test `generate_tridiagonal_pattern` in `src/testing/generators.rs`: generate 30x30 tridiagonal, verify each row has at most 3 nonzeros (diagonal + two neighbors)
-- [ ] T048 [P] [US3] Write test `generate_banded_pattern` in `src/testing/generators.rs`: generate 40x40 banded with bandwidth 3, verify nonzeros only within band
-- [ ] T049 [P] [US3] Write test `generation_performance_under_1s` in `src/testing/generators.rs`: generate 1000x1000 matrix, assert elapsed < 1 second (SC-003)
-- [ ] T050 [P] [US3] Write test `infeasible_config_returns_error` in `src/testing/generators.rs`: request 1x1 indefinite matrix, assert error returned
-- [ ] T051 [P] [US3] Write test `excessive_nnz_clamped` in `src/testing/generators.rs`: request 5x5 with 1000 nnz, verify actual nnz ≤ maximum possible (25 for full 5x5)
-- [ ] T052 [US3] Verify US3 tests FAIL (function signatures exist but not implemented)
+- [X] T044 [P] [US3] Write test `random_pd_matrix_properties` in `src/testing/generators.rs`: generate 100x100 PD matrix with ~500 nnz, assert symmetric (A == A^T via dense), correct dimension, PD (all diagonal entries > 0 after LDL^T), nnz within 20% of target
+- [X] T045 [P] [US3] Write test `random_indefinite_matrix_has_mixed_signs` in `src/testing/generators.rs`: generate 50x50 indefinite matrix, convert to dense, verify presence of both positive and negative diagonal entries (Gershgorin guarantee)
+- [X] T046 [P] [US3] Write test `generate_arrow_pattern` in `src/testing/generators.rs`: generate 20x20 arrow, verify first row/column are dense (n-1 off-diag entries), remaining rows have only diagonal
+- [X] T047 [P] [US3] Write test `generate_tridiagonal_pattern` in `src/testing/generators.rs`: generate 30x30 tridiagonal, verify each row has at most 3 nonzeros (diagonal + two neighbors)
+- [X] T048 [P] [US3] Write test `generate_banded_pattern` in `src/testing/generators.rs`: generate 40x40 banded with bandwidth 3, verify nonzeros only within band
+- [X] T049 [P] [US3] Write test `generation_performance_under_1s` in `src/testing/generators.rs`: generate 1000x1000 matrix, assert elapsed < 1 second (SC-003)
+- [X] T050 [P] [US3] Write test `infeasible_config_returns_error` in `src/testing/generators.rs`: request 1x1 indefinite matrix, assert error returned
+- [X] T051 [P] [US3] Write test `excessive_nnz_clamped` in `src/testing/generators.rs`: request 5x5 with 1000 nnz, verify actual nnz ≤ maximum possible (25 for full 5x5)
+- [X] T052 [US3] Verify US3 tests FAIL (function signatures exist but not implemented)
 
 ### Implementation for User Story 3
 
-- [ ] T053 [US3] Implement `RandomMatrixConfig` struct in `src/testing/generators.rs`
-- [ ] T054 [US3] Implement `generate_random_symmetric(config, rng)` in `src/testing/generators.rs`: generate random off-diagonal entries in lower triangle, symmetrize, apply diagonal dominance for PD or mixed signs for indefinite, clamp nnz if over max, build via `SparseColMat::try_new_from_triplets()`
-- [ ] T055 [P] [US3] Implement `generate_arrow(size, positive_definite, rng)` in `src/testing/generators.rs`: create arrow sparsity pattern (dense first row/col + diagonal), apply diagonal dominance or mixed signs
-- [ ] T056 [P] [US3] Implement `generate_tridiagonal(size, positive_definite, rng)` in `src/testing/generators.rs`: create tridiagonal pattern, apply diagonal dominance or mixed signs
-- [ ] T057 [P] [US3] Implement `generate_banded(size, bandwidth, positive_definite, rng)` in `src/testing/generators.rs`: create banded pattern within specified bandwidth, apply diagonal dominance or mixed signs
-- [ ] T058 [US3] Verify all US3 tests PASS: `cargo test testing::generators`
+- [X] T053 [US3] Implement `RandomMatrixConfig` struct in `src/testing/generators.rs`
+- [X] T054 [US3] Implement `generate_random_symmetric(config, rng)` in `src/testing/generators.rs`: generate random off-diagonal entries in lower triangle, symmetrize, apply diagonal dominance for PD or mixed signs for indefinite, clamp nnz if over max, build via `SparseColMat::try_new_from_triplets()`
+- [X] T055 [P] [US3] Implement `generate_arrow(size, positive_definite, rng)` in `src/testing/generators.rs`: create arrow sparsity pattern (dense first row/col + diagonal), apply diagonal dominance or mixed signs
+- [X] T056 [P] [US3] Implement `generate_tridiagonal(size, positive_definite, rng)` in `src/testing/generators.rs`: create tridiagonal pattern, apply diagonal dominance or mixed signs
+- [X] T057 [P] [US3] Implement `generate_banded(size, bandwidth, positive_definite, rng)` in `src/testing/generators.rs`: create banded pattern within specified bandwidth, apply diagonal dominance or mixed signs
+- [X] T058 [US3] Verify all US3 tests PASS: `cargo test testing::generators`
 
 **Checkpoint**: All four generator functions produce valid matrices with correct structural properties
 
@@ -172,11 +172,11 @@
 
 **Purpose**: Refactor existing integration tests to use the new harness, demonstrating end-to-end value and eliminating duplicated validation logic.
 
-- [ ] T059 Refactor `tests/hand_constructed.rs` to use `load_test_cases(TestCaseFilter::hand_constructed())` and `NumericalValidator` instead of manual registry calls and direct `validate::` function calls. Must produce identical pass/fail behavior to current test (SC-007, FR-012)
-- [ ] T060 Refactor `tests/suitesparse_ci.rs` to use `load_test_cases(TestCaseFilter::ci_subset())` and `SolverTestCase` properties instead of manual registry loading and dimension checks (SC-007, FR-012)
-- [ ] T061 Run `cargo test` and verify all existing tests still pass with identical behavior
-- [ ] T062 Run `cargo test` with `--release` flag to verify optimized build works correctly
-- [ ] T063 Run `cargo build` (without test-util feature) to verify production build excludes testing module
+- [X] T059 Refactor `tests/hand_constructed.rs` to use `load_test_cases(TestCaseFilter::hand_constructed())` and `NumericalValidator` instead of manual registry calls and direct `validate::` function calls. Must produce identical pass/fail behavior to current test (SC-007, FR-012)
+- [X] T060 Refactor `tests/suitesparse_ci.rs` to use `load_test_cases(TestCaseFilter::ci_subset())` and `SolverTestCase` properties instead of manual registry loading and dimension checks (SC-007, FR-012)
+- [X] T061 Run `cargo test` and verify all existing tests still pass with identical behavior
+- [X] T062 Run `cargo test` with `--release` flag to verify optimized build works correctly
+- [X] T063 Run `cargo build` (without test-util feature) to verify production build excludes testing module
 
 **Checkpoint**: Existing integration tests refactored; all tests pass; production build clean
 
@@ -186,10 +186,10 @@
 
 **Purpose**: Final quality checks and documentation
 
-- [ ] T064 [P] Add rustdoc comments to all public types and functions in `src/testing/mod.rs`, `harness.rs`, `validator.rs`, `cases.rs`, `generators.rs` — include `# Examples` sections per constitution Principle VII
-- [ ] T065 [P] Run `cargo clippy -- -D warnings` and fix any warnings across all testing module files
-- [ ] T066 Run `cargo test` full suite and verify total execution time increase is < 2 seconds over baseline (SC-006)
-- [ ] T067 Verify quickstart.md examples compile by running them as doc tests or manual verification against the implemented API
+- [X] T064 [P] Add rustdoc comments to all public types and functions in `src/testing/mod.rs`, `harness.rs`, `validator.rs`, `cases.rs`, `generators.rs` — include `# Examples` sections per constitution Principle VII
+- [X] T065 [P] Run `cargo clippy -- -D warnings` and fix any warnings across all testing module files
+- [X] T066 Run `cargo test` full suite and verify total execution time increase is < 2 seconds over baseline (SC-006)
+- [X] T067 Verify quickstart.md examples compile by running them as doc tests or manual verification against the implemented API
 
 ---
 
