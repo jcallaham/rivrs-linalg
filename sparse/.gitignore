@@ -74,3 +74,6 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
+
+# Suitesparse matrices
+test-data/suitesparse/
