@@ -135,13 +135,12 @@ When implementing a new component:
 ## Current Implementation Status
 
 **Completed:**
-- ✅ Project scaffolding and structure
-
-**In Progress:**
-- 🚧 Phase 0: Literature review and test data collection (0.1, 0.2 complete; 0.3 deferred)
+- ✅ Phase 0.1: Literature review and reference library
+- ✅ Phase 0.2: Test matrix collection (82 matrices)
+- ✅ Phase 0.3: Deferred (reconstruction tests adopted as primary oracle)
+- ✅ Phase 0.4: Repository setup (IO modules, validation, CI, benchmarks)
 
 **Planned:**
-- 📋 Phase 0.4: Initial repository setup and testing infrastructure
 - 📋 Phase 1: Symbolic analysis (ordering, elimination tree)
 - 📋 Phase 2-8: Simplicial APTP solver
 - 📋 Phase 9: Supernodal optimization
@@ -151,6 +150,8 @@ When implementing a new component:
 - Rust 1.87+ with faer (>= 0.22) for linear algebra and sparse infrastructure
 - approx for test comparisons (dev dependency)
 - criterion for benchmarking (dev dependency)
+- Rust 1.87+ (edition 2024) + faer 0.22 (sparse/dense LA), serde + serde_json (JSON parsing) (004-repo-setup)
+- Filesystem (test-data/ directory with .mtx and .json files) (004-repo-setup)
 
 ## Testing Strategy
 
@@ -162,5 +163,6 @@ Primary correctness validation (established in Phase 0.3 decision):
 5. **SPRAL comparison**: Deferred to Phases 2-8 (performance benchmarking, large-matrix inertia)
 
 ## Recent Changes
+- 004-repo-setup: Added Rust 1.87+ (edition 2024) + faer 0.22 (sparse/dense LA), serde + serde_json (JSON parsing)
 - 003-spral-golden-results: Phase 0.3 deferred. SPRAL golden results infrastructure not built; reconstruction tests adopted as primary correctness oracle (stronger than cross-solver comparison). Constitution updated to v1.1.0.
 - 002-test-matrix-collection: 82 test matrices (15 hand-constructed + 67 SuiteSparse). Three-tier storage: hand-constructed in git, 10-matrix CI subset in `suitesparse-ci/` (plain git), full collection in gitignored `suitesparse/` (extracted from `references/ssids/suitesparse.tar.gz` at container build). No Git LFS.

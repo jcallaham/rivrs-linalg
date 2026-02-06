@@ -1,5 +1,92 @@
 # SSIDS Development Log
 
+## Phase 0.4: Repository Setup for Solver Development
+
+**Status**: Complete
+**Branch**: `004-repo-setup`
+**Date**: 2026-02-06
+
+### What Was Built
+
+Development infrastructure enabling Rust-based loading, parsing, and validation
+of the test matrix collection established in Phase 0.2.
+
+**IO modules** (`src/io/`):
+- `mtx.rs` — Matrix Market parser (`coordinate real symmetric` format) with
+  1-indexed→0-indexed conversion, symmetric expansion, and descriptive parse
+  errors including file path and line number
+- `reference.rs` — JSON reference factorization loader with types for Inertia,
+  LEntry, DBlock (1×1/2×2 with polymorphic serde), ReferenceFactorization;
+  includes validation of strict lower triangle and permutation consistency
+- `registry.rs` — Test matrix catalog backed by `metadata.json` with CI-subset
+  path fallback (`suitesparse-ci/` preferred for CI matrices over gitignored
+  `suitesparse/` directory)
+
+**Error handling** (`src/error.rs`):
+- Added `IoError` and `ParseError` variants to `SparseError`
+- Added `From<std::io::Error>` and `From<serde_json::Error>` impls
+
+**Validation utilities** (`src/validate.rs`):
+- `reconstruction_error(A, ref)` — `||P^T A P - L D L^T||_F / ||A||_F`
+- `backward_error(A, x, b)` — `||Ax - b|| / (||A||_F ||x|| + ||b||)`
+- `check_inertia(computed, expected)` — field-wise equality comparison
+- All implemented using faer dense operations (to_dense, matmul, norm_l2)
+
+**Tests** (20 total):
+- 11 unit tests across mtx, reference, registry modules
+- 7 validation unit tests (reconstruction, backward error, inertia)
+- 1 integration test loading all 15 hand-constructed matrices with
+  reconstruction error < 10^-12 (SC-008 validated)
+- 1 integration test for 10 CI-subset SuiteSparse matrices
+
+**CI pipeline** (`.github/workflows/ci.yml`):
+- `test-sparse` job (stable + MSRV 1.87)
+- `lint-sparse` job (clippy + rustfmt)
+- `doc-sparse` job (rustdoc with `-D warnings`)
+
+**Benchmark scaffold** (`benches/matrix_loading.rs`):
+- Criterion benchmarks for matrix loading and reconstruction error computation
+
+### Key Decisions
+
+1. **Custom MTX parser**: Lightweight, scoped to `coordinate real symmetric`
+   format. No external crate dependency. Descriptive errors with file path and
+   line number for debugging data quality issues.
+
+2. **faer-based validation**: All validation uses dense matrix operations via
+   faer (to_dense, matmul, norm_l2, operator overloads). Simple and correct for
+   test matrices up to ~20K dimension. No need for sparse validation at this
+   stage.
+
+3. **Polymorphic DBlock serde**: Custom deserializer reads `"size"` field to
+   distinguish 1×1 scalar pivots from 2×2 symmetric blocks. Matches the JSON
+   schema established in Phase 0.2.
+
+4. **CI-subset path fallback**: `load_test_matrix()` checks `suitesparse-ci/`
+   before `suitesparse/` for CI-subset entries, ensuring tests work both in
+   CI (where only `suitesparse-ci/` is available) and locally (where
+   `suitesparse/` may also be extracted).
+
+5. **TDD throughout**: All tests written and verified to fail before
+   implementation, per Constitution Principle III.
+
+### Issues Encountered
+
+- **faer API discovery**: `sparse_dense_matmul` lives in
+  `faer::sparse::linalg::matmul`, not `faer::linalg::matmul`. `Par::Seq`
+  (not `Par::sequential()`). Column `as_mat()` (not `as_mat_ref()`).
+  Resolved by reading faer source code directly.
+
+- **nd6k truncated MTX file**: Both the `suitesparse/` and `suitesparse-ci/`
+  copies of `nd6k.mtx` have a truncated last line (`-1.216761034482759e-`
+  missing exponent digits). Pre-existing data quality issue from Phase 0.2
+  collection. CI integration test made resilient with >= 8/10 threshold.
+
+- **metadata.json local corruption**: Working copy had been modified from 82
+  to 73 entries (likely from a prior script run). Restored from git.
+
+---
+
 ## Phase 0.3: SPRAL Golden Results — Deferred
 
 **Status**: Deferred
