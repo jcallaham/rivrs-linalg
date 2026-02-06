@@ -152,4 +152,4 @@ When implementing a new component:
 - criterion for benchmarking (dev dependency)
 
 ## Recent Changes
-- 002-test-matrix-collection: Python scripts (ssgetpy, numpy/scipy) for SuiteSparse matrix download and hand-constructed matrix generation; Git LFS for .mtx file tracking
+- 002-test-matrix-collection: 82 test matrices (15 hand-constructed + 67 SuiteSparse). Three-tier storage: hand-constructed in git, 10-matrix CI subset in `suitesparse-ci/` (plain git), full collection in gitignored `suitesparse/` (extracted from `references/ssids/suitesparse.tar.gz` at container build). No Git LFS.
