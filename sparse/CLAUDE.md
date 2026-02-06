@@ -141,6 +141,7 @@ When implementing a new component:
 - ✅ Phase 0.4: Repository setup (IO modules, validation, CI, benchmarks)
 
 **Planned:**
+- 📋 Phase 0.4: Initial repository setup and testing infrastructure
 - 📋 Phase 1: Symbolic analysis (ordering, elimination tree)
 - 📋 Phase 2-8: Simplicial APTP solver
 - 📋 Phase 9: Supernodal optimization
