@@ -17,21 +17,10 @@ fn load_all_ci_subset_matrices() {
         ci_subset.len()
     );
 
-    let mut loaded = 0;
-    let mut skipped = Vec::new();
-
     for meta in &ci_subset {
-        let test = match registry::load_test_matrix(&meta.name) {
-            Ok(Some(t)) => t,
-            Ok(None) => {
-                skipped.push(format!("{} (file not found)", meta.name));
-                continue;
-            }
-            Err(e) => {
-                skipped.push(format!("{} (parse error: {})", meta.name, e));
-                continue;
-            }
-        };
+        let test = registry::load_test_matrix(&meta.name)
+            .unwrap_or_else(|e| panic!("failed to load '{}': {}", meta.name, e))
+            .unwrap_or_else(|| panic!("CI-subset matrix '{}' should exist on disk", meta.name));
 
         // Verify dimensions match metadata
         assert_eq!(
@@ -54,23 +43,5 @@ fn load_all_ci_subset_matrices() {
             "matrix '{}' should be square",
             meta.name
         );
-
-        loaded += 1;
     }
-
-    if !skipped.is_empty() {
-        eprintln!(
-            "WARNING: skipped {} CI-subset matrices: {:?}",
-            skipped.len(),
-            skipped
-        );
-    }
-
-    // At least 8 of 10 CI-subset matrices should load successfully
-    assert!(
-        loaded >= 8,
-        "only {} of 10 CI-subset matrices loaded successfully (skipped: {:?})",
-        loaded,
-        skipped
-    );
 }

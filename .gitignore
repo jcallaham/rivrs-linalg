@@ -77,3 +77,6 @@ MANIFEST
 
 # Reference codes (symlink to /opt/references)
 /references
+
+# Claude local settings
+**/.claude/settings.local.json

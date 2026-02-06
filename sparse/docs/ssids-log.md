@@ -77,11 +77,6 @@ of the test matrix collection established in Phase 0.2.
   (not `Par::sequential()`). Column `as_mat()` (not `as_mat_ref()`).
   Resolved by reading faer source code directly.
 
-- **nd6k truncated MTX file**: Both the `suitesparse/` and `suitesparse-ci/`
-  copies of `nd6k.mtx` have a truncated last line (`-1.216761034482759e-`
-  missing exponent digits). Pre-existing data quality issue from Phase 0.2
-  collection. CI integration test made resilient with >= 8/10 threshold.
-
 - **metadata.json local corruption**: Working copy had been modified from 82
   to 73 entries (likely from a prior script run). Restored from git.
 
