@@ -201,52 +201,50 @@ matrices where analytical verification is impractical.
 - [ ] Summary statistics generated (median times, failure modes)
 - [ ] Challenging cases documented
 
-#### 0.4: Initial Repository Setup
+#### 0.4: Initial Repository Setup (**COMPLETE**)
 **Task:** Establish project structure and development environment
 
-**Repository Structure:**
+**Actual Structure** (evolved from plan to match monorepo layout):
 ```
-sparse-ldlt/
-├── Cargo.toml
-├── README.md
-├── LICENSE
-├── .github/
-│   └── workflows/
-│       ├── ci.yml
-│       └── bench.yml
-├── crates/
-│   ├── sparse-ldlt/           # Main solver crate
-│   ├── sparse-ldlt-test/      # Test infrastructure
-│   └── sparse-ldlt-bench/     # Benchmarking
-├── docs/
-│   ├── references/            # From 0.1
-│   └── design/
-│       └── ARCHITECTURE.md
-├── test-data/                 # From 0.2 and 0.3
-├── examples/
-└── benches/
+sparse/
+├── Cargo.toml              # faer 0.22, serde, serde_json
+├── src/
+│   ├── lib.rs              # pub mod io, validate, error
+│   ├── error.rs            # SparseError with IoError, ParseError
+│   ├── io.rs               # pub mod mtx, reference, registry
+│   ├── io/mtx.rs           # Matrix Market parser
+│   ├── io/reference.rs     # JSON factorization loader
+│   ├── io/registry.rs      # Test matrix catalog (metadata.json)
+│   └── validate.rs         # reconstruction_error, backward_error, check_inertia
+├── tests/
+│   ├── hand_constructed.rs # 15-matrix integration test with reconstruction validation
+│   └── suitesparse_ci.rs  # 10-matrix CI-subset integration test
+├── benches/
+│   └── matrix_loading.rs  # Criterion benchmarks
+├── test-data/              # From Phase 0.2
+└── .github/workflows/ci.yml  # test-sparse, lint-sparse, doc-sparse jobs
 ```
 
 **Dependencies:**
 ```toml
 [dependencies]
-faer = "0.19"
-faer-core = "0.19"
-faer-sparse = "0.2"
-metis = { version = "0.2", features = ["vendored"] }
-rayon = "1.10"
+faer = "0.22"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 [dev-dependencies]
 criterion = "0.5"
-proptest = "1.4"    # Property-based testing
-matrixmarket-rs = "0.1"
+approx = "0.5"
+rand = "0.8"
+rand_distr = "0.4"
 ```
 
 **Success Criteria:**
-- [ ] Repository structure established
-- [ ] CI pipeline configured (test + clippy + fmt)
-- [ ] All test matrices accessible from tests
-- [ ] Documentation framework in place
+- [x] Repository structure established (IO modules, validation, error types)
+- [x] CI pipeline configured (test + clippy + fmt + doc for sparse domain)
+- [x] All test matrices accessible from tests (15 hand-constructed, 10 CI-subset)
+- [x] Documentation framework in place (rustdoc with -D warnings)
+- [x] Reconstruction error < 10^-12 for all 15 hand-constructed matrices (SC-008)
 
 ### Phase 0 Exit Criteria
 

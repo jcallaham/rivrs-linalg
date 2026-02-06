@@ -24,6 +24,16 @@ pub enum SparseError {
 
     /// An ordering or analysis algorithm failed.
     AnalysisFailure { reason: String },
+
+    /// An IO operation failed (file not found, permission denied, etc.).
+    IoError { source: String, path: String },
+
+    /// A file could not be parsed (malformed Matrix Market, invalid JSON, etc.).
+    ParseError {
+        reason: String,
+        path: String,
+        line: Option<usize>,
+    },
 }
 
 impl fmt::Display for SparseError {
@@ -51,11 +61,7 @@ impl fmt::Display for SparseError {
                 write!(f, "Invalid input: {}", reason)
             }
             Self::StructurallySingular { column } => {
-                write!(
-                    f,
-                    "Matrix is structurally singular at column {}",
-                    column
-                )
+                write!(f, "Matrix is structurally singular at column {}", column)
             }
             Self::NumericalSingularity { pivot_index, value } => {
                 write!(
@@ -67,8 +73,37 @@ impl fmt::Display for SparseError {
             Self::AnalysisFailure { reason } => {
                 write!(f, "Symbolic analysis failed: {}", reason)
             }
+            Self::IoError { source, path } => {
+                write!(f, "IO error for '{}': {}", path, source)
+            }
+            Self::ParseError { reason, path, line } => {
+                if let Some(line) = line {
+                    write!(f, "Parse error in '{}' at line {}: {}", path, line, reason)
+                } else {
+                    write!(f, "Parse error in '{}': {}", path, reason)
+                }
+            }
         }
     }
 }
 
 impl std::error::Error for SparseError {}
+
+impl From<std::io::Error> for SparseError {
+    fn from(e: std::io::Error) -> Self {
+        Self::IoError {
+            source: e.to_string(),
+            path: String::new(),
+        }
+    }
+}
+
+impl From<serde_json::Error> for SparseError {
+    fn from(e: serde_json::Error) -> Self {
+        Self::ParseError {
+            reason: e.to_string(),
+            path: String::new(),
+            line: None,
+        }
+    }
+}

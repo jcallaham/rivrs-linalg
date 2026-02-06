@@ -48,3 +48,41 @@ jobs:
       - run: cd control && cargo doc --no-deps
         env:
           RUSTDOCFLAGS: -D warnings
+
+  test-sparse:
+    name: Test sparse (${{ matrix.rust }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rust: [stable, "1.87"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+      - uses: Swatinem/rust-cache@v2
+      - run: cd sparse && cargo test --all-targets
+
+  lint-sparse:
+    name: Lint sparse
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: cd sparse && cargo fmt --check
+      - run: cd sparse && cargo clippy --all-targets -- -D warnings
+
+  doc-sparse:
+    name: Sparse documentation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cd sparse && cargo doc --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
