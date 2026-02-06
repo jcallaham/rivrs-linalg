@@ -138,9 +138,10 @@ When implementing a new component:
 - ✅ Project scaffolding and structure
 
 **In Progress:**
-- 🚧 Phase 0: Literature review and test data collection
+- 🚧 Phase 0: Literature review and test data collection (0.1, 0.2 complete; 0.3 deferred)
 
 **Planned:**
+- 📋 Phase 0.4: Initial repository setup and testing infrastructure
 - 📋 Phase 1: Symbolic analysis (ordering, elimination tree)
 - 📋 Phase 2-8: Simplicial APTP solver
 - 📋 Phase 9: Supernodal optimization
@@ -151,5 +152,15 @@ When implementing a new component:
 - approx for test comparisons (dev dependency)
 - criterion for benchmarking (dev dependency)
 
+## Testing Strategy
+
+Primary correctness validation (established in Phase 0.3 decision):
+1. **Reconstruction tests**: `||P^T A P - L D L^T|| / ||A|| < 10^-12` (primary oracle)
+2. **Backward error**: `||Ax - b|| / (||A|| ||x|| + ||b||) < 10^-10` (solve pipeline)
+3. **Hand-constructed matrices**: 15 matrices with analytically known factorizations
+4. **Property-based tests**: Inertia, symmetry preservation, permutation validity
+5. **SPRAL comparison**: Deferred to Phases 2-8 (performance benchmarking, large-matrix inertia)
+
 ## Recent Changes
+- 003-spral-golden-results: Phase 0.3 deferred. SPRAL golden results infrastructure not built; reconstruction tests adopted as primary correctness oracle (stronger than cross-solver comparison). Constitution updated to v1.1.0.
 - 002-test-matrix-collection: 82 test matrices (15 hand-constructed + 67 SuiteSparse). Three-tier storage: hand-constructed in git, 10-matrix CI subset in `suitesparse-ci/` (plain git), full collection in gitignored `suitesparse/` (extracted from `references/ssids/suitesparse.tar.gz` at container build). No Git LFS.
