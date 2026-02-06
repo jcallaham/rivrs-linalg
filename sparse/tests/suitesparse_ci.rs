@@ -1,7 +1,9 @@
 //! Integration tests for SuiteSparse CI-subset matrices.
 //!
-//! Loads all 10 CI-subset matrices from the registry, verifies dimensions
+//! Loads all 9 CI-subset matrices from the registry, verifies dimensions
 //! and nnz match metadata, and confirms matrix symmetry.
+//!
+//! nd6k (103 MB) excluded from CI subset due to GitHub's 100 MB file size limit.
 
 use rivrs_sparse::io::registry;
 
@@ -12,8 +14,8 @@ fn load_all_ci_subset_matrices() {
 
     assert_eq!(
         ci_subset.len(),
-        10,
-        "expected 10 CI-subset matrices, got {}",
+        9,
+        "expected 9 CI-subset matrices, got {}",
         ci_subset.len()
     );
 
