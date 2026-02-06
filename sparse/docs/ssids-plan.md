@@ -168,62 +168,33 @@ Establish comprehensive understanding of algorithms, gather reference implementa
 - [x] Range from 1×1 to 1.6M×1.6M problems (4+ orders of magnitude)
 - [x] Known "killer" cases identified (stokes128, ncvxqp3, c-big, c-71, plus hand-constructed stress tests)
 
-#### 0.3: SPRAL Golden Results Generation
-**Task:** Run SPRAL on all test matrices to create reference outputs
+#### 0.3: SPRAL Golden Results Generation (**DEFERRED**)
+**Task:** ~~Run SPRAL on all test matrices to create reference outputs~~
 
-**Process:**
-1. Build SPRAL from source with known configuration
-2. Create driver program to systematically test all matrices
-3. Capture comprehensive results for each matrix
+**Status:** Deferred. See `specs/003-spral-golden-results/decision.md` for full rationale.
 
-**Data to Collect for Each Matrix:**
+**Summary of Decision:**
+After investigating SPRAL's C API, we determined that the golden results
+infrastructure (building SPRAL from source, writing a C driver, running on
+82 matrices) provides limited incremental value over what we can validate
+independently:
 
-```rust
-#[derive(Serialize)]
-struct SPRALReference {
-    // Input
-    matrix_name: String,
-    options: SPRALOptions,
+- SPRAL does not expose the L factor, permutation P, or elimination tree
+  structure — only aggregate statistics and the block diagonal D
+- The **reconstruction test** (`||P^T A P - L D L^T|| / ||A|| < epsilon`)
+  is a strictly stronger correctness oracle than comparing against SPRAL's output
+- Backward error (`||Ax - b|| / (||A|| ||x|| + ||b||)`) is computed from
+  our own solution, no reference needed
+- Phase 0.2's hand-constructed matrices already have analytically known
+  factorizations and inertia
+- Building SPRAL on arm64 carries non-trivial infrastructure risk for
+  limited return at this stage
 
-    // Analysis phase
-    analyze_time: f64,
-    elimination_tree: Vec<i32>,  // Parent pointers
-    supernodes: Vec<Supernode>,
-    predicted_nnz: usize,
-    predicted_flops: f64,
+**Deferred to:** When the Rust solver can factorize SuiteSparse matrices
+(Phases 2-8), for performance benchmarking and inertia validation on large
+matrices where analytical verification is impractical.
 
-    // Factor phase
-    factor_time: f64,
-    actual_nnz: usize,
-    actual_flops: f64,
-    num_delayed_pivots: usize,
-    num_negative_eigenvalues: i32,
-    num_positive_eigenvalues: i32,
-    num_zero_eigenvalues: i32,
-
-    // Solve phase
-    solve_time: f64,
-    forward_error: f64,    // ||x_computed - x_exact||
-    backward_error: f64,   // ||Ax - b|| / ||b||
-
-    // Memory
-    peak_memory_mb: f64,
-}
-```
-
-**Deliverable Format:**
-```
-/test-data/spral-reference/
-  ├── results/
-  │   ├── arrow-10.json
-  │   ├── GHS_indef-aug3dcqp.json
-  │   └── ...
-  ├── logs/
-  │   └── run-YYYY-MM-DD.log
-  └── summary.csv
-```
-
-**Success Criteria:**
+**Original Success Criteria (deferred, not abandoned):**
 - [ ] SPRAL successfully factors all test matrices
 - [ ] Complete results captured for each matrix
 - [ ] Results are reproducible (run twice, verify identical)
@@ -281,18 +252,32 @@ matrixmarket-rs = "0.1"
 
 **Required Outcomes:**
 1. Complete understanding of APTP algorithm documented
-2. 70+ test matrices with SPRAL reference results
-3. Test infrastructure can load matrices and compare results
-4. Development environment configured
-5. Team can articulate:
+2. 70+ test matrices collected with metadata and difficulty classification
+3. Hand-constructed matrices have analytically known factorizations (L, D, P, inertia)
+4. Correctness validation strategy defined: reconstruction tests as primary oracle,
+   backward error as secondary, SPRAL comparison deferred to Phases 2-8
+5. Development environment configured
+6. Team can articulate:
    - How APTP differs from TPP
    - Why multifrontal method is used
    - What makes indefinite problems "hard"
 
+**Correctness Validation Hierarchy** (established in Phase 0.3 decision):
+1. **Reconstruction test** (primary): `||P^T A P - L D L^T|| / ||A|| < epsilon`
+   — Proves mathematical correctness by definition
+2. **Backward error** (secondary): `||Ax - b|| / (||A|| ||x|| + ||b||) < 10^-10`
+   — Validates the full solve pipeline
+3. **Analytical verification**: Inertia and factorization match known results
+   for hand-constructed matrices
+4. **SPRAL comparison** (deferred): Performance benchmarking and inertia
+   cross-validation on large SuiteSparse matrices — added when Rust solver
+   can process those matrices
+
 **Validation Questions:**
 - Can we explain the APTP algorithm to someone unfamiliar with it?
 - Do we have test cases that will expose errors in each component?
-- Can we reproduce SPRAL's results on at least one matrix?
+- Is our validation strategy (reconstruction + backward error) sufficient
+  to catch all categories of solver bugs?
 
 **Time Investment:** This phase should not be rushed. Better to spend extra time here than discover gaps later.
 
