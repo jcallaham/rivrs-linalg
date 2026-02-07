@@ -32,4 +32,6 @@ pub mod io;
 pub mod validate;
 
 #[cfg(feature = "test-util")]
+pub mod benchmarking;
+#[cfg(feature = "test-util")]
 pub mod testing;

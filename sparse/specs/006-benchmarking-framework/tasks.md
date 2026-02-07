@@ -17,9 +17,9 @@
 
 **Purpose**: Create module structure, data types, and trait definitions that all user stories depend on
 
-- [ ] T001 Create `src/benchmarking/mod.rs` with module declarations and public re-exports for: `config`, `traits`, `results`, `rss`, `baseline`, `report`
-- [ ] T002 Register `benchmarking` module in `src/lib.rs` behind `#[cfg(feature = "test-util")]` gate (same as `testing` module)
-- [ ] T003 Register new benchmark binary in `Cargo.toml`: add `[[bench]] name = "solver_benchmarks"` with `harness = false`
+- [X] T001 Create `src/benchmarking/mod.rs` with module declarations and public re-exports for: `config`, `traits`, `results`, `rss`, `baseline`, `report`
+- [X] T002 Register `benchmarking` module in `src/lib.rs` behind `#[cfg(feature = "test-util")]` gate (same as `testing` module)
+- [X] T003 Register new benchmark binary in `Cargo.toml`: add `[[bench]] name = "solver_benchmarks"` with `harness = false`
 
 ---
 
@@ -29,12 +29,12 @@
 
 **CRITICAL**: No user story work can begin until this phase is complete
 
-- [ ] T004 [P] Implement `BenchmarkPhase` enum (`Analyze`, `Factor`, `Solve`, `Roundtrip`) with `Display` impl and serde `Serialize`/`Deserialize`, and `BenchmarkConfig` struct with fields (`filter: TestCaseFilter`, `phases: Vec<BenchmarkPhase>`, `sample_size: Option<usize>`, `measurement_time: Option<Duration>`, `warm_up_time: Option<Duration>`, `timeout_per_matrix: Option<Duration>`) and builder methods, in `src/benchmarking/config.rs`
-- [ ] T005 [P] Implement `Benchmarkable` trait in `src/benchmarking/traits.rs` with methods: `bench_analyze`, `bench_factor`, `bench_solve`, `bench_roundtrip` (with default impl chaining the first three). Each returns `Option<Box<dyn Any>>` or `Option<Vec<f64>>` per contract
-- [ ] T006 [P] Implement `BenchmarkResult`, `BenchmarkSuiteResult`, and `SkippedBenchmark` structs with serde `Serialize`/`Deserialize` in `src/benchmarking/results.rs`. Include `Display` impls for human-readable output
-- [ ] T007 [P] Implement `read_peak_rss_kb()` function in `src/benchmarking/rss.rs` that parses `VmHWM` from `/proc/self/status`. Return `Option<u64>` (None on non-Linux). Include unit test with `#[cfg(target_os = "linux")]` guard
-- [ ] T008 Implement `MockBenchmarkable` struct in `src/benchmarking/traits.rs` (or a test submodule) that implements `Benchmarkable` with configurable no-op or sleep-based phases for testing the harness. Uses existing `SolverTestCase` matrix data
-- [ ] T009 Add unit tests for `BenchmarkConfig` builder, `BenchmarkPhase` display/serde round-trip, and `BenchmarkResult` serde round-trip in their respective modules
+- [X] T004 [P] Implement `BenchmarkPhase` enum (`Analyze`, `Factor`, `Solve`, `Roundtrip`) with `Display` impl and serde `Serialize`/`Deserialize`, and `BenchmarkConfig` struct with fields (`filter: TestCaseFilter`, `phases: Vec<BenchmarkPhase>`, `sample_size: Option<usize>`, `measurement_time: Option<Duration>`, `warm_up_time: Option<Duration>`, `timeout_per_matrix: Option<Duration>`) and builder methods, in `src/benchmarking/config.rs`
+- [X] T005 [P] Implement `Benchmarkable` trait in `src/benchmarking/traits.rs` with methods: `bench_analyze`, `bench_factor`, `bench_solve`, `bench_roundtrip` (with default impl chaining the first three). Each returns `Option<Box<dyn Any>>` or `Option<Vec<f64>>` per contract
+- [X] T006 [P] Implement `BenchmarkResult`, `BenchmarkSuiteResult`, and `SkippedBenchmark` structs with serde `Serialize`/`Deserialize` in `src/benchmarking/results.rs`. Include `Display` impls for human-readable output
+- [X] T007 [P] Implement `read_peak_rss_kb()` function in `src/benchmarking/rss.rs` that parses `VmHWM` from `/proc/self/status`. Return `Option<u64>` (None on non-Linux). Include unit test with `#[cfg(target_os = "linux")]` guard
+- [X] T008 Implement `MockBenchmarkable` struct in `src/benchmarking/traits.rs` (or a test submodule) that implements `Benchmarkable` with configurable no-op or sleep-based phases for testing the harness. Uses existing `SolverTestCase` matrix data
+- [X] T009 Add unit tests for `BenchmarkConfig` builder, `BenchmarkPhase` display/serde round-trip, and `BenchmarkResult` serde round-trip in their respective modules
 
 **Checkpoint**: Foundation ready — data types compile, trait defined, RSS measurable, mock solver available. User story implementation can now begin.
 
@@ -48,15 +48,15 @@
 
 ### Tests for User Story 1
 
-- [ ] T010 [US1] Write test in `src/benchmarking/config.rs` (or `tests/`) that loads hand-constructed test cases via `TestCaseFilter::hand_constructed()` and verifies they can be iterated for benchmarking (non-empty, matrices loadable)
-- [ ] T011 [US1] Write test that constructs a `MockBenchmarkable`, calls each phase method with a hand-constructed matrix, and verifies `Some(...)` is returned for implemented phases and `None` for unimplemented ones
+- [X] T010 [US1] Write test in `src/benchmarking/config.rs` (or `tests/`) that loads hand-constructed test cases via `TestCaseFilter::hand_constructed()` and verifies they can be iterated for benchmarking (non-empty, matrices loadable)
+- [X] T011 [US1] Write test that constructs a `MockBenchmarkable`, calls each phase method with a hand-constructed matrix, and verifies `Some(...)` is returned for implemented phases and `None` for unimplemented ones
 
 ### Implementation for User Story 1
 
-- [ ] T012 [US1] Implement `run_component_benchmarks` function in `benches/solver_benchmarks.rs` that: loads test cases via `TestCaseFilter`, creates one `BenchmarkGroup` per phase (named `ssids/{phase}`), parameterizes by matrix name via `BenchmarkId::from_parameter`, skips missing matrices with `eprintln!` warning, skips unimplemented phases (when `Benchmarkable` method returns `None`), enforces `timeout_per_matrix` from `BenchmarkConfig` by recording a `SkippedBenchmark` when a matrix exceeds the deadline, and sets `Throughput::Elements(nnz)` per benchmark
-- [ ] T013 [US1] Wire up `criterion_group!` and `criterion_main!` in `benches/solver_benchmarks.rs` with the `MockBenchmarkable` as default solver, using `BenchmarkConfig` with `TestCaseFilter::hand_constructed()` as default matrix set
-- [ ] T014 [US1] Add peak RSS measurement: call `read_peak_rss_kb()` before and after the benchmark suite in `benches/solver_benchmarks.rs`, print the result to stderr
-- [ ] T015 [US1] Verify `cargo bench -- "ssids/"` executes successfully, producing Criterion terminal output and HTML reports in `target/criterion/ssids/`
+- [X] T012 [US1] Implement `run_component_benchmarks` function in `benches/solver_benchmarks.rs` that: loads test cases via `TestCaseFilter`, creates one `BenchmarkGroup` per phase (named `ssids/{phase}`), parameterizes by matrix name via `BenchmarkId::from_parameter`, skips missing matrices with `eprintln!` warning, skips unimplemented phases (when `Benchmarkable` method returns `None`), enforces `timeout_per_matrix` from `BenchmarkConfig` by recording a `SkippedBenchmark` when a matrix exceeds the deadline, and sets `Throughput::Elements(nnz)` per benchmark
+- [X] T013 [US1] Wire up `criterion_group!` and `criterion_main!` in `benches/solver_benchmarks.rs` with the `MockBenchmarkable` as default solver, using `BenchmarkConfig` with `TestCaseFilter::hand_constructed()` as default matrix set
+- [X] T014 [US1] Add peak RSS measurement: call `read_peak_rss_kb()` before and after the benchmark suite in `benches/solver_benchmarks.rs`, print the result to stderr
+- [X] T015 [US1] Verify `cargo bench -- "ssids/"` executes successfully, producing Criterion terminal output and HTML reports in `target/criterion/ssids/`
 
 **Checkpoint**: `cargo bench` runs component benchmarks on hand-constructed matrices with mock solver. Criterion HTML reports generated. Peak RSS printed. US1 is independently functional.
 
@@ -70,13 +70,13 @@
 
 ### Tests for User Story 2
 
-- [ ] T016 [US2] Write test that calls `MockBenchmarkable::bench_roundtrip` with a hand-constructed matrix and verifies the full pipeline produces a result
+- [X] T016 [US2] Write test that calls `MockBenchmarkable::bench_roundtrip` with a hand-constructed matrix and verifies the full pipeline produces a result
 
 ### Implementation for User Story 2
 
-- [ ] T017 [US2] Implement `run_e2e_benchmarks` function in `benches/solver_benchmarks.rs` that creates a `BenchmarkGroup` named `ssids/roundtrip`, benchmarks the full pipeline per matrix via `bench_roundtrip`, skips missing matrices, enforces timeout, and reports throughput
-- [ ] T018 [US2] Add matrix subset selection support: accept a `BenchmarkConfig` that controls which `TestCaseFilter` preset is used (hand-constructed, CI subset, or all). Demonstrate with at least two filter presets wired in the benchmark binary
-- [ ] T019 [US2] Register `run_e2e_benchmarks` in the `criterion_group!` alongside component benchmarks so both run under `cargo bench`
+- [X] T017 [US2] Implement `run_e2e_benchmarks` function in `benches/solver_benchmarks.rs` that creates a `BenchmarkGroup` named `ssids/roundtrip`, benchmarks the full pipeline per matrix via `bench_roundtrip`, skips missing matrices, enforces timeout, and reports throughput
+- [X] T018 [US2] Add matrix subset selection support: accept a `BenchmarkConfig` that controls which `TestCaseFilter` preset is used (hand-constructed, CI subset, or all). Demonstrate with at least two filter presets wired in the benchmark binary
+- [X] T019 [US2] Register `run_e2e_benchmarks` in the `criterion_group!` alongside component benchmarks so both run under `cargo bench`
 
 **Checkpoint**: `cargo bench` runs both component and roundtrip benchmarks. Matrix filtering works. US1 and US2 both function independently.
 
@@ -90,15 +90,15 @@
 
 ### Tests for User Story 3
 
-- [ ] T020 [P] [US3] Write unit tests for `save_baseline` and `load_baseline` in `src/benchmarking/baseline.rs`: create a `BenchmarkSuiteResult` with synthetic data, save to a temp file, load back, and verify round-trip equality
-- [ ] T021 [P] [US3] Write unit tests for `detect_regressions` in `src/benchmarking/baseline.rs`: construct two `BenchmarkSuiteResult` instances with known timing differences, run regression detection at 5% threshold, and verify correct classification (regression, improvement, unchanged)
+- [X] T020 [P] [US3] Write unit tests for `save_baseline` and `load_baseline` in `src/benchmarking/baseline.rs`: create a `BenchmarkSuiteResult` with synthetic data, save to a temp file, load back, and verify round-trip equality
+- [X] T021 [P] [US3] Write unit tests for `detect_regressions` in `src/benchmarking/baseline.rs`: construct two `BenchmarkSuiteResult` instances with known timing differences, run regression detection at 5% threshold, and verify correct classification (regression, improvement, unchanged)
 
 ### Implementation for User Story 3
 
-- [ ] T022 [US3] Implement `Baseline` struct, `save_baseline`, and `load_baseline` functions in `src/benchmarking/baseline.rs`. Use serde JSON serialization to `target/benchmarks/baselines/{name}.json`. Create parent directories if needed
-- [ ] T023 [US3] Implement `RegressionReport`, `Regression`, and `Improvement` structs in `src/benchmarking/baseline.rs` with serde derives and `Display` impl for human-readable summary
-- [ ] T024 [US3] Implement `detect_regressions` function in `src/benchmarking/baseline.rs` that matches (matrix_name, phase) pairs between current and baseline results, computes percentage change, and classifies each as regression/improvement/unchanged based on configurable threshold
-- [ ] T025 [US3] Implement `collect_results` function in `src/benchmarking/results.rs` (or `baseline.rs`) that parses Criterion's `raw.csv` and `estimates.json` from `target/criterion/` directory tree into a `BenchmarkSuiteResult`
+- [X] T022 [US3] Implement `Baseline` struct, `save_baseline`, and `load_baseline` functions in `src/benchmarking/baseline.rs`. Use serde JSON serialization to `target/benchmarks/baselines/{name}.json`. Create parent directories if needed
+- [X] T023 [US3] Implement `RegressionReport`, `Regression`, and `Improvement` structs in `src/benchmarking/baseline.rs` with serde derives and `Display` impl for human-readable summary
+- [X] T024 [US3] Implement `detect_regressions` function in `src/benchmarking/baseline.rs` that matches (matrix_name, phase) pairs between current and baseline results, computes percentage change, and classifies each as regression/improvement/unchanged based on configurable threshold
+- [X] T025 [US3] Implement `collect_results` function in `src/benchmarking/results.rs` (or `baseline.rs`) that parses Criterion's `raw.csv` and `estimates.json` from `target/criterion/` directory tree into a `BenchmarkSuiteResult`
 
 **Checkpoint**: Baselines can be saved/loaded. Regressions are detected and reported. US3 is independently testable with synthetic data.
 
@@ -108,13 +108,13 @@
 
 **Purpose**: Export, reporting, documentation, and integration improvements that span all user stories
 
-- [ ] T026 [P] Implement `export_csv` function in `src/benchmarking/report.rs` that writes `BenchmarkSuiteResult` to a CSV file with columns: matrix_name, phase, mean_ns, std_dev_ns, median_ns, iterations, matrix_size, matrix_nnz, throughput_nnz_per_sec
-- [ ] T027 [P] Implement `export_json` function in `src/benchmarking/report.rs` that serializes `BenchmarkSuiteResult` to a JSON file via serde
-- [ ] T028 [P] Implement `generate_markdown_table` function in `src/benchmarking/report.rs` that formats `BenchmarkSuiteResult` into an aligned Markdown table (matrix, phase, mean, std_dev, throughput columns). Add a variant for `RegressionReport` that includes change percentage
-- [ ] T029 Write unit tests for `export_csv`, `export_json`, and `generate_markdown_table` in `src/benchmarking/report.rs` using synthetic `BenchmarkSuiteResult` data: verify CSV column count, JSON round-trip, and Markdown table structure
-- [ ] T030 Add rustdoc comments with `# Examples` sections to all public items in `src/benchmarking/` modules: trait, config builder, results, baseline, report, RSS
-- [ ] T031 Run `cargo test` and `cargo bench` end-to-end to verify all modules integrate: tests pass, benchmarks produce output, no warnings from `cargo clippy`
-- [ ] T032 Update `docs/ssids-log.md` with Phase 1.2 completion entry documenting what was built, key design decisions (separate `Benchmarkable` trait, whole-run RSS, Criterion group-per-phase), and any deviations from the original plan
+- [X] T026 [P] Implement `export_csv` function in `src/benchmarking/report.rs` that writes `BenchmarkSuiteResult` to a CSV file with columns: matrix_name, phase, mean_ns, std_dev_ns, median_ns, iterations, matrix_size, matrix_nnz, throughput_nnz_per_sec
+- [X] T027 [P] Implement `export_json` function in `src/benchmarking/report.rs` that serializes `BenchmarkSuiteResult` to a JSON file via serde
+- [X] T028 [P] Implement `generate_markdown_table` function in `src/benchmarking/report.rs` that formats `BenchmarkSuiteResult` into an aligned Markdown table (matrix, phase, mean, std_dev, throughput columns). Add a variant for `RegressionReport` that includes change percentage
+- [X] T029 Write unit tests for `export_csv`, `export_json`, and `generate_markdown_table` in `src/benchmarking/report.rs` using synthetic `BenchmarkSuiteResult` data: verify CSV column count, JSON round-trip, and Markdown table structure
+- [X] T030 Add rustdoc comments with `# Examples` sections to all public items in `src/benchmarking/` modules: trait, config builder, results, baseline, report, RSS
+- [X] T031 Run `cargo test` and `cargo bench` end-to-end to verify all modules integrate: tests pass, benchmarks produce output, no warnings from `cargo clippy`
+- [X] T032 Update `docs/ssids-log.md` with Phase 1.2 completion entry documenting what was built, key design decisions (separate `Benchmarkable` trait, whole-run RSS, Criterion group-per-phase), and any deviations from the original plan
 
 ---
 
