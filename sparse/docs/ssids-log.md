@@ -1,5 +1,90 @@
 # SSIDS Development Log
 
+## Phase 1.1: Test Infrastructure
+
+**Status**: Complete
+**Branch**: `005-test-infrastructure`
+**Date**: 2026-02-07
+
+### What Was Built
+
+Reusable test harness and validation infrastructure for solver development,
+gated behind a `test-util` Cargo feature flag to keep production builds lean.
+
+**Testing module** (`src/testing/`, feature-gated behind `test-util`):
+- `harness.rs` — `SolverTest` trait defining four test methods (analyze, factor,
+  solve, roundtrip), `MockSolver` implementation that validates reference
+  factorizations directly, `TestKind` enum, `MetricResult` and `TestResult`
+  structs with `Display` formatting
+- `validator.rs` — `NumericalValidator` with builder pattern for configurable
+  tolerances (reconstruction 10^-12, backward error 10^-10), methods for
+  `check_reconstruction()`, `check_backward_error()`, `check_inertia()`, and
+  `validate_factorization()` returning structured `TestResult`
+- `cases.rs` — `SolverTestCase`, `TestMatrixProperties`, `TestCaseFilter` with
+  builder methods (`all()`, `hand_constructed()`, `ci_subset()`, `with_source()`,
+  `with_category()`, `with_difficulty()`, `ci_only()`, `require_reference()`),
+  `load_test_cases()` wrapping registry functions with predicate filtering
+- `generators.rs` — `RandomMatrixConfig`, `generate_random_symmetric()` (PD via
+  diagonal dominance or indefinite with mixed signs), `generate_arrow()`,
+  `generate_tridiagonal()`, `generate_banded()` — all producing
+  `SparseColMat<usize, f64>` via faer's `Triplet` API
+- `mod.rs` — Module root with re-exports and compilable rustdoc example
+
+**Cargo.toml changes**:
+- `test-util` feature flag gating `rand` and `rand_distr` as optional deps
+- Self-dev-dependency: `rivrs-sparse = { path = ".", features = ["test-util"] }`
+
+**Integration test refactoring**:
+- `tests/hand_constructed.rs` — refactored to use `load_test_cases` +
+  `NumericalValidator` instead of raw registry + validate calls
+- `tests/suitesparse_ci.rs` — refactored to use `TestCaseFilter::ci_subset()`
+
+**Tests**: 48 total (45 unit + 2 integration + 1 doctest), all passing
+
+### Key Decisions
+
+1. **Feature-gated testing module**: The `test-util` feature flag keeps `rand`,
+   `rand_distr`, and all test generators out of production builds. Downstream
+   crates enable it in `[dev-dependencies]` only.
+
+2. **Builder pattern for filters and validators**: `TestCaseFilter` and
+   `NumericalValidator` use builder patterns for ergonomic, composable
+   configuration. Default tolerances match the constitution (reconstruction
+   10^-12, backward error 10^-10).
+
+3. **MockSolver for immediate validation**: The `MockSolver` validates reference
+   factorizations from the hand-constructed JSON files directly (no solver needed
+   yet). This allows the test harness to be fully exercised before any solver
+   exists.
+
+4. **Diagonal dominance for PD generators**: Random PD matrices use Gershgorin
+   circle theorem — diagonal entries exceed row absolute sums by a random margin,
+   guaranteeing positive definiteness without Cholesky verification.
+
+5. **Seeded RNG for reproducibility**: All generator tests use
+   `StdRng::seed_from_u64(42)` for deterministic output across runs.
+
+### Issues Encountered
+
+- **`faer::sparse::Triplet` path**: `Triplet` is at `faer::sparse::Triplet`,
+  not `faer::Triplet`. The `try_new_from_triplets` method expects
+  `&[Triplet<usize, usize, f64>]`, not tuples.
+
+- **Rust 2024 edition `gen` keyword**: `gen` is reserved in edition 2024. Must
+  use raw identifier syntax `rng.r#gen::<f64>()` to call `rand::Rng::gen()`.
+
+- **`Uniform::new` type inference**: `Uniform::new(0.1, 1.0)` is ambiguous;
+  needs explicit type: `Uniform::new(0.1f64, 1.0)`.
+
+- **Reconstruction tolerance sensitivity**: A perturbation of 1e-4 to an L
+  entry produced reconstruction error exceeding 1e-6 tolerance in tests. Fixed
+  by using 1e-8 perturbation for the relaxed-tolerance test.
+
+- **`cargo fmt` CI failure**: Import ordering and line wrapping differences
+  between local and CI rustfmt. Fixed by running `cargo fmt` and committing.
+
+---
+
 ## Phase 0.4: Repository Setup for Solver Development
 
 **Status**: Complete

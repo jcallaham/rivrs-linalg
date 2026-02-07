@@ -8,7 +8,7 @@ This directory contains sparse linear algebra solver implementations for rivrs-l
 
 **Parent Project**: rivrs-linalg - Numerical Linear Algebra for Rivrs
 **Domain**: Sparse direct solvers (SSIDS, LDL^T factorization, APTP pivoting)
-**Current Status**: Phase 0 - Scaffolding and literature review.  Phase 0.1 complete
+**Current Status**: Phase 0.5 complete — test infrastructure built. Ready for Phase 1 (Symbolic Analysis).
 
 ### Development docs
 
@@ -106,6 +106,21 @@ When implementing a new component:
 8. Benchmark against SPRAL and other solvers
 9. Create Python bindings (future)
 
+## Rust guidelines
+
+- Sort imports by: std, external, workspace, crate, super
+- Limit scope to minimum necessary (private over `pub(crate)` over `pub`, etc.)
+- No `.unwrap()` in non-test code
+
+Preferences (can be violated if needed)
+- Immutability over mutation
+- Iterators over manual loops
+- Enums over dynamic dispatch (e.g. `dyn` trait)
+- Prefer `Result` propagation over `.expect()`
+- Prefer `thiserror` over custom `Result`/`Error` traits
+- Importing with `use` over inline imports (exception: module imports are okay if several functions or types are used)
+- Try to avoid allocation in performance-critical code
+
 ## Git Commit Practices
 
 - **Commit frequently**: After completing logical units (phase completion, tests passing, new module)
@@ -139,22 +154,15 @@ When implementing a new component:
 - ✅ Phase 0.2: Test matrix collection (82 matrices)
 - ✅ Phase 0.3: Deferred (reconstruction tests adopted as primary oracle)
 - ✅ Phase 0.4: Repository setup (IO modules, validation, CI, benchmarks)
-
-**Planned:**
-- 📋 Phase 0.4: Initial repository setup and testing infrastructure
-- 📋 Phase 1: Symbolic analysis (ordering, elimination tree)
-- 📋 Phase 2-8: Simplicial APTP solver
-- 📋 Phase 9: Supernodal optimization
-- 📋 Phase 10-11: Polish and release
+- ✅ Phase 1.1: Test infrastructure (harness, validator, generators, test-util feature)
 
 ## Active Technologies
-- Rust 1.87+ with faer (>= 0.22) for linear algebra and sparse infrastructure
-- approx for test comparisons (dev dependency)
-- criterion for benchmarking (dev dependency)
-- Rust 1.87+ (edition 2024) + faer 0.22 (sparse/dense LA), serde + serde_json (JSON parsing) (004-repo-setup)
-- Filesystem (test-data/ directory with .mtx and .json files) (004-repo-setup)
-- Rust 1.87+ (edition 2024) + faer 0.22 (sparse/dense LA), serde + serde_json (JSON parsing), rand + rand_distr (random generation, dev-dependency) (005-test-infrastructure)
-- Filesystem (test-data/ directory with .mtx and .json files, metadata.json registry) (005-test-infrastructure)
+- Rust 1.87+ (edition 2024) + faer 0.22 (sparse/dense LA)
+- serde + serde_json (JSON parsing for metadata and reference factorizations)
+- rand + rand_distr (random matrix generation, optional via `test-util` feature)
+- approx (test comparisons, dev dependency)
+- criterion (benchmarking, dev dependency)
+- Filesystem (test-data/ directory with .mtx and .json files, metadata.json registry)
 
 ## Testing Strategy
 
@@ -165,6 +173,8 @@ Primary correctness validation (established in Phase 0.3 decision):
 4. **Property-based tests**: Inertia, symmetry preservation, permutation validity
 5. **SPRAL comparison**: Deferred to Phases 2-8 (performance benchmarking, large-matrix inertia)
 
-## Recent Changes
-- 005-test-infrastructure: Added Rust 1.87+ (edition 2024) + faer 0.22 (sparse/dense LA), serde + serde_json (JSON parsing), rand + rand_distr (random generation, dev-dependency)
-- 004-repo-setup: Added Rust 1.87+ (edition 2024) + faer 0.22 (sparse/dense LA), serde + serde_json (JSON parsing)
+Test infrastructure (Phase 0.5):
+- `SolverTest` trait with `MockSolver` for pre-solver validation
+- `NumericalValidator` with configurable tolerances
+- `TestCaseFilter` for composable test case selection
+- Random matrix generators (PD and indefinite) behind `test-util` feature
