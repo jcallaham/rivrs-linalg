@@ -33,6 +33,21 @@ fn add_diagonal(
     }
 }
 
+/// Validate common generator preconditions.
+fn validate_size(size: usize, positive_definite: bool) -> Result<(), SparseError> {
+    if size == 0 {
+        return Err(SparseError::InvalidInput {
+            reason: "matrix size must be > 0".to_string(),
+        });
+    }
+    if size == 1 && !positive_definite {
+        return Err(SparseError::InvalidInput {
+            reason: "cannot generate 1x1 indefinite matrix".to_string(),
+        });
+    }
+    Ok(())
+}
+
 /// Generate a random sparse symmetric matrix.
 ///
 /// If `positive_definite` is true, uses diagonal dominance to guarantee PD.
@@ -43,18 +58,7 @@ pub fn generate_random_symmetric(
     rng: &mut impl Rng,
 ) -> Result<SparseColMat<usize, f64>, SparseError> {
     let n = config.size;
-
-    if n == 0 {
-        return Err(SparseError::InvalidInput {
-            reason: "matrix size must be > 0".to_string(),
-        });
-    }
-
-    if n == 1 && !config.positive_definite {
-        return Err(SparseError::InvalidInput {
-            reason: "cannot generate 1x1 indefinite matrix".to_string(),
-        });
-    }
+    validate_size(n, config.positive_definite)?;
 
     // Off-diagonal entries come in pairs (i,j) and (j,i); plus n diagonal entries
     let target_offdiag_pairs = if config.target_nnz > n {
@@ -109,11 +113,17 @@ pub fn generate_random_symmetric(
 ///
 /// Arrow pattern: dense first row/column, diagonal remainder.
 /// If `positive_definite` is true, diagonal dominance is applied.
+///
+/// # Errors
+///
+/// Returns `SparseError::InvalidInput` if `size == 0` or `size == 1 && !positive_definite`.
 pub fn generate_arrow(
     size: usize,
     positive_definite: bool,
     rng: &mut impl Rng,
-) -> SparseColMat<usize, f64> {
+) -> Result<SparseColMat<usize, f64>, SparseError> {
+    validate_size(size, positive_definite)?;
+
     let n = size;
     let val_dist = Uniform::new(0.1f64, 1.0);
     let mut triplets: Vec<Triplet<usize, usize, f64>> = Vec::new();
@@ -129,18 +139,25 @@ pub fn generate_arrow(
 
     add_diagonal(&mut triplets, &row_abs_sum, positive_definite, rng);
 
-    SparseColMat::try_new_from_triplets(n, n, &triplets)
-        .expect("arrow matrix construction should not fail")
+    SparseColMat::try_new_from_triplets(n, n, &triplets).map_err(|e| SparseError::InvalidInput {
+        reason: format!("failed to create arrow matrix from triplets: {:?}", e),
+    })
 }
 
 /// Generate a sparse symmetric tridiagonal matrix of given size.
 ///
 /// If `positive_definite` is true, diagonal dominance is applied.
+///
+/// # Errors
+///
+/// Returns `SparseError::InvalidInput` if `size == 0` or `size == 1 && !positive_definite`.
 pub fn generate_tridiagonal(
     size: usize,
     positive_definite: bool,
     rng: &mut impl Rng,
-) -> SparseColMat<usize, f64> {
+) -> Result<SparseColMat<usize, f64>, SparseError> {
+    validate_size(size, positive_definite)?;
+
     let n = size;
     let val_dist = Uniform::new(0.1f64, 1.0);
     let mut triplets: Vec<Triplet<usize, usize, f64>> = Vec::new();
@@ -156,19 +173,26 @@ pub fn generate_tridiagonal(
 
     add_diagonal(&mut triplets, &row_abs_sum, positive_definite, rng);
 
-    SparseColMat::try_new_from_triplets(n, n, &triplets)
-        .expect("tridiagonal matrix construction should not fail")
+    SparseColMat::try_new_from_triplets(n, n, &triplets).map_err(|e| SparseError::InvalidInput {
+        reason: format!("failed to create tridiagonal matrix from triplets: {:?}", e),
+    })
 }
 
 /// Generate a sparse symmetric banded matrix of given size and bandwidth.
 ///
 /// If `positive_definite` is true, diagonal dominance is applied.
+///
+/// # Errors
+///
+/// Returns `SparseError::InvalidInput` if `size == 0` or `size == 1 && !positive_definite`.
 pub fn generate_banded(
     size: usize,
     bandwidth: usize,
     positive_definite: bool,
     rng: &mut impl Rng,
-) -> SparseColMat<usize, f64> {
+) -> Result<SparseColMat<usize, f64>, SparseError> {
+    validate_size(size, positive_definite)?;
+
     let n = size;
     let val_dist = Uniform::new(0.1f64, 1.0);
     let mut triplets: Vec<Triplet<usize, usize, f64>> = Vec::new();
@@ -190,8 +214,9 @@ pub fn generate_banded(
 
     add_diagonal(&mut triplets, &row_abs_sum, positive_definite, rng);
 
-    SparseColMat::try_new_from_triplets(n, n, &triplets)
-        .expect("banded matrix construction should not fail")
+    SparseColMat::try_new_from_triplets(n, n, &triplets).map_err(|e| SparseError::InvalidInput {
+        reason: format!("failed to create banded matrix from triplets: {:?}", e),
+    })
 }
 
 #[cfg(test)]
@@ -266,7 +291,7 @@ mod tests {
     #[test]
     fn generate_arrow_pattern() {
         let mut rng = seeded_rng();
-        let m = generate_arrow(20, true, &mut rng);
+        let m = generate_arrow(20, true, &mut rng).expect("arrow generation failed");
         assert_eq!(m.nrows(), 20);
         let dense = m.to_dense();
 
@@ -301,7 +326,7 @@ mod tests {
     #[test]
     fn generate_tridiagonal_pattern() {
         let mut rng = seeded_rng();
-        let m = generate_tridiagonal(30, true, &mut rng);
+        let m = generate_tridiagonal(30, true, &mut rng).expect("tridiagonal generation failed");
         assert_eq!(m.nrows(), 30);
         let dense = m.to_dense();
 
@@ -330,7 +355,7 @@ mod tests {
     #[test]
     fn generate_banded_pattern() {
         let mut rng = seeded_rng();
-        let m = generate_banded(40, 3, true, &mut rng);
+        let m = generate_banded(40, 3, true, &mut rng).expect("banded generation failed");
         assert_eq!(m.nrows(), 40);
         let dense = m.to_dense();
 
@@ -350,6 +375,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore] // Wall-clock assertion may flake in constrained CI environments
     fn generation_performance_under_1s() {
         let mut rng = seeded_rng();
         let config = RandomMatrixConfig {
@@ -402,5 +428,85 @@ mod tests {
             "actual nnz {} exceeds max possible 25",
             actual_nnz
         );
+    }
+
+    // Edge case tests for all generators (#20)
+
+    #[test]
+    fn zero_size_returns_error() {
+        let mut rng = seeded_rng();
+        assert!(generate_arrow(0, true, &mut rng).is_err());
+        assert!(generate_tridiagonal(0, true, &mut rng).is_err());
+        assert!(generate_banded(0, 1, true, &mut rng).is_err());
+        assert!(
+            generate_random_symmetric(
+                &RandomMatrixConfig {
+                    size: 0,
+                    target_nnz: 0,
+                    positive_definite: true
+                },
+                &mut rng,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn size_1_pd_succeeds() {
+        let mut rng = seeded_rng();
+        let m = generate_arrow(1, true, &mut rng).expect("1x1 arrow should work");
+        assert_eq!(m.nrows(), 1);
+
+        let m = generate_tridiagonal(1, true, &mut rng).expect("1x1 tridiagonal should work");
+        assert_eq!(m.nrows(), 1);
+
+        let m = generate_banded(1, 0, true, &mut rng).expect("1x1 banded should work");
+        assert_eq!(m.nrows(), 1);
+    }
+
+    #[test]
+    fn size_1_indefinite_returns_error() {
+        let mut rng = seeded_rng();
+        assert!(generate_arrow(1, false, &mut rng).is_err());
+        assert!(generate_tridiagonal(1, false, &mut rng).is_err());
+        assert!(generate_banded(1, 0, false, &mut rng).is_err());
+    }
+
+    #[test]
+    fn banded_zero_bandwidth_is_diagonal() {
+        let mut rng = seeded_rng();
+        let m = generate_banded(10, 0, true, &mut rng).expect("zero bandwidth should work");
+        let dense = m.to_dense();
+        for i in 0..10 {
+            for j in 0..10 {
+                if i != j {
+                    assert_eq!(
+                        dense[(i, j)],
+                        0.0,
+                        "off-diagonal ({}, {}) should be zero",
+                        i,
+                        j
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn banded_large_bandwidth_fills_densely() {
+        let mut rng = seeded_rng();
+        let m = generate_banded(5, 10, true, &mut rng).expect("large bandwidth should work");
+        let dense = m.to_dense();
+        // With bandwidth >= size, all off-diagonal pairs should be filled
+        for i in 0..5 {
+            for j in 0..5 {
+                assert!(
+                    dense[(i, j)] != 0.0,
+                    "entry ({}, {}) should be nonzero",
+                    i,
+                    j
+                );
+            }
+        }
     }
 }

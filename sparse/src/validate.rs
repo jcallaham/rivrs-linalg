@@ -4,17 +4,81 @@
 //! - **Reconstruction error**: `||P^T A P - L D L^T||_F / ||A||_F`
 //! - **Backward error**: `||Ax - b|| / (||A||_F ||x|| + ||b||)`
 //! - **Inertia comparison**: field-wise equality of eigenvalue sign counts
+//! - **Permutation validation**: checks that a permutation is a valid bijection
 
 use faer::linalg::matmul::matmul;
 use faer::sparse::SparseColMat;
 use faer::{Accum, Col, Mat, Par};
 
+use crate::error::SparseError;
 use crate::io::reference::{DBlock, Inertia, ReferenceFactorization};
+
+/// Validate that `perm` is a valid permutation of `0..n`.
+///
+/// Returns `Ok(())` if `perm` has exactly `n` elements and is a bijection on `0..n`.
+///
+/// # Errors
+///
+/// - `perm.len() != n`
+/// - Any element is out of bounds (`>= n`)
+/// - Any element appears more than once
+pub fn validate_permutation(perm: &[usize], n: usize) -> Result<(), SparseError> {
+    if perm.len() != n {
+        return Err(SparseError::InvalidInput {
+            reason: format!(
+                "permutation length ({}) does not match expected size ({})",
+                perm.len(),
+                n
+            ),
+        });
+    }
+    let mut seen = vec![false; n];
+    for (i, &p) in perm.iter().enumerate() {
+        if p >= n {
+            return Err(SparseError::InvalidInput {
+                reason: format!("permutation[{}] = {} is out of bounds (n = {})", i, p, n),
+            });
+        }
+        if seen[p] {
+            return Err(SparseError::InvalidInput {
+                reason: format!("permutation has duplicate index {} at position {}", p, i),
+            });
+        }
+        seen[p] = true;
+    }
+    Ok(())
+}
+
+/// Compute dense matrix-vector product `A * x`.
+///
+/// Converts `A` to dense and uses BLAS-3 matmul. Intended for validation
+/// of small-to-medium matrices in tests, not for production solves.
+///
+/// # Future optimization
+///
+/// For large matrices, use `faer::sparse::linalg::matmul::sparse_dense_matmul`
+/// to avoid the O(n^2) dense conversion.
+pub fn dense_matvec(a: &SparseColMat<usize, f64>, x: &Col<f64>) -> Col<f64> {
+    let a_dense = a.to_dense();
+    let n = a.nrows();
+    let x_mat = x.as_mat();
+    let mut result = Mat::<f64>::zeros(n, 1);
+    matmul(
+        result.as_mut(),
+        Accum::Replace,
+        a_dense.as_ref(),
+        x_mat,
+        1.0,
+        Par::Seq,
+    );
+    Col::from_fn(n, |i| result[(i, 0)])
+}
 
 /// Compute the relative reconstruction error of a factorization.
 ///
 /// Returns `||P^T A P - L D L^T||_F / ||A||_F` where L, D, P come from
-/// the reference factorization.
+/// the reference factorization. The Frobenius norm is computed via faer's
+/// `norm_l2()` method on `Mat`, which returns `||M||_F` (not the spectral 2-norm).
 ///
 /// Returns 0.0 if `||A||_F` is zero.
 pub fn reconstruction_error(
@@ -23,6 +87,7 @@ pub fn reconstruction_error(
 ) -> f64 {
     let n = a.nrows();
     let a_dense = a.to_dense();
+    // faer's Mat::norm_l2() computes the Frobenius norm: sqrt(sum of squared entries)
     let a_norm = a_dense.norm_l2();
     if a_norm == 0.0 {
         return 0.0;
@@ -88,7 +153,14 @@ pub fn reconstruction_error(
 ///
 /// Returns `||Ax - b|| / (||A||_F * ||x|| + ||b||)`.
 ///
-/// Returns 0.0 if denominator is zero.
+/// Returns 0.0 if the denominator is zero (which only occurs when both `A` and `b`
+/// are zero, since the denominator is a sum of non-negative IEEE 754 values).
+///
+/// # Future optimization
+///
+/// Currently converts `A` to dense for the matrix-vector product. For large
+/// matrices, use `faer::sparse::linalg::matmul::sparse_dense_matmul` to avoid
+/// the O(n^2) dense conversion.
 pub fn backward_error(a: &SparseColMat<usize, f64>, x: &Col<f64>, b: &Col<f64>) -> f64 {
     let n = a.nrows();
     let a_dense = a.to_dense();
@@ -113,6 +185,8 @@ pub fn backward_error(a: &SparseColMat<usize, f64>, x: &Col<f64>, b: &Col<f64>) 
     let x_norm = x.norm_l2();
     let b_norm = b.norm_l2();
 
+    // The denominator is a sum of non-negative IEEE 754 values, so it is
+    // exactly 0.0 only when all terms are exactly 0.0 (i.e., A=0 and b=0).
     let denom = a_norm * x_norm + b_norm;
     if denom == 0.0 {
         return 0.0;
@@ -121,9 +195,13 @@ pub fn backward_error(a: &SparseColMat<usize, f64>, x: &Col<f64>, b: &Col<f64>) 
     r_norm / denom
 }
 
-/// Check whether two inertia values are identical.
+/// Check whether two inertia values are identical and dimensionally consistent.
+///
+/// Returns `true` only if all three counts match AND both inertias have the
+/// same total dimension (positive + negative + zero).
 pub fn check_inertia(computed: &Inertia, expected: &Inertia) -> bool {
-    computed.positive == expected.positive
+    computed.dimension() == expected.dimension()
+        && computed.positive == expected.positive
         && computed.negative == expected.negative
         && computed.zero == expected.zero
 }
@@ -132,23 +210,6 @@ pub fn check_inertia(computed: &Inertia, expected: &Inertia) -> bool {
 mod tests {
     use super::*;
     use crate::io::registry;
-
-    // Helper: compute b = A * x using dense conversion
-    fn dense_matvec(a: &SparseColMat<usize, f64>, x: &Col<f64>) -> Col<f64> {
-        let a_dense = a.to_dense();
-        let n = a.nrows();
-        let x_mat = x.as_mat();
-        let mut result = Mat::<f64>::zeros(n, 1);
-        matmul(
-            result.as_mut(),
-            Accum::Replace,
-            a_dense.as_ref(),
-            x_mat,
-            1.0,
-            Par::Seq,
-        );
-        Col::from_fn(n, |i| result[(i, 0)])
-    }
 
     // T021: reconstruction_error tests
 
@@ -274,5 +335,49 @@ mod tests {
             zero: 1,
         };
         assert!(!check_inertia(&a, &b));
+    }
+
+    // T024: validate_permutation tests
+
+    #[test]
+    fn validate_permutation_valid() {
+        assert!(validate_permutation(&[2, 0, 1], 3).is_ok());
+        assert!(validate_permutation(&[0], 1).is_ok());
+        assert!(validate_permutation(&[], 0).is_ok());
+    }
+
+    #[test]
+    fn validate_permutation_wrong_length() {
+        let result = validate_permutation(&[0, 1], 3);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_permutation_out_of_bounds() {
+        let result = validate_permutation(&[0, 5, 2], 3);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_permutation_duplicate() {
+        let result = validate_permutation(&[0, 1, 1], 3);
+        assert!(result.is_err());
+    }
+
+    // T025: dense_matvec test
+
+    #[test]
+    fn dense_matvec_matches_manual() {
+        let test = registry::load_test_matrix("arrow-5-pd")
+            .expect("registry error")
+            .expect("matrix should exist");
+        let n = test.matrix.nrows();
+        let x = Col::<f64>::from_fn(n, |i| (i + 1) as f64);
+        let b = dense_matvec(&test.matrix, &x);
+        assert_eq!(b.nrows(), n);
+
+        // Verify backward error is tiny
+        let err = backward_error(&test.matrix, &x, &b);
+        assert!(err < 1e-14);
     }
 }

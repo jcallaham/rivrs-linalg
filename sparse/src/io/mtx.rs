@@ -24,30 +24,35 @@ use crate::error::SparseError;
 /// - Row/col indices out of bounds
 pub fn load_mtx(path: &Path) -> Result<SparseColMat<usize, f64>, SparseError> {
     let path_str = path.display().to_string();
-    let content = std::fs::read_to_string(path).map_err(|e| SparseError::IoError {
+
+    let io_err = |e: std::io::Error| SparseError::IoError {
         source: e.to_string(),
         path: path_str.clone(),
-    })?;
+    };
+    let parse_err = |reason: String, line: Option<usize>| SparseError::ParseError {
+        reason,
+        path: path_str.clone(),
+        line,
+    };
+
+    let content = std::fs::read_to_string(path).map_err(io_err)?;
 
     let mut lines = content.lines().enumerate();
 
     // Parse header line
-    let (_, header) = lines.next().ok_or_else(|| SparseError::ParseError {
-        reason: "empty file".to_string(),
-        path: path_str.clone(),
-        line: Some(1),
-    })?;
+    let (_, header) = lines
+        .next()
+        .ok_or_else(|| parse_err("empty file".to_string(), Some(1)))?;
 
     let header_lower = header.to_lowercase();
     if !header_lower.starts_with("%%matrixmarket matrix coordinate real symmetric") {
-        return Err(SparseError::ParseError {
-            reason: format!(
+        return Err(parse_err(
+            format!(
                 "unsupported format: expected '%%MatrixMarket matrix coordinate real symmetric', got '{}'",
                 header
             ),
-            path: path_str.clone(),
-            line: Some(1),
-        });
+            Some(1),
+        ));
     }
 
     // Skip comment lines
@@ -60,38 +65,37 @@ pub fn load_mtx(path: &Path) -> Result<SparseColMat<usize, f64>, SparseError> {
     }
 
     // Parse size line: nrows ncols nnz
-    let (size_line_idx, size_line_str) = size_line.ok_or_else(|| SparseError::ParseError {
-        reason: "missing size line".to_string(),
-        path: path_str.clone(),
-        line: None,
-    })?;
+    let (size_line_idx, size_line_str) =
+        size_line.ok_or_else(|| parse_err("missing size line".to_string(), None))?;
 
     let size_parts: Vec<&str> = size_line_str.split_whitespace().collect();
     if size_parts.len() != 3 {
-        return Err(SparseError::ParseError {
-            reason: format!(
+        return Err(parse_err(
+            format!(
                 "size line must have 3 values (nrows ncols nnz), got {}",
                 size_parts.len()
             ),
-            path: path_str.clone(),
-            line: Some(size_line_idx + 1),
-        });
+            Some(size_line_idx + 1),
+        ));
     }
 
-    let nrows: usize = size_parts[0].parse().map_err(|_| SparseError::ParseError {
-        reason: format!("invalid nrows: '{}'", size_parts[0]),
-        path: path_str.clone(),
-        line: Some(size_line_idx + 1),
+    let nrows: usize = size_parts[0].parse().map_err(|_| {
+        parse_err(
+            format!("invalid nrows: '{}'", size_parts[0]),
+            Some(size_line_idx + 1),
+        )
     })?;
-    let ncols: usize = size_parts[1].parse().map_err(|_| SparseError::ParseError {
-        reason: format!("invalid ncols: '{}'", size_parts[1]),
-        path: path_str.clone(),
-        line: Some(size_line_idx + 1),
+    let ncols: usize = size_parts[1].parse().map_err(|_| {
+        parse_err(
+            format!("invalid ncols: '{}'", size_parts[1]),
+            Some(size_line_idx + 1),
+        )
     })?;
-    let _nnz: usize = size_parts[2].parse().map_err(|_| SparseError::ParseError {
-        reason: format!("invalid nnz: '{}'", size_parts[2]),
-        path: path_str.clone(),
-        line: Some(size_line_idx + 1),
+    let _nnz: usize = size_parts[2].parse().map_err(|_| {
+        parse_err(
+            format!("invalid nnz: '{}'", size_parts[2]),
+            Some(size_line_idx + 1),
+        )
     })?;
 
     // Parse triplets and symmetrize
@@ -103,52 +107,49 @@ pub fn load_mtx(path: &Path) -> Result<SparseColMat<usize, f64>, SparseError> {
         }
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() != 3 {
-            return Err(SparseError::ParseError {
-                reason: format!(
+            return Err(parse_err(
+                format!(
                     "data line must have 3 values (row col val), got {}",
                     parts.len()
                 ),
-                path: path_str.clone(),
-                line: Some(line_idx + 1),
-            });
+                Some(line_idx + 1),
+            ));
         }
 
-        let row: usize = parts[0].parse().map_err(|_| SparseError::ParseError {
-            reason: format!("invalid row index: '{}'", parts[0]),
-            path: path_str.clone(),
-            line: Some(line_idx + 1),
+        let row: usize = parts[0].parse().map_err(|_| {
+            parse_err(
+                format!("invalid row index: '{}'", parts[0]),
+                Some(line_idx + 1),
+            )
         })?;
-        let col: usize = parts[1].parse().map_err(|_| SparseError::ParseError {
-            reason: format!("invalid col index: '{}'", parts[1]),
-            path: path_str.clone(),
-            line: Some(line_idx + 1),
+        let col: usize = parts[1].parse().map_err(|_| {
+            parse_err(
+                format!("invalid col index: '{}'", parts[1]),
+                Some(line_idx + 1),
+            )
         })?;
-        let val: f64 = parts[2].parse().map_err(|_| SparseError::ParseError {
-            reason: format!("invalid value: '{}'", parts[2]),
-            path: path_str.clone(),
-            line: Some(line_idx + 1),
-        })?;
+        let val: f64 = parts[2]
+            .parse()
+            .map_err(|_| parse_err(format!("invalid value: '{}'", parts[2]), Some(line_idx + 1)))?;
 
         // Convert from 1-indexed to 0-indexed
         if row == 0 || col == 0 {
-            return Err(SparseError::ParseError {
-                reason: "Matrix Market indices are 1-based; got 0".to_string(),
-                path: path_str.clone(),
-                line: Some(line_idx + 1),
-            });
+            return Err(parse_err(
+                "Matrix Market indices are 1-based; got 0".to_string(),
+                Some(line_idx + 1),
+            ));
         }
         let row = row - 1;
         let col = col - 1;
 
         if row >= nrows || col >= ncols {
-            return Err(SparseError::ParseError {
-                reason: format!(
+            return Err(parse_err(
+                format!(
                     "index ({}, {}) out of bounds for {}x{} matrix",
                     row, col, nrows, ncols
                 ),
-                path: path_str.clone(),
-                line: Some(line_idx + 1),
-            });
+                Some(line_idx + 1),
+            ));
         }
 
         triplets.push(Triplet { row, col, val });
@@ -162,13 +163,8 @@ pub fn load_mtx(path: &Path) -> Result<SparseColMat<usize, f64>, SparseError> {
         }
     }
 
-    SparseColMat::try_new_from_triplets(nrows, ncols, &triplets).map_err(|e| {
-        SparseError::ParseError {
-            reason: format!("failed to construct sparse matrix: {:?}", e),
-            path: path_str,
-            line: None,
-        }
-    })
+    SparseColMat::try_new_from_triplets(nrows, ncols, &triplets)
+        .map_err(|e| parse_err(format!("failed to construct sparse matrix: {:?}", e), None))
 }
 
 #[cfg(test)]
@@ -199,10 +195,10 @@ mod tests {
         std::fs::write(&path, "this is not a matrix market file\n").unwrap();
         let result = load_mtx(&path);
         assert!(result.is_err());
-        match result.unwrap_err() {
-            SparseError::ParseError { .. } => {}
-            e => panic!("expected ParseError, got: {:?}", e),
-        }
+        assert!(matches!(
+            result.unwrap_err(),
+            SparseError::ParseError { .. }
+        ));
     }
 
     #[test]
@@ -217,19 +213,16 @@ mod tests {
         .unwrap();
         let result = load_mtx(&path);
         assert!(result.is_err());
-        match result.unwrap_err() {
-            SparseError::ParseError { .. } => {}
-            e => panic!("expected ParseError, got: {:?}", e),
-        }
+        assert!(matches!(
+            result.unwrap_err(),
+            SparseError::ParseError { .. }
+        ));
     }
 
     #[test]
     fn nonexistent_file_returns_io_error() {
         let result = load_mtx(Path::new("/nonexistent/path/matrix.mtx"));
         assert!(result.is_err());
-        match result.unwrap_err() {
-            SparseError::IoError { .. } => {}
-            e => panic!("expected IoError, got: {:?}", e),
-        }
+        assert!(matches!(result.unwrap_err(), SparseError::IoError { .. }));
     }
 }

@@ -9,6 +9,7 @@ use std::path::Path;
 use serde::Deserialize;
 
 use crate::error::SparseError;
+use crate::validate;
 
 /// Eigenvalue sign classification of a symmetric matrix.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, Deserialize)]
@@ -76,15 +77,17 @@ pub struct ReferenceFactorization {
 /// - Invalid JSON structure
 /// - Inconsistent data (l_entry indices out of bounds, invalid permutation)
 pub fn load_reference(path: &Path) -> Result<ReferenceFactorization, SparseError> {
+    let path_str = path.display().to_string();
+
     let content = std::fs::read_to_string(path).map_err(|e| SparseError::IoError {
         source: e.to_string(),
-        path: path.display().to_string(),
+        path: path_str.clone(),
     })?;
 
     let refdata: ReferenceFactorization =
         serde_json::from_str(&content).map_err(|e| SparseError::ParseError {
             reason: e.to_string(),
-            path: path.display().to_string(),
+            path: path_str.clone(),
             line: None,
         })?;
 
@@ -96,32 +99,21 @@ pub fn load_reference(path: &Path) -> Result<ReferenceFactorization, SparseError
                     "l_entry[{}] has col ({}) >= row ({}); must be strict lower triangle",
                     i, entry.col, entry.row
                 ),
-                path: path.display().to_string(),
+                path: path_str,
                 line: None,
             });
         }
     }
 
-    // Validate permutation: must be a valid permutation of 0..n
+    // Validate permutation using shared utility
     let n = refdata.permutation.len();
-    let mut seen = vec![false; n];
-    for (i, &p) in refdata.permutation.iter().enumerate() {
-        if p >= n {
-            return Err(SparseError::ParseError {
-                reason: format!("permutation[{}] = {} is out of bounds (n = {})", i, p, n),
-                path: path.display().to_string(),
-                line: None,
-            });
+    validate::validate_permutation(&refdata.permutation, n).map_err(|e| {
+        SparseError::ParseError {
+            reason: format!("invalid permutation: {}", e),
+            path: path_str,
+            line: None,
         }
-        if seen[p] {
-            return Err(SparseError::ParseError {
-                reason: format!("permutation has duplicate index {}", p),
-                path: path.display().to_string(),
-                line: None,
-            });
-        }
-        seen[p] = true;
-    }
+    })?;
 
     Ok(refdata)
 }

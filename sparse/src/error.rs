@@ -1,7 +1,11 @@
 use std::fmt;
 
 /// Errors that can occur during sparse solver operations.
-#[derive(Debug, Clone, PartialEq)]
+///
+/// Note: `PartialEq` is intentionally not derived because the `NumericalSingularity`
+/// variant contains `f64`, where `NaN != NaN` would cause subtle comparison bugs.
+/// Use `matches!()` for pattern-matching assertions in tests.
+#[derive(Debug, Clone)]
 pub enum SparseError {
     /// Matrix dimensions are incompatible.
     DimensionMismatch {
@@ -34,6 +38,9 @@ pub enum SparseError {
         path: String,
         line: Option<usize>,
     },
+
+    /// A named matrix was not found in the registry.
+    MatrixNotFound { name: String },
 }
 
 impl fmt::Display for SparseError {
@@ -83,27 +90,16 @@ impl fmt::Display for SparseError {
                     write!(f, "Parse error in '{}': {}", path, reason)
                 }
             }
+            Self::MatrixNotFound { name } => {
+                write!(f, "Matrix '{}' not found in registry", name)
+            }
         }
     }
 }
 
 impl std::error::Error for SparseError {}
 
-impl From<std::io::Error> for SparseError {
-    fn from(e: std::io::Error) -> Self {
-        Self::IoError {
-            source: e.to_string(),
-            path: String::new(),
-        }
-    }
-}
-
-impl From<serde_json::Error> for SparseError {
-    fn from(e: serde_json::Error) -> Self {
-        Self::ParseError {
-            reason: e.to_string(),
-            path: String::new(),
-            line: None,
-        }
-    }
-}
+// Note: blanket `From<std::io::Error>` and `From<serde_json::Error>` impls were
+// intentionally removed. They produced errors with empty `path` fields, losing
+// context. All call sites should construct `SparseError::IoError` or
+// `SparseError::ParseError` explicitly with the relevant file path.

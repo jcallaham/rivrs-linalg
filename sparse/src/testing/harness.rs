@@ -2,8 +2,9 @@
 
 use std::fmt;
 
-use faer::linalg::matmul::matmul;
-use faer::{Accum, Col, Mat, Par};
+use faer::Col;
+
+use crate::validate;
 
 use super::cases::SolverTestCase;
 use super::validator::NumericalValidator;
@@ -66,6 +67,20 @@ impl fmt::Display for TestResult {
 }
 
 /// Interface for testing solver implementations across all phases.
+///
+/// # Current limitations
+///
+/// Each method is independent and stateless — it receives a `SolverTestCase`
+/// and returns a `TestResult`. This works for the `MockSolver` (which uses
+/// reference data directly) but will need rethinking for the real solver,
+/// where `test_factor` needs symbolic analysis output and `test_solve` needs
+/// the factorization. Options for Phase 1+:
+///
+/// - Add associated types for intermediate state (analysis result, factorization)
+/// - Split into separate traits per phase
+/// - Use a builder/session pattern that accumulates state
+///
+/// The `test_roundtrip` method partially addresses this by combining all phases.
 pub trait SolverTest {
     fn test_analyze(&self, case: &SolverTestCase) -> TestResult;
     fn test_factor(&self, case: &SolverTestCase) -> TestResult;
@@ -104,17 +119,8 @@ impl SolverTest for MockSolver {
         diagnostics.push(format!("matrix: {} ({}x{})", case.name, n, n));
 
         if let Some(ref reference) = case.reference {
-            // Check permutation is a valid bijection on 0..n
-            let perm = &reference.permutation;
-            let mut seen = vec![false; n];
-            let mut valid = perm.len() == n;
-            for &p in perm {
-                if p >= n || seen[p] {
-                    valid = false;
-                    break;
-                }
-                seen[p] = true;
-            }
+            // Validate permutation using shared utility
+            let valid = validate::validate_permutation(&reference.permutation, n).is_ok();
             metrics.push(MetricResult {
                 name: "permutation_valid".to_string(),
                 value: if valid { 0.0 } else { 1.0 },
@@ -182,18 +188,7 @@ impl SolverTest for MockSolver {
 
         // Generate a known x and compute b = A*x, then check backward error
         let x_exact = Col::<f64>::from_fn(n, |i| (i + 1) as f64);
-        let a_dense = case.matrix.to_dense();
-        let x_mat = x_exact.as_mat();
-        let mut ax = Mat::<f64>::zeros(n, 1);
-        matmul(
-            ax.as_mut(),
-            Accum::Replace,
-            a_dense.as_ref(),
-            x_mat,
-            1.0,
-            Par::Seq,
-        );
-        let b = Col::from_fn(n, |i| ax[(i, 0)]);
+        let b = validate::dense_matvec(&case.matrix, &x_exact);
 
         let berr = self
             .validator
@@ -230,18 +225,7 @@ impl SolverTest for MockSolver {
 
         // Backward error check with known solution
         let x_exact = Col::<f64>::from_fn(n, |i| (i + 1) as f64);
-        let a_dense = case.matrix.to_dense();
-        let x_mat = x_exact.as_mat();
-        let mut ax = Mat::<f64>::zeros(n, 1);
-        matmul(
-            ax.as_mut(),
-            Accum::Replace,
-            a_dense.as_ref(),
-            x_mat,
-            1.0,
-            Par::Seq,
-        );
-        let b = Col::from_fn(n, |i| ax[(i, 0)]);
+        let b = validate::dense_matvec(&case.matrix, &x_exact);
         let berr = self
             .validator
             .check_backward_error(&case.matrix, &x_exact, &b);
