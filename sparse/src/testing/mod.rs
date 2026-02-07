@@ -32,5 +32,5 @@ pub use generators::{
     RandomMatrixConfig, generate_arrow, generate_banded, generate_random_symmetric,
     generate_tridiagonal,
 };
-pub use harness::{MetricResult, MockSolver, SolverTest, TestKind, TestResult};
+pub use harness::{MetricResult, MockSolver, SolverTest, TestResult};
 pub use validator::NumericalValidator;

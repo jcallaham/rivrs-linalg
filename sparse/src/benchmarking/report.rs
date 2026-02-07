@@ -7,6 +7,15 @@ use std::path::Path;
 use super::baseline::RegressionReport;
 use super::results::BenchmarkSuiteResult;
 
+/// Escape a string for CSV output by quoting if it contains commas, quotes, or newlines.
+fn csv_escape(s: &str) -> String {
+    if s.contains(',') || s.contains('"') || s.contains('\n') {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
+    }
+}
+
 /// Export benchmark results to a CSV file.
 pub fn export_csv(suite: &BenchmarkSuiteResult, path: &Path) -> Result<(), std::io::Error> {
     let mut file = std::fs::File::create(path)?;
@@ -18,13 +27,13 @@ pub fn export_csv(suite: &BenchmarkSuiteResult, path: &Path) -> Result<(), std::
         writeln!(
             file,
             "{},{},{},{},{},{},{},{},{}",
-            r.matrix_name,
+            csv_escape(&r.matrix_name),
             r.phase,
             r.mean_ns,
             r.std_dev_ns,
             r.median_ns,
-            r.iterations,
-            r.matrix_size,
+            r.iterations.map_or("".to_string(), |v| v.to_string()),
+            r.matrix_size.map_or("".to_string(), |v| v.to_string()),
             r.matrix_nnz,
             r.throughput_nnz_per_sec
                 .map_or("".to_string(), |v| format!("{}", v))
@@ -114,8 +123,8 @@ pub fn generate_regression_markdown_table(report: &RegressionReport) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::SolverPhase;
     use crate::benchmarking::baseline::{Improvement, Regression};
-    use crate::benchmarking::config::BenchmarkPhase;
     use crate::benchmarking::results::{BenchmarkResult, BenchmarkSuiteResult};
 
     fn sample_suite() -> BenchmarkSuiteResult {
@@ -123,24 +132,24 @@ mod tests {
             results: vec![
                 BenchmarkResult {
                     matrix_name: "matrix-a".to_string(),
-                    phase: BenchmarkPhase::Factor,
+                    phase: SolverPhase::Factor,
                     mean_ns: 1_234_567.0,
                     std_dev_ns: 12_345.0,
                     median_ns: 1_200_000.0,
-                    iterations: 100,
+                    iterations: Some(100),
                     throughput_nnz_per_sec: Some(1.5e6),
-                    matrix_size: 100,
+                    matrix_size: Some(100),
                     matrix_nnz: 500,
                 },
                 BenchmarkResult {
                     matrix_name: "matrix-b".to_string(),
-                    phase: BenchmarkPhase::Analyze,
+                    phase: SolverPhase::Analyze,
                     mean_ns: 500_000.0,
                     std_dev_ns: 5_000.0,
                     median_ns: 490_000.0,
-                    iterations: 200,
+                    iterations: Some(200),
                     throughput_nnz_per_sec: None,
-                    matrix_size: 50,
+                    matrix_size: Some(50),
                     matrix_nnz: 200,
                 },
             ],
@@ -165,6 +174,33 @@ mod tests {
         // Verify comma-separated column count
         assert_eq!(lines[0].split(',').count(), 9);
         assert_eq!(lines[1].split(',').count(), 9);
+    }
+
+    #[test]
+    fn csv_escapes_commas_in_names() {
+        let suite = BenchmarkSuiteResult {
+            results: vec![BenchmarkResult {
+                matrix_name: "matrix,with,commas".to_string(),
+                phase: SolverPhase::Factor,
+                mean_ns: 1_000.0,
+                std_dev_ns: 10.0,
+                median_ns: 1_000.0,
+                iterations: None,
+                throughput_nnz_per_sec: None,
+                matrix_size: None,
+                matrix_nnz: 100,
+            }],
+            peak_rss_kb: None,
+            skipped: vec![],
+            timestamp: "test".to_string(),
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("results.csv");
+        export_csv(&suite, &path).unwrap();
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        let lines: Vec<&str> = content.lines().collect();
+        assert!(lines[1].starts_with("\"matrix,with,commas\""));
     }
 
     #[test]
@@ -200,14 +236,14 @@ mod tests {
             baseline_name: "main".to_string(),
             regressions: vec![Regression {
                 matrix_name: "matrix-a".to_string(),
-                phase: BenchmarkPhase::Factor,
+                phase: SolverPhase::Factor,
                 baseline_mean_ns: 1_000_000.0,
                 current_mean_ns: 1_200_000.0,
                 change_pct: 20.0,
             }],
             improvements: vec![Improvement {
                 matrix_name: "matrix-b".to_string(),
-                phase: BenchmarkPhase::Analyze,
+                phase: SolverPhase::Analyze,
                 baseline_mean_ns: 500_000.0,
                 current_mean_ns: 400_000.0,
                 change_pct: -20.0,

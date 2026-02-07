@@ -6,8 +6,8 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use super::config::BenchmarkPhase;
 use super::results::BenchmarkSuiteResult;
+use crate::SolverPhase;
 
 /// A saved suite result used for regression detection.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -21,7 +21,7 @@ pub struct Baseline {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Regression {
     pub matrix_name: String,
-    pub phase: BenchmarkPhase,
+    pub phase: SolverPhase,
     pub baseline_mean_ns: f64,
     pub current_mean_ns: f64,
     pub change_pct: f64,
@@ -45,7 +45,7 @@ impl fmt::Display for Regression {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Improvement {
     pub matrix_name: String,
-    pub phase: BenchmarkPhase,
+    pub phase: SolverPhase,
     pub baseline_mean_ns: f64,
     pub current_mean_ns: f64,
     pub change_pct: f64,
@@ -199,16 +199,16 @@ mod tests {
     use super::*;
     use crate::benchmarking::results::BenchmarkResult;
 
-    fn make_result(matrix: &str, phase: BenchmarkPhase, mean_ns: f64) -> BenchmarkResult {
+    fn make_result(matrix: &str, phase: SolverPhase, mean_ns: f64) -> BenchmarkResult {
         BenchmarkResult {
             matrix_name: matrix.to_string(),
             phase,
             mean_ns,
             std_dev_ns: mean_ns * 0.01,
             median_ns: mean_ns,
-            iterations: 100,
+            iterations: Some(100),
             throughput_nnz_per_sec: None,
-            matrix_size: 100,
+            matrix_size: Some(100),
             matrix_nnz: 500,
         }
     }
@@ -226,7 +226,7 @@ mod tests {
     fn save_and_load_baseline_roundtrip() {
         let suite = make_suite(vec![make_result(
             "matrix-a",
-            BenchmarkPhase::Factor,
+            SolverPhase::Factor,
             1_000_000.0,
         )]);
         let dir = tempfile::tempdir().unwrap();
@@ -241,7 +241,7 @@ mod tests {
     fn detect_regression() {
         let baseline_suite = make_suite(vec![make_result(
             "matrix-a",
-            BenchmarkPhase::Factor,
+            SolverPhase::Factor,
             1_000_000.0,
         )]);
         let baseline = Baseline {
@@ -253,7 +253,7 @@ mod tests {
         // 10% slower → regression at 5% threshold
         let current = make_suite(vec![make_result(
             "matrix-a",
-            BenchmarkPhase::Factor,
+            SolverPhase::Factor,
             1_100_000.0,
         )]);
 
@@ -267,7 +267,7 @@ mod tests {
     fn detect_improvement() {
         let baseline_suite = make_suite(vec![make_result(
             "matrix-a",
-            BenchmarkPhase::Factor,
+            SolverPhase::Factor,
             1_000_000.0,
         )]);
         let baseline = Baseline {
@@ -279,7 +279,7 @@ mod tests {
         // 20% faster → improvement
         let current = make_suite(vec![make_result(
             "matrix-a",
-            BenchmarkPhase::Factor,
+            SolverPhase::Factor,
             800_000.0,
         )]);
 
@@ -293,7 +293,7 @@ mod tests {
     fn detect_unchanged() {
         let baseline_suite = make_suite(vec![make_result(
             "matrix-a",
-            BenchmarkPhase::Factor,
+            SolverPhase::Factor,
             1_000_000.0,
         )]);
         let baseline = Baseline {
@@ -305,7 +305,7 @@ mod tests {
         // 2% change → within 5% threshold → unchanged
         let current = make_suite(vec![make_result(
             "matrix-a",
-            BenchmarkPhase::Factor,
+            SolverPhase::Factor,
             1_020_000.0,
         )]);
 

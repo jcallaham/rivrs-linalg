@@ -33,10 +33,6 @@ tempfile = "3"
 rivrs-sparse = { path = ".", features = ["test-util"] }
 
 [[bench]]
-name = "matrix_loading"
-harness = false
-
-[[bench]]
 name = "solver_benchmarks"
 harness = false
 

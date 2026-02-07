@@ -373,14 +373,19 @@ pub fn arbitrary_sparse_symmetric() -> impl Strategy<Value = SparseMatrix>;
 
 **Benchmark Suite Design:**
 
+> **Note:** The notional API below was the original design sketch. The actual
+> implementation uses a `Benchmarkable` trait + Criterion integration.
+> `comparison_solvers` and `parallel_configs` are deferred until the solver
+> supports parallelism and comparison benchmarks become meaningful (Phases 2-8).
+
 ```rust
-// sparse-ldlt-bench/src/lib.rs
+// sparse-ldlt-bench/src/lib.rs (notional — see src/benchmarking/ for actual API)
 
 pub struct BenchmarkConfig {
     pub matrices: Vec<String>,
     pub operations: Vec<Operation>,
-    pub comparison_solvers: Vec<Solver>,
-    pub parallel_configs: Vec<ParallelConfig>,
+    pub comparison_solvers: Vec<Solver>,      // Deferred to Phases 2-8
+    pub parallel_configs: Vec<ParallelConfig>, // Deferred to parallel implementation
 }
 
 pub enum Operation {
@@ -426,7 +431,7 @@ pub fn generate_report(results: &BenchmarkResults) -> Report;
    - Scaling with number of threads
    - Memory usage vs matrix size
 
-3. **Comparison Benchmarks:**
+3. **Comparison Benchmarks** *(deferred to Phases 2-8)*:
    - SparseLDLT vs SPRAL on same matrices
    - Sequential vs parallel performance
    - Different ordering strategies

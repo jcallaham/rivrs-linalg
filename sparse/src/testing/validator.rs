@@ -7,7 +7,8 @@ use crate::io::reference::{Inertia, ReferenceFactorization};
 use crate::validate;
 
 use super::cases::SolverTestCase;
-use super::harness::{MetricResult, TestKind, TestResult};
+use super::harness::{MetricResult, TestResult};
+use crate::SolverPhase;
 
 /// Configurable validator for factorization quality.
 ///
@@ -105,7 +106,7 @@ impl NumericalValidator {
 
         TestResult {
             passed,
-            test_kind: TestKind::Factor,
+            phase: SolverPhase::Factor,
             matrix_name: case.name.clone(),
             metrics,
             diagnostics,

@@ -4,6 +4,8 @@ use std::any::Any;
 
 use faer::sparse::SparseColMat;
 
+use crate::SolverPhase;
+
 /// Interface for benchmarking solver phases.
 ///
 /// Each method returns `None` if the phase is not yet implemented,
@@ -11,6 +13,16 @@ use faer::sparse::SparseColMat;
 /// Opaque `Box<dyn Any>` return types prevent the compiler from optimizing
 /// away computation and allow passing intermediate state between phases.
 pub trait Benchmarkable {
+    /// Check whether the given phase is supported without running it.
+    ///
+    /// Default implementation returns `true` for all phases. Override to
+    /// indicate which phases are available without incurring the cost of
+    /// a full execution.
+    fn supports_phase(&self, phase: SolverPhase) -> bool {
+        let _ = phase;
+        true
+    }
+
     /// Run symbolic analysis on the matrix.
     fn bench_analyze(&self, matrix: &SparseColMat<usize, f64>) -> Option<Box<dyn Any>>;
 
@@ -59,8 +71,8 @@ impl MockBenchmarkable {
         }
     }
 
-    /// Create a mock with specific phases disabled for testing skip behavior.
-    pub fn with_disabled_phases(analyze: bool, factor: bool, solve: bool) -> Self {
+    /// Create a mock with specific phases enabled or disabled for testing skip behavior.
+    pub fn with_phases_enabled(analyze: bool, factor: bool, solve: bool) -> Self {
         Self {
             analyze_enabled: analyze,
             factor_enabled: factor,
@@ -76,6 +88,17 @@ impl Default for MockBenchmarkable {
 }
 
 impl Benchmarkable for MockBenchmarkable {
+    fn supports_phase(&self, phase: SolverPhase) -> bool {
+        match phase {
+            SolverPhase::Analyze => self.analyze_enabled,
+            SolverPhase::Factor => self.factor_enabled,
+            SolverPhase::Solve => self.solve_enabled,
+            SolverPhase::Roundtrip => {
+                self.analyze_enabled && self.factor_enabled && self.solve_enabled
+            }
+        }
+    }
+
     fn bench_analyze(&self, matrix: &SparseColMat<usize, f64>) -> Option<Box<dyn Any>> {
         if !self.analyze_enabled {
             return None;
@@ -140,7 +163,7 @@ mod tests {
     fn mock_disabled_phase_returns_none() {
         let cases = load_test_cases(&TestCaseFilter::hand_constructed()).unwrap();
         let case = &cases[0];
-        let mock = MockBenchmarkable::with_disabled_phases(true, false, true);
+        let mock = MockBenchmarkable::with_phases_enabled(true, false, true);
 
         assert!(mock.bench_analyze(&case.matrix).is_some());
         assert!(mock.bench_factor(&case.matrix, None).is_none());
@@ -163,7 +186,7 @@ mod tests {
     fn mock_roundtrip_returns_none_when_phase_disabled() {
         let cases = load_test_cases(&TestCaseFilter::hand_constructed()).unwrap();
         let case = &cases[0];
-        let mock = MockBenchmarkable::with_disabled_phases(true, false, true);
+        let mock = MockBenchmarkable::with_phases_enabled(true, false, true);
         let n = case.matrix.nrows();
         let rhs: Vec<f64> = vec![1.0; n];
 
@@ -172,5 +195,14 @@ mod tests {
             result.is_none(),
             "roundtrip should return None if factor disabled"
         );
+    }
+
+    #[test]
+    fn supports_phase_reflects_config() {
+        let mock = MockBenchmarkable::with_phases_enabled(true, false, true);
+        assert!(mock.supports_phase(SolverPhase::Analyze));
+        assert!(!mock.supports_phase(SolverPhase::Factor));
+        assert!(mock.supports_phase(SolverPhase::Solve));
+        assert!(!mock.supports_phase(SolverPhase::Roundtrip));
     }
 }

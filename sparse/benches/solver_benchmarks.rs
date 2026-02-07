@@ -6,34 +6,23 @@
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
+use rivrs_sparse::SolverPhase;
 use rivrs_sparse::benchmarking::traits::Benchmarkable;
 use rivrs_sparse::benchmarking::{
-    BenchmarkConfig, BenchmarkPhase, MockBenchmarkable, SkippedBenchmark, read_peak_rss_kb,
+    BenchmarkConfig, MockBenchmarkable, SkippedBenchmark, read_peak_rss_kb,
 };
-use rivrs_sparse::testing::{TestCaseFilter, load_test_cases};
+use rivrs_sparse::testing::{SolverTestCase, TestCaseFilter, load_test_cases};
 
 fn run_component_benchmarks(
     c: &mut Criterion,
     config: &BenchmarkConfig,
     solver: &dyn Benchmarkable,
+    cases: &[SolverTestCase],
 ) {
-    let cases = match load_test_cases(&config.filter) {
-        Ok(cases) => cases,
-        Err(e) => {
-            eprintln!("WARNING: Failed to load test cases: {}", e);
-            return;
-        }
-    };
-
-    if cases.is_empty() {
-        eprintln!("WARNING: No test cases matched the filter");
-        return;
-    }
-
     let mut skipped: Vec<SkippedBenchmark> = Vec::new();
 
     for phase in &config.phases {
-        if *phase == BenchmarkPhase::Roundtrip {
+        if *phase == SolverPhase::Roundtrip {
             continue; // Roundtrip handled by run_e2e_benchmarks
         }
 
@@ -50,22 +39,11 @@ fn run_component_benchmarks(
             group.warm_up_time(warm_up_time);
         }
 
-        for case in &cases {
+        for case in cases {
             let nnz = case.properties.nnz;
             group.throughput(Throughput::Elements(nnz as u64));
 
-            // Check if the phase is implemented by the solver
-            let phase_available = match phase {
-                BenchmarkPhase::Analyze => solver.bench_analyze(&case.matrix).is_some(),
-                BenchmarkPhase::Factor => solver.bench_factor(&case.matrix, None).is_some(),
-                BenchmarkPhase::Solve => {
-                    let rhs = vec![1.0; case.matrix.nrows()];
-                    solver.bench_solve(&case.matrix, None, &rhs).is_some()
-                }
-                BenchmarkPhase::Roundtrip => unreachable!(),
-            };
-
-            if !phase_available {
+            if !solver.supports_phase(*phase) {
                 skipped.push(SkippedBenchmark {
                     matrix_name: case.name.clone(),
                     phase: *phase,
@@ -76,20 +54,20 @@ fn run_component_benchmarks(
 
             group.bench_with_input(BenchmarkId::from_parameter(&case.name), &case, |b, case| {
                 match phase {
-                    BenchmarkPhase::Analyze => {
+                    SolverPhase::Analyze => {
                         b.iter(|| solver.bench_analyze(&case.matrix));
                     }
-                    BenchmarkPhase::Factor => {
+                    SolverPhase::Factor => {
                         let analysis = solver.bench_analyze(&case.matrix);
                         b.iter(|| solver.bench_factor(&case.matrix, analysis.as_deref()));
                     }
-                    BenchmarkPhase::Solve => {
+                    SolverPhase::Solve => {
                         let analysis = solver.bench_analyze(&case.matrix);
                         let factorization = solver.bench_factor(&case.matrix, analysis.as_deref());
                         let rhs: Vec<f64> = vec![1.0; case.matrix.nrows()];
                         b.iter(|| solver.bench_solve(&case.matrix, factorization.as_deref(), &rhs));
                     }
-                    BenchmarkPhase::Roundtrip => unreachable!(),
+                    SolverPhase::Roundtrip => unreachable!(),
                 }
             });
         }
@@ -104,20 +82,12 @@ fn run_component_benchmarks(
     }
 }
 
-fn run_e2e_benchmarks(c: &mut Criterion, config: &BenchmarkConfig, solver: &dyn Benchmarkable) {
-    let cases = match load_test_cases(&config.filter) {
-        Ok(cases) => cases,
-        Err(e) => {
-            eprintln!("WARNING: Failed to load test cases: {}", e);
-            return;
-        }
-    };
-
-    if cases.is_empty() {
-        eprintln!("WARNING: No test cases matched the filter");
-        return;
-    }
-
+fn run_e2e_benchmarks(
+    c: &mut Criterion,
+    solver: &dyn Benchmarkable,
+    cases: &[SolverTestCase],
+    config: &BenchmarkConfig,
+) {
     let mut group = c.benchmark_group("ssids/roundtrip");
 
     if let Some(sample_size) = config.sample_size {
@@ -130,15 +100,11 @@ fn run_e2e_benchmarks(c: &mut Criterion, config: &BenchmarkConfig, solver: &dyn 
         group.warm_up_time(warm_up_time);
     }
 
-    for case in &cases {
+    for case in cases {
         let nnz = case.properties.nnz;
         group.throughput(Throughput::Elements(nnz as u64));
 
-        let rhs: Vec<f64> = vec![1.0; case.matrix.nrows()];
-
-        // Check if roundtrip is available
-        let available = solver.bench_roundtrip(&case.matrix, &rhs).is_some();
-        if !available {
+        if !solver.supports_phase(SolverPhase::Roundtrip) {
             eprintln!("  SKIP {}/roundtrip: phase not implemented", case.name);
             continue;
         }
@@ -156,7 +122,21 @@ fn bench_components(c: &mut Criterion) {
 
     let config = BenchmarkConfig::default_components();
     let solver = MockBenchmarkable::new();
-    run_component_benchmarks(c, &config, &solver);
+
+    let cases = match load_test_cases(&config.filter) {
+        Ok(cases) => cases,
+        Err(e) => {
+            eprintln!("WARNING: Failed to load test cases: {}", e);
+            return;
+        }
+    };
+
+    if cases.is_empty() {
+        eprintln!("WARNING: No test cases matched the filter");
+        return;
+    }
+
+    run_component_benchmarks(c, &config, &solver, &cases);
 
     let rss_after = read_peak_rss_kb();
     if let (Some(before), Some(after)) = (rss_before, rss_after) {
@@ -172,15 +152,43 @@ fn bench_components(c: &mut Criterion) {
 }
 
 fn bench_e2e(c: &mut Criterion) {
-    let config = BenchmarkConfig::default_components().with_phases(vec![BenchmarkPhase::Roundtrip]);
+    let config = BenchmarkConfig::default_components().with_phases(vec![SolverPhase::Roundtrip]);
     let solver = MockBenchmarkable::new();
-    run_e2e_benchmarks(c, &config, &solver);
+
+    let cases = match load_test_cases(&config.filter) {
+        Ok(cases) => cases,
+        Err(e) => {
+            eprintln!("WARNING: Failed to load test cases: {}", e);
+            return;
+        }
+    };
+
+    if cases.is_empty() {
+        eprintln!("WARNING: No test cases matched the filter");
+        return;
+    }
+
+    run_e2e_benchmarks(c, &solver, &cases, &config);
 }
 
 fn bench_ci_subset(c: &mut Criterion) {
     let config = BenchmarkConfig::default_components().with_filter(TestCaseFilter::ci_subset());
     let solver = MockBenchmarkable::new();
-    run_component_benchmarks(c, &config, &solver);
+
+    let cases = match load_test_cases(&config.filter) {
+        Ok(cases) => cases,
+        Err(e) => {
+            eprintln!("WARNING: Failed to load test cases: {}", e);
+            return;
+        }
+    };
+
+    if cases.is_empty() {
+        eprintln!("WARNING: No test cases matched the filter");
+        return;
+    }
+
+    run_component_benchmarks(c, &config, &solver, &cases);
 }
 
 criterion_group!(component_benches, bench_components);

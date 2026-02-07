@@ -5,19 +5,19 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use super::config::BenchmarkPhase;
+use crate::SolverPhase;
 
 /// A single measurement outcome from one (matrix, phase) pair.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BenchmarkResult {
     pub matrix_name: String,
-    pub phase: BenchmarkPhase,
+    pub phase: SolverPhase,
     pub mean_ns: f64,
     pub std_dev_ns: f64,
     pub median_ns: f64,
-    pub iterations: u64,
+    pub iterations: Option<u64>,
     pub throughput_nnz_per_sec: Option<f64>,
-    pub matrix_size: usize,
+    pub matrix_size: Option<usize>,
     pub matrix_nnz: usize,
 }
 
@@ -27,9 +27,12 @@ impl fmt::Display for BenchmarkResult {
         let stddev_ms = self.std_dev_ns / 1_000_000.0;
         write!(
             f,
-            "{:<20} {:<10} {:>10.3} ms (+/- {:.3} ms)  n={:<6} nnz={}",
-            self.matrix_name, self.phase, mean_ms, stddev_ms, self.matrix_size, self.matrix_nnz
+            "{:<20} {:<10} {:>10.3} ms (+/- {:.3} ms)  nnz={}",
+            self.matrix_name, self.phase, mean_ms, stddev_ms, self.matrix_nnz
         )?;
+        if let Some(n) = self.matrix_size {
+            write!(f, "  n={}", n)?;
+        }
         if let Some(tp) = self.throughput_nnz_per_sec {
             write!(f, "  {:.2e} nnz/s", tp)?;
         }
@@ -70,7 +73,7 @@ impl fmt::Display for BenchmarkSuiteResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkippedBenchmark {
     pub matrix_name: String,
-    pub phase: BenchmarkPhase,
+    pub phase: SolverPhase,
     pub reason: String,
 }
 
@@ -104,6 +107,7 @@ struct CriterionBenchmark {
 #[derive(Deserialize)]
 enum CriterionThroughput {
     Elements(u64),
+    // Variant required for serde deserialization of Criterion's throughput enum.
     #[allow(dead_code)]
     Bytes(u64),
 }
@@ -123,7 +127,7 @@ pub fn collect_results(
             results,
             peak_rss_kb,
             skipped: vec![],
-            timestamp: now_iso8601(),
+            timestamp: now_epoch_string(),
         });
     }
 
@@ -152,11 +156,25 @@ pub fn collect_results(
 
             let estimates: CriterionEstimates = match read_json(&estimates_path) {
                 Ok(e) => e,
-                Err(_) => continue,
+                Err(e) => {
+                    eprintln!(
+                        "WARNING: failed to parse {}: {}",
+                        estimates_path.display(),
+                        e
+                    );
+                    continue;
+                }
             };
             let benchmark: CriterionBenchmark = match read_json(&benchmark_path) {
                 Ok(b) => b,
-                Err(_) => continue,
+                Err(e) => {
+                    eprintln!(
+                        "WARNING: failed to parse {}: {}",
+                        benchmark_path.display(),
+                        e
+                    );
+                    continue;
+                }
             };
 
             let phase = match parse_phase_from_group_id(&benchmark.group_id) {
@@ -185,18 +203,18 @@ pub fn collect_results(
                 mean_ns: estimates.mean.point_estimate,
                 std_dev_ns: estimates.std_dev.point_estimate,
                 median_ns: estimates.median.point_estimate,
-                iterations: 0, // Not available from estimates.json
+                iterations: None,
                 throughput_nnz_per_sec,
-                matrix_size: 0, // Not available from Criterion output
+                matrix_size: None,
                 matrix_nnz: nnz,
             });
         }
     }
 
+    // Sort by pipeline order (Analyze < Factor < Solve < Roundtrip), then by matrix name.
     results.sort_by(|a, b| {
         a.phase
-            .to_string()
-            .cmp(&b.phase.to_string())
+            .cmp(&b.phase)
             .then(a.matrix_name.cmp(&b.matrix_name))
     });
 
@@ -204,18 +222,18 @@ pub fn collect_results(
         results,
         peak_rss_kb,
         skipped: vec![],
-        timestamp: now_iso8601(),
+        timestamp: now_epoch_string(),
     })
 }
 
-fn parse_phase_from_group_id(group_id: &str) -> Option<BenchmarkPhase> {
+fn parse_phase_from_group_id(group_id: &str) -> Option<SolverPhase> {
     // group_id is like "ssids/analyze" or "ssids/roundtrip"
     let phase_str = group_id.rsplit('/').next()?;
     match phase_str {
-        "analyze" => Some(BenchmarkPhase::Analyze),
-        "factor" => Some(BenchmarkPhase::Factor),
-        "solve" => Some(BenchmarkPhase::Solve),
-        "roundtrip" => Some(BenchmarkPhase::Roundtrip),
+        "analyze" => Some(SolverPhase::Analyze),
+        "factor" => Some(SolverPhase::Factor),
+        "solve" => Some(SolverPhase::Solve),
+        "roundtrip" => Some(SolverPhase::Roundtrip),
         _ => None,
     }
 }
@@ -225,8 +243,7 @@ fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, std::io::
     serde_json::from_str(&content).map_err(std::io::Error::other)
 }
 
-fn now_iso8601() -> String {
-    // Simple timestamp without external crate
+fn now_epoch_string() -> String {
     let duration = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
@@ -240,13 +257,13 @@ mod tests {
     fn sample_result() -> BenchmarkResult {
         BenchmarkResult {
             matrix_name: "test-matrix".to_string(),
-            phase: BenchmarkPhase::Factor,
+            phase: SolverPhase::Factor,
             mean_ns: 1_234_567.0,
             std_dev_ns: 12_345.0,
             median_ns: 1_200_000.0,
-            iterations: 100,
+            iterations: Some(100),
             throughput_nnz_per_sec: Some(1.5e6),
-            matrix_size: 100,
+            matrix_size: Some(100),
             matrix_nnz: 500,
         }
     }
@@ -257,7 +274,7 @@ mod tests {
             peak_rss_kb: Some(65536),
             skipped: vec![SkippedBenchmark {
                 matrix_name: "missing-matrix".to_string(),
-                phase: BenchmarkPhase::Analyze,
+                phase: SolverPhase::Analyze,
                 reason: "matrix file not found".to_string(),
             }],
             timestamp: "2026-02-07T12:00:00Z".to_string(),
@@ -270,7 +287,7 @@ mod tests {
         let json = serde_json::to_string(&result).unwrap();
         let back: BenchmarkResult = serde_json::from_str(&json).unwrap();
         assert_eq!(back.matrix_name, "test-matrix");
-        assert_eq!(back.phase, BenchmarkPhase::Factor);
+        assert_eq!(back.phase, SolverPhase::Factor);
         assert!((back.mean_ns - 1_234_567.0).abs() < f64::EPSILON);
     }
 
@@ -311,7 +328,7 @@ mod tests {
     fn skipped_display() {
         let skip = SkippedBenchmark {
             matrix_name: "big-matrix".to_string(),
-            phase: BenchmarkPhase::Solve,
+            phase: SolverPhase::Solve,
             reason: "timeout exceeded".to_string(),
         };
         let s = format!("{}", skip);
