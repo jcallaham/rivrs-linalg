@@ -1,5 +1,56 @@
 # SSIDS Development Log
 
+## Phase 1.3: Continuous Integration Setup
+
+**Status**: Complete
+**Branch**: `007-ci-setup`
+**Date**: 2026-02-07
+
+### What Was Built
+
+Added benchmark compilation verification to the existing CI pipeline. Gap analysis
+found that 8 of 10 spec requirements (FR-001 through FR-010) were already satisfied
+by the CI configuration established in Phase 0.4.
+
+**CI change** (`.github/workflows/ci.yml`):
+- Added `bench-sparse` job — runs `cargo bench --no-run` on stable toolchain with
+  `Swatinem/rust-cache@v2`, following the same structure as existing sparse domain jobs
+  (checkout → toolchain → cache → run). Compiles the `solver_benchmarks` criterion
+  binary without executing benchmarks.
+
+**Sparse domain CI jobs after Phase 1.3**:
+- `test-sparse` — MSRV (1.87) + stable matrix, `cargo test --all-targets`
+- `lint-sparse` — `cargo fmt --check` + `cargo clippy -- -D warnings`
+- `doc-sparse` — `cargo doc --no-deps` with `RUSTDOCFLAGS: -D warnings`
+- `bench-sparse` — `cargo bench --no-run` (NEW)
+
+### Key Decisions
+
+1. **Minimal scope**: Gap analysis showed most CI requirements were already met.
+   Rather than over-engineering, only the missing benchmark compilation check was added.
+
+2. **Stable-only for benchmarks**: No MSRV matrix for bench-sparse. Benchmarks are a
+   development tool; if they compile on stable, MSRV adds no value.
+
+3. **No path filtering**: Considered `dorny/paths-filter` for monorepo efficiency but
+   deferred — two domains don't justify the complexity, and GitHub required checks
+   interact poorly with path-filtered jobs.
+
+4. **Feature-gated coverage via dev-dependency**: The self-referencing
+   `rivrs-sparse = { path = ".", features = ["test-util"] }` dev-dependency already
+   activates `test-util` during `cargo test --all-targets`. No separate feature-flag
+   CI job needed.
+
+5. **SPRAL comparison deferred**: Per Phase 0.3 decision, SPRAL is not built or
+   invoked in CI. Will be added in Phases 2-8 when the solver can process SuiteSparse
+   matrices.
+
+### Issues Encountered
+
+- None. The implementation was a straightforward additive change (~8 lines of YAML).
+
+---
+
 ## Phase 1.2: Benchmarking Framework
 
 **Status**: Complete
