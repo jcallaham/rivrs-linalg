@@ -86,3 +86,12 @@ jobs:
       - run: cd sparse && cargo doc --no-deps
         env:
           RUSTDOCFLAGS: -D warnings
+
+  bench-sparse:
+    name: Sparse benchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cd sparse && cargo bench --no-run

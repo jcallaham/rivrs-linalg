@@ -165,6 +165,7 @@ Preferences (can be violated if needed)
 - Filesystem (test-data/ directory with .mtx and .json files, metadata.json registry)
 - Rust 1.87+ (edition 2024) + faer 0.22, criterion 0.5, serde/serde_json (existing) (006-benchmarking-framework)
 - JSON files for baselines (`target/benchmarks/baselines/`), CSV for exports (006-benchmarking-framework)
+- YAML (GitHub Actions workflow) + Rust 1.87+ (edition 2024) + GitHub Actions (`actions/checkout@v4`, `dtolnay/rust-toolchain@master`, `Swatinem/rust-cache@v2`) (007-ci-setup)
 
 ## Testing Strategy
 
@@ -182,4 +183,5 @@ Test infrastructure (Phase 0.5):
 - Random matrix generators (PD and indefinite) behind `test-util` feature
 
 ## Recent Changes
+- 007-ci-setup: Added YAML (GitHub Actions workflow) + Rust 1.87+ (edition 2024) + GitHub Actions (`actions/checkout@v4`, `dtolnay/rust-toolchain@master`, `Swatinem/rust-cache@v2`)
 - 006-benchmarking-framework: Added Rust 1.87+ (edition 2024) + faer 0.22, criterion 0.5, serde/serde_json (existing)

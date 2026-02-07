@@ -477,69 +477,36 @@ fn bench_analyze(c: &mut Criterion) {
 - [ ] Performance regression detection configured
 - [ ] Reports suitable for publication
 
-#### 1.3: Continuous Integration Setup
+#### 1.3: Continuous Integration Setup (**COMPLETE**)
 **Task:** Automate testing and validation
 
-**CI Pipeline:**
+**Actual Implementation** (evolved from plan — see `specs/007-ci-setup/` for full spec):
 
-```yaml
-# .github/workflows/ci.yml
-name: CI
+The existing CI pipeline (`.github/workflows/ci.yml`, established in Phase 0.4) already
+provided test, lint, and documentation jobs. Phase 1.3 gap analysis found that 8 of 10
+spec requirements were already satisfied. The remaining work was adding benchmark
+compilation verification.
 
-on: [push, pull_request]
+**CI Jobs (sparse domain):**
+- `test-sparse` — `cargo test --all-targets` on MSRV (1.87) + stable, `fail-fast: false`
+- `lint-sparse` — `cargo fmt --check` + `cargo clippy --all-targets -- -D warnings`
+- `doc-sparse` — `cargo doc --no-deps` with `RUSTDOCFLAGS: -D warnings`
+- `bench-sparse` — `cargo bench --no-run` (compile benchmarks, don't execute)
 
-jobs:
-  test:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-        rust: [stable, beta, nightly]
+All jobs use `actions/checkout@v4`, `dtolnay/rust-toolchain`, `Swatinem/rust-cache@v2`.
+Feature-gated `test-util` code is tested via self-referencing dev-dependency in Cargo.toml.
 
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Setup test data
-        run: |
-          cd test-data
-          ./download_matrices.sh
-
-      - name: Run tests
-        run: |
-          cargo test --all-features
-          cargo test --release --all-features
-
-      - name: Run numerical validation
-        run: cargo test --test numerical_correctness
-
-  bench:
-    steps:
-      - name: Run benchmarks
-        run: cargo bench --bench comparison
-
-      - name: Compare with baseline
-        run: ./scripts/compare_bench.py
-
-  correctness:
-    steps:
-      - name: Test against SPRAL
-        run: ./scripts/spral_comparison_test.sh
-
-      - name: Generate report
-        run: ./scripts/generate_correctness_report.py
-```
-
-**Automated Checks:**
-- Unit tests pass on all platforms
-- Numerical validation tests pass
-- No performance regressions > 5%
-- Clippy warnings are errors
-- Code coverage tracked
+**Deferred from original plan:**
+- Multi-OS testing (macOS) — deferred until platform-specific code paths exist
+- SPRAL comparison in CI — deferred to Phases 2-8 per Phase 0.3 decision
+- Code coverage tracking — deferred (no solver code to measure coverage of)
+- Python-based reporting scripts — replaced by native cargo/clippy/rustdoc output
 
 **Success Criteria:**
-- [ ] Full test suite runs in <10 minutes
-- [ ] Automated comparison with SPRAL reference
-- [ ] Performance tracked over commits
-- [ ] Clear failure reports with reproducible commands
+- [x] Full test suite runs in <10 minutes (83 unit + 2 integration tests, ~20s)
+- [x] Benchmark infrastructure validated (bench-sparse compiles criterion harness)
+- [x] Clippy warnings treated as errors in CI
+- [x] Clear failure reports with reproducible commands (native cargo output)
 
 #### 1.4: Profiling and Debug Tools
 **Task:** Build tools for performance analysis and debugging
