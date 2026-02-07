@@ -163,6 +163,8 @@ Preferences (can be violated if needed)
 - approx (test comparisons, dev dependency)
 - criterion (benchmarking, dev dependency)
 - Filesystem (test-data/ directory with .mtx and .json files, metadata.json registry)
+- Rust 1.87+ (edition 2024) + faer 0.22, criterion 0.5, serde/serde_json (existing) (006-benchmarking-framework)
+- JSON files for baselines (`target/benchmarks/baselines/`), CSV for exports (006-benchmarking-framework)
 
 ## Testing Strategy
 
@@ -178,3 +180,6 @@ Test infrastructure (Phase 0.5):
 - `NumericalValidator` with configurable tolerances
 - `TestCaseFilter` for composable test case selection
 - Random matrix generators (PD and indefinite) behind `test-util` feature
+
+## Recent Changes
+- 006-benchmarking-framework: Added Rust 1.87+ (edition 2024) + faer 0.22, criterion 0.5, serde/serde_json (existing)

@@ -1,5 +1,88 @@
 # SSIDS Development Log
 
+## Phase 1.2: Benchmarking Framework
+
+**Status**: Complete
+**Branch**: `006-benchmarking-framework`
+**Date**: 2026-02-07
+
+### What Was Built
+
+Criterion-based benchmarking framework for measuring solver phase performance,
+gated behind the existing `test-util` Cargo feature flag.
+
+**Benchmarking module** (`src/benchmarking/`, feature-gated behind `test-util`):
+- `config.rs` — `BenchmarkPhase` enum (Analyze, Factor, Solve, Roundtrip) with
+  Display and serde support; `BenchmarkConfig` struct with builder methods for
+  filter, phases, sample_size, measurement_time, warm_up_time, timeout_per_matrix
+- `traits.rs` — `Benchmarkable` trait with four methods (`bench_analyze`,
+  `bench_factor`, `bench_solve`, `bench_roundtrip` with default chained impl);
+  `MockBenchmarkable` with configurable phase enable/disable for harness testing
+- `results.rs` — `BenchmarkResult`, `BenchmarkSuiteResult`, `SkippedBenchmark`
+  structs with serde and Display; `collect_results()` function that parses
+  Criterion's `estimates.json` and `benchmark.json` output files
+- `baseline.rs` — `Baseline`, `Regression`, `Improvement`, `RegressionReport`
+  structs; `save_baseline()`, `load_baseline()`, `detect_regressions()` functions
+  with configurable threshold percentage
+- `report.rs` — `export_csv()`, `export_json()`, `generate_markdown_table()`,
+  `generate_regression_markdown_table()` for result export and reporting
+- `rss.rs` — `read_peak_rss_kb()` reading VmHWM from `/proc/self/status`
+  (Linux only, returns None on other platforms)
+- `mod.rs` — Module root with public re-exports
+
+**Benchmark binary** (`benches/solver_benchmarks.rs`):
+- `run_component_benchmarks()` — One `BenchmarkGroup` per phase (ssids/analyze,
+  ssids/factor, ssids/solve), parameterized by matrix name via `BenchmarkId`,
+  with `Throughput::Elements(nnz)` per benchmark
+- `run_e2e_benchmarks()` — Single group (ssids/roundtrip) for full pipeline
+- Three `criterion_group!` registrations: component, e2e, ci_subset
+- Peak RSS measurement before/after benchmark suite, printed to stderr
+- Graceful skip for unimplemented phases and missing matrices
+
+**Cargo.toml changes**:
+- Added `[[bench]] name = "solver_benchmarks" harness = false`
+- Added `tempfile = "3"` dev-dependency for baseline tests
+
+**Tests**: 80 total (78 unit + 2 integration), all passing, 0 clippy warnings
+
+### Key Decisions
+
+1. **Separate `Benchmarkable` trait**: Distinct from `SolverTest` — benchmarking
+   needs opaque `Box<dyn Any>` returns (to prevent optimizing away computation)
+   while testing needs structured `TestResult` with correctness metrics.
+
+2. **`Option` return for unimplemented phases**: `None` signals the harness to
+   skip rather than fail, supporting incremental solver development where only
+   some phases are implemented at any time.
+
+3. **Whole-run RSS measurement**: VmHWM from `/proc/self/status` measured once
+   per suite (before/after delta). Per-phase RSS deferred to Phase 1.4 — would
+   require `/proc/self/clear_refs` writes and complicates measurement.
+
+4. **Criterion group-per-phase layout**: Benchmark IDs like `ssids/factor/bcsstk14`
+   enable CLI filtering (`cargo bench -- "factor"`) and produce per-phase
+   comparison HTML reports across matrices.
+
+5. **Custom `collect_results` parser**: Reads Criterion's `estimates.json` and
+   `benchmark.json` files directly rather than parsing terminal output or
+   requiring `cargo-criterion`. Stable across Criterion versions.
+
+6. **Configurable regression threshold**: `detect_regressions()` accepts a
+   threshold percentage (default 5%), classifying changes as regression,
+   improvement, or unchanged based on mean time comparison.
+
+### Issues Encountered
+
+- **faer API method names**: `row_indices_of_col` → `row_idx_of_col` and
+  `values_of_col` → `val_of_col` in faer 0.22. Method already returns an
+  iterator, not a slice.
+
+- **Criterion directory naming**: Group names with `/` (e.g., `ssids/analyze`)
+  are stored as directories with `_` separator (e.g., `ssids_analyze/`). CLI
+  filtering still works with either separator.
+
+---
+
 ## Phase 1.1: Test Infrastructure
 
 **Status**: Complete

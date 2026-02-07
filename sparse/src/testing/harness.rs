@@ -1,22 +1,14 @@
-//! SolverTest trait, TestResult, MetricResult, and TestKind types.
+//! SolverTest trait, TestResult, MetricResult types.
 
 use std::fmt;
 
 use faer::Col;
 
+use crate::SolverPhase;
 use crate::validate;
 
 use super::cases::SolverTestCase;
 use super::validator::NumericalValidator;
-
-/// Which solver phase was tested.
-#[derive(Debug, Clone, PartialEq)]
-pub enum TestKind {
-    Analyze,
-    Factor,
-    Solve,
-    Roundtrip,
-}
 
 /// Outcome of a single numerical metric check.
 #[derive(Debug, Clone)]
@@ -42,7 +34,7 @@ impl fmt::Display for MetricResult {
 #[derive(Debug, Clone)]
 pub struct TestResult {
     pub passed: bool,
-    pub test_kind: TestKind,
+    pub phase: SolverPhase,
     pub matrix_name: String,
     pub metrics: Vec<MetricResult>,
     pub diagnostics: Vec<String>,
@@ -51,11 +43,7 @@ pub struct TestResult {
 impl fmt::Display for TestResult {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let status = if self.passed { "PASS" } else { "FAIL" };
-        write!(
-            f,
-            "[{:?}] {} — {}",
-            self.test_kind, self.matrix_name, status
-        )?;
+        write!(f, "[{:?}] {} — {}", self.phase, self.matrix_name, status)?;
         for metric in &self.metrics {
             write!(f, "\n  {}", metric)?;
         }
@@ -140,7 +128,7 @@ impl SolverTest for MockSolver {
         let passed = metrics.iter().all(|m| m.passed);
         TestResult {
             passed,
-            test_kind: TestKind::Analyze,
+            phase: SolverPhase::Analyze,
             matrix_name: case.name.clone(),
             metrics,
             diagnostics,
@@ -172,7 +160,7 @@ impl SolverTest for MockSolver {
         let passed = metrics.iter().all(|m| m.passed);
         TestResult {
             passed,
-            test_kind: TestKind::Factor,
+            phase: SolverPhase::Factor,
             matrix_name: case.name.clone(),
             metrics,
             diagnostics,
@@ -198,7 +186,7 @@ impl SolverTest for MockSolver {
         let passed = metrics.iter().all(|m| m.passed);
         TestResult {
             passed,
-            test_kind: TestKind::Solve,
+            phase: SolverPhase::Solve,
             matrix_name: case.name.clone(),
             metrics,
             diagnostics,
@@ -234,7 +222,7 @@ impl SolverTest for MockSolver {
         let passed = metrics.iter().all(|m| m.passed);
         TestResult {
             passed,
-            test_kind: TestKind::Roundtrip,
+            phase: SolverPhase::Roundtrip,
             matrix_name: case.name.clone(),
             metrics,
             diagnostics,
@@ -279,7 +267,7 @@ mod tests {
     fn test_result_passed_reflects_metrics() {
         let result = TestResult {
             passed: false,
-            test_kind: TestKind::Factor,
+            phase: SolverPhase::Factor,
             matrix_name: "test-matrix".to_string(),
             metrics: vec![
                 MetricResult {

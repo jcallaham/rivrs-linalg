@@ -26,13 +26,14 @@ approx = "0.5"
 criterion = "0.5"
 rand = "0.8"
 rand_distr = "0.4"
+tempfile = "3"
 # Self-referential dev-dependency to enable the test-util feature in tests and
 # benchmarks. This is a standard Cargo pattern for activating optional features
 # during testing without making them default.
 rivrs-sparse = { path = ".", features = ["test-util"] }
 
 [[bench]]
-name = "matrix_loading"
+name = "solver_benchmarks"
 harness = false
 
 [profile.dev]
