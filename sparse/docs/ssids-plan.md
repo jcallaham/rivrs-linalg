@@ -508,75 +508,24 @@ Feature-gated `test-util` code is tested via self-referencing dev-dependency in 
 - [x] Clippy warnings treated as errors in CI
 - [x] Clear failure reports with reproducible commands (native cargo output)
 
-#### 1.4: Profiling and Debug Tools
-**Task:** Build tools for performance analysis and debugging
+#### 1.4: Profiling and Debug Tools ✅
+**Status:** Complete (branch `008-profiling-debug-tools`)
 
-**Profiling Helpers:**
+Implemented as `src/profiling/` and `src/debug/` modules behind `test-util` feature.
 
-```rust
-pub struct ProfileRecorder {
-    events: Vec<ProfileEvent>,
-}
-
-impl ProfileRecorder {
-    pub fn record_section<F, R>(&mut self, name: &str, f: F) -> R
-    where F: FnOnce() -> R;
-
-    pub fn record_memory_snapshot(&mut self, label: &str);
-
-    pub fn export_chrome_trace(&self) -> String;
-    pub fn export_flamegraph(&self) -> String;
-}
-
-// Usage in implementation:
-fn factor_node(&mut self, node: NodeId, profiler: &mut ProfileRecorder) {
-    profiler.record_section("dense_factor", || {
-        self.aptp_factor(node)
-    });
-
-    profiler.record_section("update_ancestors", || {
-        self.propagate_updates(node)
-    });
-}
-```
-
-**Debug Visualization:**
-
-```rust
-pub struct DebugVisualizer;
-
-impl DebugVisualizer {
-    /// Generate GraphViz DOT file of elimination tree
-    pub fn visualize_elimination_tree(tree: &EliminationTree) -> String;
-
-    /// Generate sparsity pattern visualization
-    pub fn visualize_sparsity(matrix: &SparseMatrix) -> Image;
-
-    /// Animate factorization process
-    pub fn animate_factorization(steps: &[FactorStep]) -> Animation;
-}
-```
-
-**Memory Debugging:**
-
-```rust
-#[cfg(feature = "memory-debug")]
-pub struct MemoryTracker {
-    allocations: HashMap<String, AllocationInfo>,
-}
-
-impl MemoryTracker {
-    pub fn track_allocation(&mut self, label: &str, bytes: usize);
-    pub fn generate_report(&self) -> MemoryReport;
-    pub fn detect_leaks(&self) -> Vec<Leak>;
-}
-```
+**What was built (vs original plan):**
+- `ProfileSession` with RAII `SectionGuard` (replaces `ProfileRecorder` closure API — guard pattern is more ergonomic and handles panics)
+- Chrome Trace export (implemented); flamegraph export (deferred — Chrome Trace viewers provide equivalent functionality)
+- `MemoryTracker` with RSS snapshots (replaces allocation-tracking `MemoryTracker` — RSS is simpler and sufficient for phase-level memory analysis)
+- `SparsityDisplay` text-based visualization (replaces `DebugVisualizer::visualize_sparsity` image output)
+- `ETreeDisplay` text tree + statistics (replaces GraphViz DOT — text output is self-contained, no external dependency)
+- Factorization animation deferred to later phases when factorization exists
 
 **Success Criteria:**
-- [ ] Can profile any component in isolation
-- [ ] Memory usage traceable to specific operations
-- [ ] Visualization tools for debugging
-- [ ] Integration with `perf`, `valgrind`, etc.
+- [x] Can profile any component in isolation (ProfileSession + SectionGuard)
+- [x] Memory usage traceable to specific operations (MemoryTracker snapshots)
+- [x] Visualization tools for debugging (SparsityDisplay + ETreeDisplay)
+- [ ] Integration with `perf`, `valgrind`, etc. (deferred — orthogonal to library tooling)
 
 ### Phase 1 Exit Criteria
 
@@ -584,7 +533,7 @@ impl MemoryTracker {
 1. ~~Complete test infrastructure can validate any solver component~~ — done (1.1)
 2. ~~Benchmarking framework ready for use~~ — done (1.2)
 3. ~~CI pipeline validates every commit~~ — done (1.3)
-4. Profiling and debug tools
+4. Debugging and profiling tools — in progress (1.4)
 
 **Actual outcomes (Phases 1.1–1.3):**
 - `SolverTest` trait with `MockSolver` for pre-solver validation
@@ -607,61 +556,91 @@ the numeric factorization (Phase 5) and solve (Phase 7) phases.
 
 ### What was already completed elsewhere
 
-The original plan included three subphases. Two of them were substantially completed
-during Phases 0.4 and 1.1 and are recorded here for traceability:
+The original plan included three subphases (2.1–2.3). Two were substantially completed
+during earlier phases and are recorded here for traceability:
 
-- **2.1 (faer-sparse adoption + Matrix Market I/O)** — **Absorbed into Phase 0.4.**
+- **Original 2.1 (faer-sparse adoption + Matrix Market I/O)** — **Absorbed into Phase 0.4.**
   `io/mtx.rs` parses Matrix Market files into `SparseColMat<usize, f64>`.
   `io/registry.rs` provides a metadata-driven catalog backed by `metadata.json`.
-  All 82 test matrices are loadable. No type aliases were added (direct faer types
-  are used throughout); this is revisited in Phase 2.1 below as a lightweight pass.
+  All 82 test matrices are loadable. Direct faer types are used throughout (see
+  Permutation Decision below for rationale on not adding type aliases).
 
-- **2.3 (test infrastructure integration)** — **Absorbed into Phase 1.1.**
+- **Original 2.3 (test infrastructure integration)** — **Absorbed into Phase 1.1.**
   `testing/cases.rs` defines `SolverTestCase` with a `SparseColMat<usize, f64>` field.
   `testing/harness.rs` provides the `SolverTest` trait, `TestResult`, `MetricResult`.
   `TestCaseFilter` supports composable loading from the registry.
   Test infrastructure already works end-to-end with faer types.
 
+### Design Decisions
+
+#### Permutation: Use faer's `Perm<usize>` directly (no custom wrapper)
+
+APTP tracks three conceptual permutations:
+
+| Permutation | Source | Phase | Nature |
+|---|---|---|---|
+| P_mc64 (matching) | MC64 algorithm | 4.2 | Standard index permutation |
+| P_ord (fill-reducing) | AMD / METIS | 4.1 | Standard index permutation |
+| P_piv (pivots) | APTP factorization | 5 | Sequence of 1×1/2×2 pivot decisions |
+
+The first two (P_mc64, P_ord) are composed before factorization and applied as a
+symmetric permutation `P^T A P`. faer's `Perm<usize>` supports all required operations:
+
+- **Both arrays stored**: forward + inverse (zero-copy `inverse()` swaps references)
+- **Composition**: `p1 * p2` via operator overloading
+- **Symmetric permutation**: `perm.inverse() * A * perm.as_ref()` on `SparseColMat`
+- **Vector permutation**: `perm * col_vector`
+- **Checked construction**: `new_checked(forward, inverse, dim)` validates correctness
+
+The third (P_piv) is **not a permutation array** — it is a sequence of pivot decisions
+(1×1, 2×2 Bunch-Kaufman, or delayed). This is handled by `PivotType` and `MixedDiagonal`,
+not by a permutation type.
+
+**One gap:** faer requires both forward and inverse arrays at construction. External
+ordering algorithms typically produce only the forward array. A small helper function
+bridges this:
+
+```rust
+/// Construct a `Perm<usize>` from a forward permutation array,
+/// computing the inverse automatically.
+pub fn perm_from_forward(fwd: Vec<usize>) -> Perm<usize> {
+    let n = fwd.len();
+    let mut inv = vec![0usize; n];
+    for (i, &j) in fwd.iter().enumerate() {
+        inv[j] = i;
+    }
+    Perm::new_checked(fwd.into(), inv.into(), n)
+}
+```
+
+**Consequence for Phase 4:** The `Permutation` struct shown in Phase 4's notional API
+should be replaced with `faer::perm::Perm<usize>` and `perm_from_forward()`. The
+`compose()` method becomes `p1 * p2`.
+
+#### Type aliases: Not adding
+
+The codebase already uses `SparseColMat<usize, f64>` and `Perm<usize>` directly.
+Adding aliases like `AptpMatrix<T>` would be a layer of indirection without clear
+benefit — faer types are already well-named and the codebase is small enough that
+direct usage is readable. This can be revisited if the API surface grows significantly.
+
 ### Deliverables
 
-#### 2.1: Type Aliases and API Surface
-**Task:** Add convenience type aliases and re-exports for APTP-specific usage of faer types
-
-This is a thin reconciliation pass — not a new module, just making the public API
-more expressive for downstream phases. The concrete faer types are already used
-everywhere; aliases add domain vocabulary.
-
-**Scope:**
-- Type aliases (`AptpMatrix<T>`, `AptpMatrixRef`, etc.) in a `types.rs` module
-- Re-exports of commonly used faer sparse types
-- Review whether `Perm<I>` from faer is sufficient for APTP permutation needs
-  (faer already provides `Perm`, `PermRef`, forward/inverse application)
-
-**Design question to resolve during speccing:**
-> Should we add a custom `Permutation` wrapper or use faer's `Perm<I>` directly?
-> faer's `Perm` stores both forward and inverse arrays and supports apply/apply_inverse.
-> A thin wrapper may be warranted only if APTP needs pivot-permutation composition
-> or delayed-column reordering that doesn't map to faer's API.
-
-**Success Criteria:**
-- [ ] Type aliases defined and documented
-- [ ] Downstream code (tests, validators) can use aliases
-- [ ] Decision on Permutation wrapper vs faer `Perm<I>` documented
-
-#### 2.2: APTP-Specific Storage Structures
+#### 2.1: APTP-Specific Storage Structures
 **Task:** Define data structures unique to indefinite APTP factorization
 
-This is the core new work in Phase 2. The structures defined here are the foundation
-for the numeric factorization kernel (Phase 5) and the triangular solve (Phase 7).
+These structures are the foundation for the numeric factorization kernel (Phase 5)
+and the triangular solve (Phase 7).
 
 **Key structures:**
 
-- `PivotType` — enum tracking whether each pivot is 1×1 or 2×2
+- `PivotType` — enum tracking whether each pivot is 1×1, 2×2, or delayed
 - `Block2x2<T>` — storage for a 2×2 symmetric block `[a, b; b, c]`
 - `MixedDiagonal<T>` — the D factor in LDL^T, supporting mixed 1×1 and 2×2 blocks,
   with a solve method (`D x = b`)
 - `DelayedColumn` / pivot delay tracking — bookkeeping for columns that fail the
   APTP stability check and must be passed to an ancestor node
+- `perm_from_forward()` — helper for constructing `Perm<usize>` from ordering output
 
 **Notional API** (to be refined during speccing):
 
@@ -725,6 +704,7 @@ impl<T: faer::RealField> MixedDiagonal<T> {
 - [ ] PivotType tracks 1×1, 2×2, and delayed states
 - [ ] Block2x2 solve is numerically correct (2×2 symmetric system)
 - [ ] Efficient access patterns (no unnecessary allocation in solve)
+- [ ] `perm_from_forward()` helper tested (round-trip with faer `Perm` operations)
 
 **Time Estimate:** 2–3 days
 
@@ -732,8 +712,8 @@ impl<T: faer::RealField> MixedDiagonal<T> {
 
 **Required Outcomes:**
 1. APTP-specific structures (`MixedDiagonal`, `PivotType`, `Block2x2`) implemented and tested
-2. Type aliases defined (or decision documented to use faer types directly)
-3. Permutation strategy decided (faer `Perm<I>` vs custom wrapper)
+2. `perm_from_forward()` helper available for Phase 4 ordering integration
+3. Design decisions documented (Permutation strategy, type alias decision — see above)
 
 **Validation Questions:**
 - Do APTP-specific structures handle all pivot patterns correctly?
@@ -757,239 +737,102 @@ Build symbolic analysis using faer's elimination tree construction. Focus on sim
 - Faster path to working solver
 - Supernodal optimization becomes Phase 9
 
+### Design Decisions
+
+#### Transparent composition with faer (decided)
+
+faer's `factorize_symbolic_cholesky` bundles ordering + elimination tree + sparsity
+pattern computation into a single call, returning `SymbolicCholesky<usize>`. The
+symbolic phase for indefinite LDL^T is **identical** to SPD Cholesky — pivoting is
+purely a numeric-phase concern.
+
+Rather than using faer's low-level primitives (`prefactorize_symbolic_cholesky`,
+`factorize_simplicial_symbolic_cholesky`) and reconstructing the pipeline ourselves,
+`AptpSymbolic` composes faer's high-level result with APTP-specific metadata:
+
+- `AptpSymbolic` stores faer's `SymbolicCholesky<usize>` as an inner field
+- Accessors delegate to faer (permutation, L structure, predicted nnz)
+- APTP-specific fields are added alongside (pivot buffer sizing)
+- Ordering is an **input parameter** using faer's `SymmetricOrdering` enum
+
+This follows the project-wide **transparent composition** principle (see CLAUDE.md).
+
+**Consequence for Phase 3/4 boundary:** Ordering is an input to symbolic analysis, not
+a separate downstream phase. Phase 3 uses `SymmetricOrdering::Amd` as default. Phase 4
+becomes "compute alternative orderings (METIS, MC64) that produce a `Perm<usize>`
+passed as `SymmetricOrdering::Custom(perm)`."
+
+#### SimplicialLFactor superseded by faer (decided)
+
+The original plan proposed a custom `SimplicialLFactor` struct (CSC for L). faer already
+provides `SymbolicSimplicialCholesky<I>` with the same data (col_ptr, row_idx) plus
+methods (`len_val()`, `col_ptr()`, `row_idx()`, `factor()`). No need to duplicate this —
+it's accessible through `SymbolicCholesky::raw()`.
+
 ### Deliverables
 
-#### 3.1: Elimination Tree (Reuse faer)
-**Task:** Use faer's elimination tree construction with APTP adaptations
+#### 3.1: Symbolic Analysis Wrapper
+**Task:** Build `AptpSymbolic` as a thin composition over faer's symbolic pipeline,
+adding APTP-specific delayed-pivot buffer estimation
 
-**Approach:**
-The elimination tree structure for indefinite LDL^T is **identical** to SPD Cholesky - pivoting is a numeric-phase concern. Leverage faer's mature implementation.
+This consolidates the original 3.1 (elimination tree), 3.2 (sparsity pattern), and
+3.3 (API integration) into a single deliverable, since faer handles all three internally
+and they share a single output type.
 
 **Algorithm References:**
-- Liu (1990) - "The role of elimination trees in sparse factorization"
-- faer implementation: `faer::sparse::linalg::cholesky::prefactorize_symbolic_cholesky`
+- Liu (1990) — "The role of elimination trees in sparse factorization"
+- faer: `factorize_symbolic_cholesky`, `SymbolicCholesky<I>`, `SymbolicSimplicialCholesky<I>`
 
-**Implementation:**
+**Notional API** (to be refined during speccing):
 
 ```rust
 use faer::sparse::linalg::cholesky::{
-    prefactorize_symbolic_cholesky,
-    EliminationTreeRef,
+    factorize_symbolic_cholesky,
+    SymbolicCholesky,
+    CholeskySymbolicParams,
 };
+use faer::sparse::linalg::SymmetricOrdering;
 
-/// APTP symbolic analysis (wraps faer's etree + APTP-specific metadata)
-pub struct AptpSymbolic<I = usize> {
-    /// Elimination tree from faer (reused directly)
-    etree: Vec<I::Signed>,  // parent[i] = parent of i, or -1 if root
+/// APTP symbolic analysis result.
+///
+/// Composes faer's `SymbolicCholesky` (etree, L structure, permutation)
+/// with APTP-specific metadata (delayed-pivot buffer estimates).
+pub struct AptpSymbolic {
+    /// faer's symbolic result (contains perm, L structure, etree).
+    inner: SymbolicCholesky<usize>,
 
-    /// Column counts (from faer)
-    col_counts: Vec<I>,
-
-    /// APTP-specific: extra space for delayed pivots
-    pivot_buffer_size: Vec<I>,
-
-    /// Total predicted NNZ (may be approximate for indefinite)
-    predicted_nnz: usize,
+    /// APTP-specific: estimated extra space per column for delayed pivots.
+    pivot_buffer: Vec<usize>,
 }
 
 impl AptpSymbolic {
+    /// Run symbolic analysis with the given ordering strategy.
+    ///
+    /// Uses faer's `factorize_symbolic_cholesky` internally.
+    /// Default ordering is AMD (`SymmetricOrdering::Amd`).
     pub fn analyze(
-        matrix: SymbolicSparseColMatRef<'_, I>
-    ) -> Result<Self> {
-        // Use faer's prefactorization (computes etree + col_counts)
-        let (etree, col_counts) = prefactorize_symbolic_cholesky(
+        matrix: SymbolicSparseColMatRef<'_, usize>,
+        ordering: SymmetricOrdering<'_, usize>,
+    ) -> Result<Self, SparseError> {
+        let inner = factorize_symbolic_cholesky(
             matrix,
-            PodStack::new(&mut GlobalPodBuffer::new(
-                StackReq::new::<I>(matrix.ncols())
-            )),
+            Side::Upper,
+            ordering,
+            CholeskySymbolicParams::default(),
         )?;
 
-        // APTP-specific: estimate buffer for delayed pivots
-        let pivot_buffer_size = col_counts
-            .iter()
-            .map(|&c| (c as f64 * 0.1) as I)  // 10% buffer
-            .collect();
+        // Heuristic: 10% buffer per column for delayed pivots
+        let pivot_buffer = /* computed from inner's col structure */;
 
-        let predicted_nnz = col_counts.iter().sum();
-
-        Ok(Self {
-            etree: etree.into_inner().to_vec(),
-            col_counts: col_counts.to_vec(),
-            pivot_buffer_size,
-            predicted_nnz,
-        })
+        Ok(Self { inner, pivot_buffer })
     }
 
-    pub fn parent(&self, node: usize) -> Option<usize> {
-        let p = self.etree[node];
-        if p < 0 {
-            None
-        } else {
-            Some(p as usize)
-        }
-    }
+    // Delegate to faer
+    pub fn perm(&self) -> Option<PermRef<'_, usize>> { self.inner.perm() }
+    pub fn predicted_nnz(&self) -> usize { self.inner.len_val() }
 
-    pub fn predicted_nnz(&self) -> usize {
-        self.predicted_nnz
-    }
-}
-```
-
-**Testing:**
-
-```rust
-#[test]
-fn test_elimination_tree_via_faer() {
-    let matrix = io::read_matrix_market("test-data/arrow-10.mtx").unwrap();
-    let symbolic = AptpSymbolic::analyze(matrix.symbolic()).unwrap();
-
-    // Tree should be valid
-    assert!(symbolic.predicted_nnz() > matrix.compute_nnz());
-}
-
-#[test]
-fn test_against_spral_reference() {
-    for case in test_cases_by_difficulty(Difficulty::Easy) {
-        let symbolic = AptpSymbolic::analyze(
-            case.matrix().symbolic()
-        ).unwrap();
-
-        if let Some(ref_results) = case.reference {
-            // Predicted NNZ should be close to SPRAL's
-            let error = (symbolic.predicted_nnz() as f64
-                        - ref_results.predicted_nnz as f64).abs()
-                       / ref_results.predicted_nnz as f64;
-            assert!(error < 0.1, "NNZ prediction off by {:.1}%", error * 100.0);
-        }
-    }
-}
-
-#[test]
-fn test_reproducible() {
-    let matrix = io::read_matrix_market("test-data/symmetric-10x10.mtx").unwrap();
-
-    let sym1 = AptpSymbolic::analyze(matrix.symbolic()).unwrap();
-    let sym2 = AptpSymbolic::analyze(matrix.symbolic()).unwrap();
-
-    assert_eq!(sym1.etree, sym2.etree);
-    assert_eq!(sym1.col_counts, sym2.col_counts);
-}
-```
-
-**Success Criteria:**
-- [ ] Can construct etree via faer for all test matrices
-- [ ] Predicted NNZ within 10% of SPRAL (indefinite may differ slightly)
-- [ ] Reproducible (deterministic)
-- [ ] Analysis time < 5% of factor time
-
-**Time Estimate:** 2-3 days
-
-#### 3.2: Sparsity Pattern Prediction (Simplicial)
-**Task:** Predict L sparsity pattern for simplicial factorization
-
-**Approach:**
-For simplicial (column-by-column) factorization, we need to know which entries of L will be nonzero. This is determined by the elimination tree and reachability analysis.
-
-**Implementation:**
-
-```rust
-impl AptpSymbolic {
-    /// Allocate storage for L factor
-    pub fn allocate_factor_storage(&self) -> SimplicialLFactor {
-        // L has same structure as lower triangle of symbolic Cholesky factor
-        let total_nnz = self.predicted_nnz;
-
-        SimplicialLFactor {
-            col_ptr: vec![0; self.etree.len() + 1],
-            row_idx: Vec::with_capacity(total_nnz),
-            values: Vec::with_capacity(total_nnz),
-        }
-    }
-}
-
-/// Storage for simplicial L factor (CSC format, lower triangular)
-pub struct SimplicialLFactor {
-    pub col_ptr: Vec<usize>,
-    pub row_idx: Vec<usize>,
-    pub values: Vec<f64>,
-}
-
-impl SimplicialLFactor {
-    pub fn ncols(&self) -> usize {
-        self.col_ptr.len() - 1
-    }
-
-    pub fn col(&self, j: usize) -> &[usize] {
-        let start = self.col_ptr[j];
-        let end = self.col_ptr[j + 1];
-        &self.row_idx[start..end]
-    }
-
-    pub fn col_values(&self, j: usize) -> &[f64] {
-        let start = self.col_ptr[j];
-        let end = self.col_ptr[j + 1];
-        &self.values[start..end]
-    }
-}
-```
-
-**Testing:**
-
-```rust
-#[test]
-fn test_factor_storage_allocation() {
-    let matrix = io::read_matrix_market("test-data/arrow-10.mtx").unwrap();
-    let symbolic = AptpSymbolic::analyze(matrix.symbolic()).unwrap();
-
-    let l_factor = symbolic.allocate_factor_storage();
-
-    assert_eq!(l_factor.ncols(), 10);
-    assert!(l_factor.values.capacity() >= matrix.compute_nnz());
-}
-```
-
-**Success Criteria:**
-- [ ] Storage correctly allocated
-- [ ] Size predictions reasonable
-- [ ] Ready for numeric factorization
-
-**Time Estimate:** 2-3 days
-
-#### 3.3: Complete Symbolic Analysis Interface
-**Task:** Integrate symbolic components into clean API
-
-**Implementation:**
-
-```rust
-/// Options for symbolic analysis
-pub struct AnalysisOptions {
-    // Future: could add relaxation params when supernodes added
-}
-
-impl Default for AnalysisOptions {
-    fn default() -> Self {
-        Self {}
-    }
-}
-
-impl AptpSymbolic {
-    /// Convenience method for full analysis pipeline
-    pub fn analyze_with_options(
-        matrix: SymbolicSparseColMatRef<'_, usize>,
-        _options: AnalysisOptions,
-    ) -> Result<Self> {
-        // For now, options unused (no supernodes yet)
-        Self::analyze(matrix)
-    }
-
-    /// Statistics for debugging
-    pub fn statistics(&self) -> SymbolicStatistics {
-        SymbolicStatistics {
-            dimension: self.etree.len(),
-            predicted_nnz: self.predicted_nnz,
-            average_col_count: self.predicted_nnz as f64 / self.etree.len() as f64,
-        }
-    }
+    /// Statistics for debugging and diagnostics.
+    pub fn statistics(&self) -> SymbolicStatistics { /* ... */ }
 }
 
 pub struct SymbolicStatistics {
@@ -1003,67 +846,72 @@ pub struct SymbolicStatistics {
 
 ```rust
 #[test]
-fn test_complete_analysis() {
+fn test_symbolic_analysis_all_matrices() {
     for case in all_test_cases() {
         let symbolic = AptpSymbolic::analyze(
-            case.matrix().symbolic()
+            case.matrix().symbolic(),
+            SymmetricOrdering::Amd,
         ).unwrap();
 
         let stats = symbolic.statistics();
-
-        // Sanity checks
         assert_eq!(stats.dimension, case.matrix().nrows());
         assert!(stats.predicted_nnz > 0);
         assert!(stats.average_col_count >= 1.0);
-
-        // Compare with reference if available
-        if let Some(ref_results) = case.reference {
-            let error = (stats.predicted_nnz as f64
-                        - ref_results.predicted_nnz as f64).abs()
-                       / ref_results.predicted_nnz as f64;
-            // Allow 10% error for indefinite (delayed pivots unpredictable)
-            assert!(error < 0.1);
-        }
     }
 }
 
 #[test]
-fn test_analysis_reproducible() {
-    let case = load_test_case("medium-matrix");
+fn test_reproducible() {
+    let matrix = load_test_matrix("arrow-10-pd").unwrap();
 
-    let sym1 = AptpSymbolic::analyze(case.matrix().symbolic()).unwrap();
-    let sym2 = AptpSymbolic::analyze(case.matrix().symbolic()).unwrap();
+    let sym1 = AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Amd).unwrap();
+    let sym2 = AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Amd).unwrap();
 
-    assert_eq!(sym1.etree, sym2.etree);
-    assert_eq!(sym1.predicted_nnz, sym2.predicted_nnz);
+    assert_eq!(sym1.predicted_nnz(), sym2.predicted_nnz());
+}
+
+#[test]
+fn test_custom_ordering_accepted() {
+    // Verify that a user-supplied permutation is propagated through
+    let matrix = load_test_matrix("arrow-5-pd").unwrap();
+    let identity_perm = /* identity PermRef */;
+
+    let symbolic = AptpSymbolic::analyze(
+        matrix.symbolic(),
+        SymmetricOrdering::Custom(identity_perm),
+    ).unwrap();
+
+    assert!(symbolic.perm().is_some());
 }
 ```
 
 **Success Criteria:**
-- [ ] Complete analysis works on all test matrices
-- [ ] Results within 10% of SPRAL (indefinite harder to predict)
+- [ ] `AptpSymbolic::analyze` works on all test matrices with AMD ordering
+- [ ] Custom ordering (`SymmetricOrdering::Custom`) accepted and propagated
+- [ ] Predicted NNZ matches faer's Cholesky prediction (since symbolic phase is identical)
 - [ ] Reproducible (deterministic)
-- [ ] Clean, documented API
+- [ ] Statistics reported correctly
+- [ ] Analysis time < 5% of factor time
 
-**Time Estimate:** 1-2 days
+**Time Estimate:** 3–5 days
 
 ### Phase 3 Exit Criteria
 
 **Required Outcomes:**
-1. Symbolic analysis using faer's etree complete and tested
-2. Sparsity pattern prediction working for simplicial factorization
-3. Integration tests pass on full test suite
-4. Performance acceptable (< 5% of total solve time)
-5. Predictions within 10% of SPRAL (indefinite is harder to predict exactly)
+1. `AptpSymbolic` wraps faer's `SymbolicCholesky` and adds APTP pivot buffer estimates
+2. Symbolic analysis works on all test matrices (hand-constructed + SuiteSparse CI subset)
+3. Ordering is accepted as input parameter (AMD default, custom supported)
+4. Design decisions documented (transparent composition, SimplicialLFactor superseded)
 
 **Validation Questions:**
-- Do we get the same elimination tree as SPRAL?
-- Are NNZ predictions reasonable?
-- Is factor storage correctly allocated?
+- Does `AptpSymbolic` correctly delegate to faer for etree/structure/permutation?
+- Are pivot buffer estimates reasonable (non-negative, proportional to column counts)?
+- Does the API cleanly support Phase 4's alternative orderings via `SymmetricOrdering::Custom`?
 
-**Checkpoint:** Run symbolic analysis on entire test suite. Verify etree matches SPRAL. Check that predicted NNZ is within 10% of SPRAL reference results.
+**Checkpoint:** Run symbolic analysis on entire test suite with AMD ordering. Verify
+predicted NNZ is reasonable. Demonstrate custom ordering passthrough.
 
-**Time Estimate:** 5-7 days (reduced from 3-4 weeks by leveraging faer and deferring supernodes)
+**Time Estimate:** 3–5 days
 
 ---
 

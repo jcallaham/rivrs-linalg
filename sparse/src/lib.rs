@@ -38,6 +38,10 @@ pub mod validate;
 #[cfg(feature = "test-util")]
 pub mod benchmarking;
 #[cfg(feature = "test-util")]
+pub mod debug;
+#[cfg(feature = "test-util")]
+pub mod profiling;
+#[cfg(feature = "test-util")]
 pub mod testing;
 
 /// Solver phases corresponding to the three-phase API: analyze → factorize → solve.

@@ -73,6 +73,28 @@ Unlike traditional threshold pivoting (which decides pivots before elimination),
 
 This allows better data locality and parallelism while maintaining numerical stability.
 
+## faer Integration: Transparent Composition
+
+This library is a **specialized extension of faer**, not a competing implementation.
+The guiding principle is **transparent composition**: use the highest-level faer API
+that gives us what we need, expose faer types at our boundary, and only add new types
+for concepts faer doesn't have.
+
+**Concrete guidelines:**
+
+- **Accept faer types as inputs**: `SparseColMat<usize, f64>`, `PermRef`, `SymmetricOrdering`, `SymbolicSparseColMatRef`
+- **Return faer types where they fit**: permutations as `Perm<usize>` (not custom wrappers), sparse matrices as `SparseColMat`
+- **Compose, don't wrap**: our structs contain faer results as fields with accessor methods that delegate, rather than copying data into our own arrays (e.g., `AptpSymbolic` stores `SymbolicCholesky<usize>` and delegates `perm()`, `predicted_nnz()`)
+- **Only add types for genuinely new concepts**: `PivotType`, `MixedDiagonal`, `AptpSymbolic` — things faer doesn't model
+- **Prefer high-level faer APIs over low-level primitives**: use `factorize_symbolic_cholesky` over manual `prefactorize_symbolic_cholesky` + `factorize_simplicial_symbolic_cholesky`, unless we need fine-grained control
+
+**Anti-patterns to avoid:**
+
+- Defining a custom `Permutation` struct when `faer::perm::Perm<usize>` works
+- Adding type aliases like `AptpMatrix<T>` for `SparseColMat<usize, f64>` — faer types are already well-named
+- Re-implementing CSC storage, elimination tree computation, or AMD ordering
+- Hiding faer types behind opaque wrappers that prevent interop with the faer ecosystem
+
 ## Code Architecture
 
 **Numerical Considerations:**

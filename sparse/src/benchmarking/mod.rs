@@ -20,5 +20,5 @@ pub use baseline::{Baseline, Improvement, Regression, RegressionReport, detect_r
 pub use config::BenchmarkConfig;
 pub use report::{export_csv, export_json, generate_markdown_table};
 pub use results::{BenchmarkResult, BenchmarkSuiteResult, SkippedBenchmark, collect_results};
-pub use rss::read_peak_rss_kb;
+pub use rss::{read_current_rss_kb, read_peak_rss_kb};
 pub use traits::{Benchmarkable, MockBenchmarkable};
