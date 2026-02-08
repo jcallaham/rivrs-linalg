@@ -288,7 +288,7 @@ Build production-quality testing and benchmarking framework before implementing 
 
 ### Deliverables
 
-#### 1.1: Core Test Infrastructure
+#### 1.1: Core Test Infrastructure (**COMPLETE**)
 **Task:** Create reusable testing framework
 
 **Test Harness Design:**
@@ -368,7 +368,7 @@ pub fn arbitrary_sparse_symmetric() -> impl Strategy<Value = SparseMatrix>;
 - [ ] Property-based test generators for random matrices
 - [ ] Integration with Rust test framework
 
-#### 1.2: Benchmarking Framework
+#### 1.2: Benchmarking Framework (**COMPLETE**)
 **Task:** Create consistent performance measurement infrastructure
 
 **Benchmark Suite Design:**
@@ -581,248 +581,167 @@ impl MemoryTracker {
 ### Phase 1 Exit Criteria
 
 **Required Outcomes:**
-1. Complete test infrastructure can validate any solver component
-2. Benchmarking framework ready for use
-3. Can measure performance regression automatically
-4. Debugging and profiling tools available
-5. CI pipeline validates every commit
+1. ~~Complete test infrastructure can validate any solver component~~ — done (1.1)
+2. ~~Benchmarking framework ready for use~~ — done (1.2)
+3. ~~CI pipeline validates every commit~~ — done (1.3)
+4. Profiling and debug tools
 
-**Validation Questions:**
-- Can we detect a 1% performance regression automatically?
-- Can we identify which component caused a test failure?
-- Can we profile a single matrix through the entire solve?
-- Is the test suite fast enough to run frequently?
+**Actual outcomes (Phases 1.1–1.3):**
+- `SolverTest` trait with `MockSolver` for pre-solver validation
+- `NumericalValidator` with configurable tolerances
+- `TestCaseFilter` for composable test case selection
+- Random matrix generators (PD and indefinite) behind `test-util` feature
+- `Benchmarkable` trait + Criterion integration with baseline tracking
+- CI: test (MSRV + stable), lint (fmt + clippy), doc, bench-compile
 
-**Checkpoint:** Run infrastructure on trivial "pass-through" solver to verify it works.
+**Checkpoint:** Infrastructure validated with MockSolver and matrix loading benchmarks.
 
 ---
 
-## Phase 2: Sparse Matrix Infrastructure (Leverage faer)
+## Phase 2: APTP Data Structures
 
 ### Objectives
-Adopt faer-sparse types with APTP-specific extensions. Minimal reimplementation; focus on what's unique to indefinite APTP.
+Define the data structures unique to indefinite APTP factorization: mixed 1×1/2×2 diagonal
+storage, pivot tracking, and delayed-column bookkeeping. These structures are consumed by
+the numeric factorization (Phase 5) and solve (Phase 7) phases.
+
+### What was already completed elsewhere
+
+The original plan included three subphases. Two of them were substantially completed
+during Phases 0.4 and 1.1 and are recorded here for traceability:
+
+- **2.1 (faer-sparse adoption + Matrix Market I/O)** — **Absorbed into Phase 0.4.**
+  `io/mtx.rs` parses Matrix Market files into `SparseColMat<usize, f64>`.
+  `io/registry.rs` provides a metadata-driven catalog backed by `metadata.json`.
+  All 82 test matrices are loadable. No type aliases were added (direct faer types
+  are used throughout); this is revisited in Phase 2.1 below as a lightweight pass.
+
+- **2.3 (test infrastructure integration)** — **Absorbed into Phase 1.1.**
+  `testing/cases.rs` defines `SolverTestCase` with a `SparseColMat<usize, f64>` field.
+  `testing/harness.rs` provides the `SolverTest` trait, `TestResult`, `MetricResult`.
+  `TestCaseFilter` supports composable loading from the registry.
+  Test infrastructure already works end-to-end with faer types.
 
 ### Deliverables
 
-#### 2.1: faer-sparse Adoption with Type Aliases
-**Task:** Use faer's sparse matrix infrastructure directly
+#### 2.1: Type Aliases and API Surface
+**Task:** Add convenience type aliases and re-exports for APTP-specific usage of faer types
 
-**Approach:**
-Leverage faer's mature sparse matrix implementation instead of building from scratch:
-- Use `faer::sparse::SparseColMat<I, T>` as primary storage
-- Use faer's Matrix Market I/O
-- Add only APTP-specific storage structures
+This is a thin reconciliation pass — not a new module, just making the public API
+more expressive for downstream phases. The concrete faer types are already used
+everywhere; aliases add domain vocabulary.
 
-**Implementation:**
+**Scope:**
+- Type aliases (`AptpMatrix<T>`, `AptpMatrixRef`, etc.) in a `types.rs` module
+- Re-exports of commonly used faer sparse types
+- Review whether `Perm<I>` from faer is sufficient for APTP permutation needs
+  (faer already provides `Perm`, `PermRef`, forward/inverse application)
 
-```rust
-// Type aliases for clarity and consistency
-pub type AptpMatrix<T = f64> = faer::sparse::SparseColMat<usize, T>;
-pub type AptpMatrixRef<'a, T = f64> = faer::sparse::SparseColMatRef<'a, usize, T>;
-pub type AptpMatrixMut<'a, T = f64> = faer::sparse::SparseColMatMut<'a, usize, T>;
-
-// Re-export commonly used faer functionality
-pub use faer::sparse::SymbolicSparseColMat;
-
-// Matrix Market I/O via faer (or matrixmarket-rs crate)
-pub mod io {
-    use super::*;
-
-    pub fn read_matrix_market<P: AsRef<Path>>(
-        path: P
-    ) -> Result<AptpMatrix<f64>> {
-        // Use faer or matrixmarket-rs
-        todo!()
-    }
-
-    pub fn write_matrix_market<P: AsRef<Path>>(
-        path: P,
-        matrix: AptpMatrixRef<'_, f64>
-    ) -> Result<()> {
-        todo!()
-    }
-}
-```
-
-**Testing:**
-```rust
-#[test]
-fn test_load_all_test_matrices() {
-    for entry in glob("test-data/**/*.mtx").unwrap() {
-        let path = entry.unwrap();
-        let result = io::read_matrix_market(&path);
-        assert!(result.is_ok(), "Failed to load {:?}", path);
-    }
-}
-
-#[test]
-fn test_faer_integration() {
-    let mat = io::read_matrix_market("test-data/arrow-10.mtx").unwrap();
-
-    // Verify it's a valid faer matrix
-    assert_eq!(mat.nrows(), 10);
-    assert_eq!(mat.ncols(), 10);
-    assert!(mat.nrows() * mat.ncols() >= mat.compute_nnz());
-}
-```
+**Design question to resolve during speccing:**
+> Should we add a custom `Permutation` wrapper or use faer's `Perm<I>` directly?
+> faer's `Perm` stores both forward and inverse arrays and supports apply/apply_inverse.
+> A thin wrapper may be warranted only if APTP needs pivot-permutation composition
+> or delayed-column reordering that doesn't map to faer's API.
 
 **Success Criteria:**
-- [ ] Can load all 70+ test matrices using faer
-- [ ] Type aliases provide clean API
-- [ ] Matrix Market I/O working
-- [ ] Basic faer operations accessible
-
-**Time Estimate:** 1-2 days
+- [ ] Type aliases defined and documented
+- [ ] Downstream code (tests, validators) can use aliases
+- [ ] Decision on Permutation wrapper vs faer `Perm<I>` documented
 
 #### 2.2: APTP-Specific Storage Structures
 **Task:** Define data structures unique to indefinite APTP factorization
 
-**Implementation:**
+This is the core new work in Phase 2. The structures defined here are the foundation
+for the numeric factorization kernel (Phase 5) and the triangular solve (Phase 7).
+
+**Key structures:**
+
+- `PivotType` — enum tracking whether each pivot is 1×1 or 2×2
+- `Block2x2<T>` — storage for a 2×2 symmetric block `[a, b; b, c]`
+- `MixedDiagonal<T>` — the D factor in LDL^T, supporting mixed 1×1 and 2×2 blocks,
+  with a solve method (`D x = b`)
+- `DelayedColumn` / pivot delay tracking — bookkeeping for columns that fail the
+  APTP stability check and must be passed to an ancestor node
+
+**Notional API** (to be refined during speccing):
 
 ```rust
-/// Tracks whether each pivot is 1x1 or 2x2
+/// Tracks whether each pivot is 1×1 or 2×2.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PivotType {
-    One,        // 1x1 pivot
-    Two(usize), // 2x2 pivot, points to block index
+    /// Standard 1×1 pivot.
+    OneByOne,
+    /// 2×2 Bunch-Kaufman pivot. The value identifies the paired column.
+    TwoByTwo { partner: usize },
+    /// Column was delayed (failed stability check).
+    Delayed,
 }
 
-/// Storage for mixed 1x1 and 2x2 diagonal blocks
-pub struct MixedDiagonal<T> {
-    /// 1x1 diagonal entries (sparse - only for columns with 1x1 pivots)
-    one_by_one: Vec<(usize, T)>,  // (column_index, value)
-
-    /// 2x2 diagonal blocks (stored as [a, b; b, c])
-    two_by_two: Vec<Block2x2<T>>,
-
-    /// Map from column index to pivot type
-    pivot_map: Vec<PivotType>,
-}
-
-/// A 2x2 symmetric block [a, b; b, c]
+/// A 2×2 symmetric block [a, b; b, c].
 #[derive(Debug, Clone)]
 pub struct Block2x2<T> {
-    pub first_col: usize,  // Starting column
-    pub a: T,              // (0,0) entry
-    pub b: T,              // (0,1) and (1,0) entry
-    pub c: T,              // (1,1) entry
+    pub first_col: usize,
+    pub a: T,
+    pub b: T,
+    pub c: T,
 }
 
-impl<T: ComplexField> MixedDiagonal<T> {
-    pub fn new(n: usize) -> Self;
+/// Storage for the D factor in P^T A P = L D L^T where D has mixed
+/// 1×1 and 2×2 diagonal blocks.
+pub struct MixedDiagonal<T> {
+    /// Per-column pivot classification.
+    pivot_map: Vec<PivotType>,
+    /// Diagonal values for 1×1 pivots (indexed by column).
+    diag_1x1: Vec<T>,
+    /// 2×2 blocks (one entry per pair; the lower-indexed column owns it).
+    blocks_2x2: Vec<Block2x2<T>>,
+    /// Number of columns (matrix dimension).
+    n: usize,
+}
 
+impl<T: faer::RealField> MixedDiagonal<T> {
+    pub fn new(n: usize) -> Self;
     pub fn set_1x1(&mut self, col: usize, value: T);
     pub fn set_2x2(&mut self, first_col: usize, block: Block2x2<T>);
-
     pub fn get_pivot_type(&self, col: usize) -> PivotType;
 
-    /// Solve D*x = b where D is mixed 1x1/2x2
-    pub fn solve(&self, b: &mut [T]);
-}
+    /// Solve D x = b in-place where D has mixed 1×1/2×2 blocks.
+    pub fn solve_in_place(&self, x: &mut [T]);
 
-/// Permutation wrapper with inversion
-pub struct Permutation {
-    perm: Vec<usize>,      // forward: old -> new
-    inv_perm: Vec<usize>,  // inverse: new -> old
-}
-
-impl Permutation {
-    pub fn identity(n: usize) -> Self;
-    pub fn from_vec(perm: Vec<usize>) -> Result<Self>;
-
-    pub fn apply<T: Clone>(&self, x: &[T]) -> Vec<T>;
-    pub fn apply_inverse<T: Clone>(&self, x: &[T]) -> Vec<T>;
-
-    pub fn is_valid(&self) -> bool;
+    /// Number of delayed pivots.
+    pub fn num_delayed(&self) -> usize;
 }
 ```
 
-**Testing:**
-```rust
-#[test]
-fn test_mixed_diagonal() {
-    let mut d = MixedDiagonal::<f64>::new(4);
-
-    d.set_1x1(0, 2.0);
-    d.set_2x2(1, Block2x2 { first_col: 1, a: 3.0, b: 1.0, c: 4.0 });
-    d.set_1x1(3, 5.0);
-
-    assert_eq!(d.get_pivot_type(0), PivotType::One);
-    assert_eq!(d.get_pivot_type(1), PivotType::Two(0));
-    assert_eq!(d.get_pivot_type(2), PivotType::Two(0));
-    assert_eq!(d.get_pivot_type(3), PivotType::One);
-}
-
-#[test]
-fn test_mixed_diagonal_solve() {
-    let mut d = MixedDiagonal::new(3);
-    d.set_1x1(0, 2.0);
-    d.set_2x2(1, Block2x2 { first_col: 1, a: 4.0, b: 1.0, c: 3.0 });
-
-    let mut x = vec![4.0, 7.0, 5.0];
-    d.solve(&mut x);
-
-    // Check D * x = original_b
-    // For 1x1: x[0] = 4.0 / 2.0 = 2.0
-    // For 2x2: solve [4,1;1,3]*[x1;x2] = [7;5]
-    assert_close(x[0], 2.0, 1e-14);
-}
-```
+**Testing strategy:**
+- Unit tests with hand-constructed mixed diagonals (known solves)
+- Round-trip: construct D, solve D x = b, verify x
+- Edge cases: all 1×1, all 2×2, single delayed column, empty matrix
+- Property: `MixedDiagonal::solve_in_place` inverts `MixedDiagonal` multiplication
 
 **Success Criteria:**
-- [ ] MixedDiagonal correctly stores mixed 1x1/2x2 blocks
-- [ ] Solve with mixed D works correctly
-- [ ] Permutation wrapper validated
-- [ ] Efficient access patterns
+- [ ] MixedDiagonal correctly stores mixed 1×1/2×2 blocks
+- [ ] `solve_in_place` produces correct results for mixed block patterns
+- [ ] PivotType tracks 1×1, 2×2, and delayed states
+- [ ] Block2x2 solve is numerically correct (2×2 symmetric system)
+- [ ] Efficient access patterns (no unnecessary allocation in solve)
 
-**Time Estimate:** 2-3 days
-
-#### 2.3: Integration with Test Infrastructure
-**Task:** Connect faer matrices to test framework
-
-**Implementation:**
-
-```rust
-impl SolverTestCase {
-    pub fn from_matrix_market<P: AsRef<Path>>(path: P)
-        -> Result<Self> {
-        let matrix = crate::io::read_matrix_market(path)?;
-        // Extract metadata, create test case
-        todo!()
-    }
-
-    pub fn matrix(&self) -> AptpMatrixRef<'_, f64>;
-}
-
-// Test suite accessor using faer matrices
-pub fn all_test_cases() -> Vec<SolverTestCase> {
-    // Load all matrices from test-data/ using faer
-}
-```
-
-**Success Criteria:**
-- [ ] Test infrastructure works with faer types
-- [ ] All test matrices loadable
-- [ ] Easy to add new matrices
-
-**Time Estimate:** 1 day
+**Time Estimate:** 2–3 days
 
 ### Phase 2 Exit Criteria
 
 **Required Outcomes:**
-1. faer-sparse types integrated and usable
-2. APTP-specific structures (MixedDiagonal, pivot tracking) implemented and tested
-3. All test matrices loadable via faer
-4. Test infrastructure using faer types
+1. APTP-specific structures (`MixedDiagonal`, `PivotType`, `Block2x2`) implemented and tested
+2. Type aliases defined (or decision documented to use faer types directly)
+3. Permutation strategy decided (faer `Perm<I>` vs custom wrapper)
 
 **Validation Questions:**
-- Can we load all test matrices using faer?
-- Do APTP-specific structures work correctly?
-- Is the API clean and ergonomic?
+- Do APTP-specific structures handle all pivot patterns correctly?
+- Does `MixedDiagonal::solve_in_place` match analytical solutions on hand-constructed cases?
+- Are the structures efficient enough for the factorization inner loop?
 
-**Checkpoint:** Load entire test suite using faer. Verify MixedDiagonal solve correctness on hand-constructed examples.
-
-**Time Estimate:** 3-5 days (reduced from 2-3 weeks by leveraging faer)
+**Checkpoint:** Verify MixedDiagonal solve correctness on hand-constructed examples with
+mixed 1×1/2×2 patterns. Demonstrate PivotType tracking across a sequence of set operations.
 
 ---
 
