@@ -626,7 +626,6 @@ direct usage is readable. This can be revisited if the API surface grows signifi
 
 ### Deliverables
 
-#### 2.1: APTP-Specific Storage Structures
 **Task:** Define data structures unique to indefinite APTP factorization
 
 These structures are the foundation for the numeric factorization kernel (Phase 5)
@@ -771,7 +770,6 @@ it's accessible through `SymbolicCholesky::raw()`.
 
 ### Deliverables
 
-#### 3.1: Symbolic Analysis Wrapper
 **Task:** Build `AptpSymbolic` as a thin composition over faer's symbolic pipeline,
 adding APTP-specific delayed-pivot buffer estimation
 
@@ -915,449 +913,214 @@ predicted NNZ is reasonable. Demonstrate custom ordering passthrough.
 
 ---
 
-## Phase 4: Ordering & Scaling (Partial faer Reuse)
+## Phase 4: MC64 Matching & Scaling
 
 ### Objectives
-Integrate ordering algorithms: reuse faer's AMD, add METIS wrapper, implement MC64 matching-based ordering for indefinite systems.
+Implement MC64 matching-based ordering and scaling for indefinite systems. This is the
+only ordering work needed beyond what faer already provides — AMD, identity, and custom
+orderings are already handled by Phase 3's `SymmetricOrdering` API.
+
+### What was already completed / absorbed
+
+The original plan had four sub-deliverables (4.1–4.4). After the Phase 3 transparent
+composition decision, most are absorbed:
+
+- **4.1 (Ordering framework)**: Absorbed by Phase 3. faer's `SymmetricOrdering` enum
+  already provides `Amd`, `Identity`, and `Custom(PermRef)`. No framework to build.
+- **4.3 (Combined ordering)**: Thin — just `mc64_perm * amd_perm` via faer's `Perm`
+  multiplication, then `SymmetricOrdering::Custom(combined.as_ref())`. Documented as
+  a usage pattern, not a separate deliverable.
+- **4.4 (Integration with analysis)**: Completely absorbed. `AptpSymbolic::analyze()`
+  already accepts ordering as input and stores the permutation. No `AnalysisWithOrdering`
+  struct needed.
+
+### Design Decisions
+
+#### Use `Perm<usize>` not custom `Permutation` (decided, Phase 2)
+
+The original plan defined a custom `Permutation` struct with forward/inverse arrays,
+`identity()`, `from_vec()`, `compose()`, etc. Per the Phase 2 decision, all permutation
+handling uses faer's `Perm<usize>` directly. The custom struct is deleted. See Phase 2
+design decisions for details.
+
+#### METIS ordering: deferred
+
+METIS (nested dissection) is deferred. Rationale:
+- AMD (already available via faer) is adequate for initial development
+- METIS adds a C FFI dependency (libmetis)
+- METIS primarily benefits very large problems and is most valuable with supernodal
+  factorization (Phase 9), where nested dissection creates favorable separator structure
+- The solver works correctly without METIS — it's a fill-reduction optimization
+
+**Where METIS plugs in:** A `metis_ordering(matrix) -> Perm<usize>` function that
+gets passed to `AptpSymbolic::analyze()` as `SymmetricOrdering::Custom(perm.as_ref())`.
+Same slot as any other ordering, no API changes needed. Consider adding alongside
+supernodal optimization (Phase 9) or as an independent enhancement at any later point.
+
+#### Scaling flows to numeric phase, not symbolic (decided)
+
+MC64 produces two outputs with different consumers:
+- **Permutation** (`Perm<usize>`) → feeds into Phase 3 as `SymmetricOrdering::Custom`
+- **Scaling** (`Vec<f64>`) → feeds into Phase 5 numeric factorization
+
+For symmetric matrices, scaling is Â_ij = s_i · A_ij · s_j (same vector for rows and
+columns). Scaling does not affect sparsity structure, so Phase 3 (symbolic) never sees it.
+The numeric pipeline applies scaling before factorization and reverses it after solve:
+
+1. Scale: Â = S A S
+2. Factorize: Â = P^T L D L^T P
+3. Solve: b̂ = S b, solve Â x̂ = b̂, then x = S x̂
+
+MC64 returns `(Perm<usize>, Vec<f64>)` as a pure function. The exact API for threading
+scaling into numeric factorization is deferred to Phase 5 design.
 
 ### Deliverables
 
-#### 4.1: Ordering Framework (Reuse AMD from faer)
-**Task:** Set up ordering interface and leverage faer's AMD implementation
-
-**Approach:**
-faer provides AMD; we add METIS and matching-based orderings.
-
-**Implementation:**
-
-```rust
-use faer::sparse::linalg::amd;
-use metis::Graph;
-
-pub enum OrderingMethod {
-    Natural,          // No reordering
-    Amd,             // AMD via faer
-    Metis,           // Nested dissection (new)
-    Mc64Amd,         // MC64 + AMD for indefinite (new)
-    Custom(Vec<usize>),
-}
-
-pub fn compute_ordering(
-    matrix: SymbolicSparseColMatRef<'_, usize>,
-    method: OrderingMethod,
-) -> Result<Permutation> {
-    match method {
-        OrderingMethod::Natural => {
-            Ok(Permutation::identity(matrix.nrows()))
-        }
-        OrderingMethod::Amd => {
-            // Use faer's AMD directly
-            let perm_data = amd::order(matrix, Default::default())?;
-            Ok(Permutation::from_faer(perm_data))
-        }
-        OrderingMethod::Metis => {
-            // New implementation
-            metis_nested_dissection(matrix)
-        }
-        OrderingMethod::Mc64Amd => {
-            // New: matching + AMD
-            mc64_then_amd(matrix)
-        }
-        OrderingMethod::Custom(perm) => {
-            Permutation::from_vec(perm)
-        }
-    }
-}
-
-pub struct Permutation {
-    perm: Vec<usize>,      // forward: old -> new
-    inv_perm: Vec<usize>,  // inverse: new -> old
-}
-
-impl Permutation {
-    pub fn identity(n: usize) -> Self {
-        let perm: Vec<usize> = (0..n).collect();
-        Self {
-            inv_perm: perm.clone(),
-            perm,
-        }
-    }
-
-    pub fn from_vec(perm: Vec<usize>) -> Result<Self> {
-        let n = perm.len();
-        let mut inv_perm = vec![0; n];
-        for (new_pos, &old_pos) in perm.iter().enumerate() {
-            inv_perm[old_pos] = new_pos;
-        }
-        Ok(Self { perm, inv_perm })
-    }
-
-    pub fn from_faer(perm: faer::perm::PermRef<'_, usize>) -> Self {
-        Self::from_vec(perm.arrays().0.to_vec()).unwrap()
-    }
-
-    pub fn apply<T: Clone>(&self, x: &[T]) -> Vec<T> {
-        self.perm.iter().map(|&i| x[i].clone()).collect()
-    }
-
-    pub fn is_valid(&self) -> bool {
-        let n = self.perm.len();
-        let mut seen = vec![false; n];
-        for &p in &self.perm {
-            if p >= n || seen[p] {
-                return false;
-            }
-            seen[p] = true;
-        }
-        true
-    }
-}
-
-// METIS-specific implementation (new code)
-fn metis_nested_dissection(
-    matrix: SymbolicSparseColMatRef<'_, usize>
-) -> Result<Permutation> {
-    // Convert to METIS graph format
-    let graph = matrix_to_metis_graph(matrix)?;
-
-    // Call METIS for nested dissection ordering
-    let perm = graph.part_nd()?;
-
-    Ok(Permutation::from_vec(perm)?)
-}
-```
-
-**Testing:**
-
-```rust
-#[test]
-fn test_metis_ordering() {
-    let pattern = load_pattern("laplacian-2d-100");
-
-    let perm = compute_ordering(&pattern, OrderingMethod::METIS)
-        .unwrap();
-
-    // Permutation should be valid
-    assert!(perm.is_valid());
-    assert_eq!(perm.len(), pattern.n);
-
-    // Should reduce fill-in
-    let natural_nnz = predict_fill(&pattern, &Permutation::identity(pattern.n));
-    let metis_nnz = predict_fill(&pattern, &perm);
-
-    assert!(metis_nnz <= natural_nnz);
-}
-
-#[test]
-fn test_ordering_quality() {
-    for case in test_cases_by_difficulty(Difficulty::Hard) {
-        let pattern = case.matrix.pattern();
-
-        let natural = Permutation::identity(pattern.n);
-        let metis = compute_ordering(pattern, OrderingMethod::METIS)
-            .unwrap();
-
-        let natural_analysis = SymbolicAnalysis::analyze_with_ordering(
-            pattern, &natural
-        );
-        let metis_analysis = SymbolicAnalysis::analyze_with_ordering(
-            pattern, &metis
-        );
-
-        // METIS should not increase fill-in
-        assert!(metis_analysis.predicted_nnz
-               <= natural_analysis.predicted_nnz * 1.1);
-    }
-}
-```
-
-**Success Criteria:**
-- [ ] METIS ordering reduces fill-in on test matrices
-- [ ] Integration with metis-rs crate works
-- [ ] Ordering quality comparable to SPRAL
-
-#### 4.2: MC64 Matching Algorithm
-**Task:** Implement maximum matching for indefinite matrices
+#### 4.1: MC64 Matching Algorithm
+**Task:** Implement weighted bipartite matching for indefinite matrix preprocessing
 
 **Algorithm Reference:**
-- Duff & Koster (2001) - "On algorithms for permuting large entries to the diagonal"
+- Duff & Koster (2001) — "On algorithms for permuting large entries to the diagonal of a
+  sparse matrix", SIAM J. Matrix Anal. Appl.
 
-**Implementation:**
+**Approach:**
+MC64 computes a weighted bipartite matching that permutes large entries onto the diagonal,
+improving diagonal dominance for indefinite systems. For APTP, this reduces the number of
+delayed pivots. The algorithm also produces symmetric scaling factors.
+
+faer has no matching or scaling functionality — this is genuinely new code.
+
+**Notional API** (to be refined during speccing):
 
 ```rust
-pub struct MatchingResult {
-    pub permutation: Permutation,
+use faer::perm::Perm;
+use faer::sparse::SparseColMat;
+
+/// Result of MC64 matching-based preprocessing.
+pub struct Mc64Result {
+    /// Matching permutation (maximizes diagonal product).
+    pub perm: Perm<usize>,
+    /// Symmetric scaling factors: Â_ij = s_i * A_ij * s_j.
     pub scaling: Vec<f64>,
-    pub matched: usize,  // Number of matched entries
+    /// Number of matched diagonal entries.
+    pub matched: usize,
 }
 
+pub enum Mc64Job {
+    /// Maximize product of diagonal entries (default for APTP).
+    MaximumProduct,
+    /// Maximize sum of diagonal entries.
+    MaximumSum,
+}
+
+/// Compute MC64 matching and scaling for a symmetric sparse matrix.
 pub fn mc64_matching(
-    matrix: &SparseColMat<f64>,
-    job: MC64Job
-) -> Result<MatchingResult>;
+    matrix: &SparseColMat<usize, f64>,
+    job: Mc64Job,
+) -> Result<Mc64Result, SparseError>;
+```
 
-pub enum MC64Job {
-    MaximumProduct,      // Maximize product of diagonal
-    MaximumSum,          // Maximize sum (for scaling)
-    MaximumMin,          // Maximize minimum diagonal
-}
+**Usage with Phase 3 (ordering) and Phase 5 (scaling):**
 
-// Hungarian algorithm implementation
-fn hungarian_algorithm(
-    cost_matrix: &[Vec<f64>]
-) -> Vec<usize>;
+```rust
+// MC64 produces permutation + scaling
+let mc64 = mc64_matching(&matrix, Mc64Job::MaximumProduct)?;
 
-// Auction algorithm (faster alternative)
-pub fn auction_scaling(
-    matrix: &SparseColMat<f64>,
-    params: AuctionParams
-) -> Result<MatchingResult>;
+// Permutation feeds into symbolic analysis via SymmetricOrdering::Custom
+let symbolic = AptpSymbolic::analyze(
+    matrix.symbolic(),
+    SymmetricOrdering::Custom(mc64.perm.as_ref()),
+)?;
 
-pub struct AuctionParams {
-    pub epsilon: f64,
-    pub max_iterations: usize,
-}
+// Scaling feeds into numeric factorization (Phase 5 — API TBD)
+// let numeric = factorize(&matrix, &symbolic, Some(&mc64.scaling))?;
+```
+
+**Combined ordering (MC64 + AMD):**
+
+```rust
+// When both matching and fill-reduction are desired:
+// 1. Compute MC64 matching permutation
+let mc64 = mc64_matching(&matrix, Mc64Job::MaximumProduct)?;
+// 2. Run symbolic analysis with AMD on the matched pattern
+//    (faer applies AMD internally when using SymmetricOrdering::Amd)
+// 3. The effective ordering is the composition of both permutations
+//    This is handled internally by factorize_symbolic_cholesky when
+//    the matrix is pre-permuted, or can be composed explicitly:
+let combined = mc64.perm * amd_perm;  // faer Perm composition
 ```
 
 **Testing:**
 
 ```rust
 #[test]
-fn test_mc64_basic() {
-    // Matrix with small diagonal elements
+fn test_mc64_produces_valid_matching() {
     let matrix = create_badly_scaled_matrix();
-
-    let result = mc64_matching(&matrix, MC64Job::MaximumProduct)
-        .unwrap();
+    let result = mc64_matching(&matrix, Mc64Job::MaximumProduct).unwrap();
 
     // Should find full matching
     assert_eq!(result.matched, matrix.nrows());
-
-    // Diagonal should be larger after permutation + scaling
-    let scaled = matrix
-        .permute_symmetric(&result.permutation)
-        .scale_symmetric(&result.scaling);
-
-    let diag_before = matrix.diagonal_max();
-    let diag_after = scaled.diagonal_max();
-
-    assert!(diag_after >= diag_before);
+    // Scaling factors should be positive
+    assert!(result.scaling.iter().all(|&s| s > 0.0));
 }
 
 #[test]
-fn test_auction_vs_mc64() {
+fn test_mc64_improves_diagonal_dominance() {
     for case in test_cases_indefinite() {
-        let mc64_result = mc64_matching(
-            &case.matrix,
-            MC64Job::MaximumProduct
-        ).unwrap();
+        let result = mc64_matching(&case.matrix, Mc64Job::MaximumProduct).unwrap();
 
-        let auction_result = auction_scaling(
-            &case.matrix,
-            AuctionParams::default()
-        ).unwrap();
+        // Apply permutation and scaling
+        let scaled = apply_mc64(&case.matrix, &result);
 
-        // Both should find full matching
-        assert_eq!(mc64_result.matched, case.matrix.nrows());
-        assert_eq!(auction_result.matched, case.matrix.nrows());
-
-        // Quality should be similar (within 10%)
-        let mc64_quality = measure_scaling_quality(
-            &case.matrix, &mc64_result
-        );
-        let auction_quality = measure_scaling_quality(
-            &case.matrix, &auction_result
-        );
-
-        assert!((mc64_quality - auction_quality).abs() / mc64_quality < 0.1);
+        // Diagonal entries should be larger relative to off-diagonal
+        let dominance_before = diagonal_dominance_metric(&case.matrix);
+        let dominance_after = diagonal_dominance_metric(&scaled);
+        assert!(dominance_after >= dominance_before);
     }
 }
-```
 
-**Success Criteria:**
-- [ ] MC64 produces valid matching
-- [ ] Improves diagonal dominance
-- [ ] Auction algorithm is faster with similar quality
-
-#### 4.3: Combined Ordering Strategy
-**Task:** Implement matching-based ordering for indefinite systems
-
-**Implementation:**
-
-```rust
-pub fn matching_based_ordering(
-    matrix: &SparseColMat<f64>,
-    params: MatchingOrderingParams
-) -> Result<(Permutation, Vec<f64>)> {
-    // 1. Compute matching to identify large off-diagonal entries
-    let matching = mc64_matching(matrix, MC64Job::MaximumProduct)?;
-
-    // 2. Apply matching permutation
-    let matched_matrix = matrix.permute_symmetric(&matching.permutation);
-
-    // 3. Constrained METIS ordering that keeps matched entries near diagonal
-    let ordering = constrained_metis_ordering(
-        &matched_matrix,
-        &matching,
-        params
-    )?;
-
-    // 4. Combine permutations
-    let combined_perm = matching.permutation.compose(&ordering);
-
-    Ok((combined_perm, matching.scaling))
-}
-
-pub struct MatchingOrderingParams {
-    pub matching_algorithm: MatchingAlgorithm,
-    pub ordering_method: OrderingMethod,
-    pub scaling_method: ScalingMethod,
-}
-
-pub enum MatchingAlgorithm {
-    MC64,
-    Auction,
-}
-
-pub enum ScalingMethod {
-    None,
-    MC64,
-    Auction,
-    EquilibrationIterative,
-}
-```
-
-**Testing:**
-
-```rust
 #[test]
-fn test_matching_ordering_on_hard_indefinite() {
-    for case in test_cases_by_difficulty(Difficulty::Hard) {
-        let (perm, scaling) = matching_based_ordering(
-            &case.matrix,
-            MatchingOrderingParams::default()
-        ).unwrap();
+fn test_mc64_perm_works_with_symbolic_analysis() {
+    let matrix = load_test_matrix("arrow-10-indef").unwrap();
+    let mc64 = mc64_matching(&matrix, Mc64Job::MaximumProduct).unwrap();
 
-        // Analyze with this ordering
-        let reordered = case.matrix
-            .permute_symmetric(&perm)
-            .scale_symmetric(&scaling);
+    // Should integrate cleanly with Phase 3 API
+    let symbolic = AptpSymbolic::analyze(
+        matrix.symbolic(),
+        SymmetricOrdering::Custom(mc64.perm.as_ref()),
+    ).unwrap();
 
-        let analysis = SymbolicAnalysis::analyze(
-            reordered.pattern(),
-            AnalysisOptions::default()
-        );
-
-        // Should have reasonable fill-in
-        if let Some(ref_results) = case.reference {
-            // Should be within 20% of SPRAL's fill-in
-            let ratio = analysis.predicted_nnz as f64
-                       / ref_results.predicted_nnz as f64;
-            assert!(ratio < 1.2);
-        }
-    }
+    assert!(symbolic.predicted_nnz() > 0);
 }
 ```
 
 **Success Criteria:**
-- [ ] Matching-based ordering works on hard indefinite problems
-- [ ] Fill-in comparable to SPRAL
-- [ ] Numerical stability improved
+- [ ] MC64 produces valid matching (full matching on test suite)
+- [ ] Improves diagonal dominance on indefinite matrices
+- [ ] Scaling factors are positive and well-conditioned
+- [ ] Permutation integrates with Phase 3 via `SymmetricOrdering::Custom`
+- [ ] Returns `(Perm<usize>, Vec<f64>)` — no custom `Permutation` type
 
-#### 4.4: Integration with Analysis
-**Task:** Connect ordering/scaling to symbolic analysis
-
-**Implementation:**
-
-```rust
-pub struct AnalysisWithOrdering {
-    pub analysis: SymbolicAnalysis,
-    pub permutation: Permutation,
-    pub scaling: Option<Vec<f64>>,
-}
-
-impl AnalysisWithOrdering {
-    pub fn analyze_full(
-        matrix: &SparseColMat<f64>,
-        options: AnalysisOptions
-    ) -> Result<Self> {
-        // 1. Compute ordering and scaling
-        let (perm, scaling) = match options.ordering_method {
-            OrderingMethod::METIS => {
-                let p = compute_ordering(matrix.pattern(), OrderingMethod::METIS)?;
-                (p, None)
-            }
-            OrderingMethod::MatchingAMD => {
-                let (p, s) = matching_based_ordering(matrix, options.matching_params)?;
-                (p, Some(s))
-            }
-            // ... other methods
-        };
-
-        // 2. Apply permutation to pattern
-        let reordered_pattern = matrix.pattern()
-            .permute_symmetric(&perm);
-
-        // 3. Perform symbolic analysis
-        let analysis = SymbolicAnalysis::analyze(
-            &reordered_pattern,
-            options
-        );
-
-        Ok(Self {
-            analysis,
-            permutation: perm,
-            scaling,
-        })
-    }
-}
-```
-
-**Testing:**
-
-```rust
-#[test]
-fn test_full_analysis_pipeline() {
-    for case in all_test_cases() {
-        let result = AnalysisWithOrdering::analyze_full(
-            &case.matrix,
-            AnalysisOptions {
-                ordering_method: OrderingMethod::MatchingAMD,
-                ..Default::default()
-            }
-        ).unwrap();
-
-        // Should produce valid analysis
-        assert!(result.analysis.predicted_nnz > 0);
-
-        // Compare with reference
-        if let Some(ref_results) = case.reference {
-            compare_analysis(&result.analysis, &ref_results);
-        }
-    }
-}
-```
-
-**Success Criteria:**
-- [ ] Full analysis pipeline works end-to-end
-- [ ] Ordering choices affect fill-in as expected
-- [ ] Results match SPRAL's analysis
+**Time Estimate:** 5–7 days
 
 ### Phase 4 Exit Criteria
 
 **Required Outcomes:**
-1. METIS ordering integrated and tested
-2. MC64 matching produces quality results
-3. Matching-based ordering works on hard indefinite matrices
-4. Full analysis pipeline validated on test suite
-5. Ordering quality comparable to SPRAL
+1. MC64 matching produces valid matchings on all indefinite test matrices
+2. Scaling improves diagonal dominance measurably
+3. Permutation integrates with `AptpSymbolic::analyze()` via `SymmetricOrdering::Custom`
+4. Combined MC64 + AMD ordering demonstrated
+5. Scaling vector stored and documented for Phase 5 consumption
 
 **Validation Questions:**
-- Does ordering reduce fill-in significantly?
-- Does matching improve stability on hard indefinite problems?
-- Are we making good ordering choices automatically?
+- Does MC64 find full matching on hard indefinite problems?
+- Does scaling improve diagonal dominance (reduce off-diagonal/diagonal ratio)?
+- Does the MC64 permutation reduce delayed pivots compared to AMD alone? (May need Phase 5
+  to fully validate — can check indirectly via diagonal dominance metrics.)
 
-**Checkpoint:** Run full analysis (with ordering/scaling) on entire test suite. Compare fill-in predictions with SPRAL. Should be within 20% on hard indefinite problems.
+**Checkpoint:** Run MC64 on indefinite test matrices. Verify full matching, positive scaling
+factors, and improved diagonal dominance. Demonstrate integration with Phase 3 symbolic
+analysis.
 
 ---
 
@@ -3096,6 +2859,9 @@ Simplicial (column-by-column) APTP works but is inefficient for large dense bloc
 - Lower parallelism potential
 
 Supernodal factorization processes dense blocks together, achieving 2-5x speedup on large problems.
+
+**NOTE**: Consider evaluating METIS integration as an optimization here.
+See notes on deferral from Phase 4
 
 ### Deliverables
 
