@@ -73,6 +73,28 @@ Unlike traditional threshold pivoting (which decides pivots before elimination),
 
 This allows better data locality and parallelism while maintaining numerical stability.
 
+## faer Integration: Transparent Composition
+
+This library is a **specialized extension of faer**, not a competing implementation.
+The guiding principle is **transparent composition**: use the highest-level faer API
+that gives us what we need, expose faer types at our boundary, and only add new types
+for concepts faer doesn't have.
+
+**Concrete guidelines:**
+
+- **Accept faer types as inputs**: `SparseColMat<usize, f64>`, `PermRef`, `SymmetricOrdering`, `SymbolicSparseColMatRef`
+- **Return faer types where they fit**: permutations as `Perm<usize>` (not custom wrappers), sparse matrices as `SparseColMat`
+- **Compose, don't wrap**: our structs contain faer results as fields with accessor methods that delegate, rather than copying data into our own arrays (e.g., `AptpSymbolic` stores `SymbolicCholesky<usize>` and delegates `perm()`, `predicted_nnz()`)
+- **Only add types for genuinely new concepts**: `PivotType`, `MixedDiagonal`, `AptpSymbolic` — things faer doesn't model
+- **Prefer high-level faer APIs over low-level primitives**: use `factorize_symbolic_cholesky` over manual `prefactorize_symbolic_cholesky` + `factorize_simplicial_symbolic_cholesky`, unless we need fine-grained control
+
+**Anti-patterns to avoid:**
+
+- Defining a custom `Permutation` struct when `faer::perm::Perm<usize>` works
+- Adding type aliases like `AptpMatrix<T>` for `SparseColMat<usize, f64>` — faer types are already well-named
+- Re-implementing CSC storage, elimination tree computation, or AMD ordering
+- Hiding faer types behind opaque wrappers that prevent interop with the faer ecosystem
+
 ## Code Architecture
 
 **Numerical Considerations:**
@@ -111,6 +133,9 @@ When implementing a new component:
 - Sort imports by: std, external, workspace, crate, super
 - Limit scope to minimum necessary (private over `pub(crate)` over `pub`, etc.)
 - No `.unwrap()` in non-test code
+- Always use `cargo fmt --check`, `cargo clippy`, and `cargo test` before considering any implementation complete
+- Pay special attention to Rust edition-specific reserved keywords (e.g., `gen` is reserved in Rust 2024)
+- When using faer or other Rust crates, always verify API types by reading the actual source/docs before using them. Do not assume tuple-based constructors — check for dedicated types like `Triplet`.
 
 Preferences (can be violated if needed)
 - Immutability over mutation
@@ -166,6 +191,7 @@ Preferences (can be violated if needed)
 - Rust 1.87+ (edition 2024) + faer 0.22, criterion 0.5, serde/serde_json (existing) (006-benchmarking-framework)
 - JSON files for baselines (`target/benchmarks/baselines/`), CSV for exports (006-benchmarking-framework)
 - YAML (GitHub Actions workflow) + Rust 1.87+ (edition 2024) + GitHub Actions (`actions/checkout@v4`, `dtolnay/rust-toolchain@master`, `Swatinem/rust-cache@v2`) (007-ci-setup)
+- Rust 1.87+ (edition 2024) + faer 0.22 (sparse matrix types), serde/serde_json (Chrome Trace JSON export), std only for timing/threading (no new external deps) (008-profiling-debug-tools)
 
 ## Testing Strategy
 
@@ -183,5 +209,5 @@ Test infrastructure (Phase 0.5):
 - Random matrix generators (PD and indefinite) behind `test-util` feature
 
 ## Recent Changes
+- 008-profiling-debug-tools: Added Rust 1.87+ (edition 2024) + faer 0.22 (sparse matrix types), serde/serde_json (Chrome Trace JSON export), std only for timing/threading (no new external deps)
 - 007-ci-setup: Added YAML (GitHub Actions workflow) + Rust 1.87+ (edition 2024) + GitHub Actions (`actions/checkout@v4`, `dtolnay/rust-toolchain@master`, `Swatinem/rust-cache@v2`)
-- 006-benchmarking-framework: Added Rust 1.87+ (edition 2024) + faer 0.22, criterion 0.5, serde/serde_json (existing)

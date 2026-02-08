@@ -1,5 +1,82 @@
 # SSIDS Development Log
 
+## Phase 1.4: Profiling and Debug Tools
+
+**Status**: Complete
+**Branch**: `008-profiling-debug-tools`
+**Date**: 2026-02-08
+
+### What Was Built
+
+Profiling, memory tracking, and debug visualization tools for solver development,
+gated behind the existing `test-util` Cargo feature flag.
+
+**Profiling module** (`src/profiling/`, feature-gated behind `test-util`):
+- `section.rs` — `ProfileEvent` (raw timing record) and `ProfileSection` (aggregated
+  view with call count, min/max/mean duration, parent percentage, recursive children)
+- `session.rs` — `ProfileSession` (thread-safe via `Send + Sync`, records to
+  thread-local storage for zero-contention), `SectionGuard` (RAII, `!Send`),
+  `FinishedSession` (merged events + aggregated section tree),
+  `flush_thread_events()` for multi-threaded collection via shared `Mutex<HashMap>`
+- `report.rs` — `summary_report()` (hierarchical text table with Section/Total/Calls/
+  Mean/Min/Max/Parent% columns), `export_chrome_trace()` (Chrome Trace Event format
+  JSON with Complete Events type "X", microsecond timestamps, per-thread tid)
+- `memory.rs` — `MemoryTracker` (snapshot-based RSS recording), `MemorySnapshot`,
+  `MemoryDelta`, `MemoryReport` with `display_report()` (formatted table with
+  comma-separated KB values, delta signs, peak RSS footer with MB conversion)
+
+**Debug module** (`src/debug/`, feature-gated behind `test-util`):
+- `sparsity.rs` — `SparsityDisplay` with builder pattern (`from_sparse`,
+  `with_max_width/height/ascii_only`), density-based character mapping
+  (Unicode `█▓▒░.` / ASCII `#+-. `), configurable downsampling for large
+  matrices, `fmt::Display` impl
+- `etree.rs` — `ETreeDisplay` (`from_parent_array` with root detection via
+  `parent[i]==i` or sentinel), `render_tree()` with box-drawing characters
+  (├── └── │) for small trees (n<20, falls back to stats for larger),
+  `render_stats()` and `stats()` → `EliminationTreeStats` (depth, leaves,
+  branching min/max/mean, subtree sizes with median)
+
+**Extended utility** (`src/benchmarking/rss.rs`):
+- Added `read_current_rss_kb()` reading `VmRSS` from `/proc/self/status`
+- Refactored shared `read_proc_status_field()` helper
+
+**Tests**: 74 new tests (28 profiling + 18 memory + 14 sparsity + 14 etree),
+all passing. Integration test validates SparsityDisplay on all 15 hand-constructed
+matrices. Full clippy + rustdoc clean.
+
+### Key Decisions
+
+1. **Thread-local storage for profiling**: Each thread records events into its own
+   `RefCell<Vec<RawEvent>>` via `thread_local!` — zero contention during recording.
+   Worker threads call `flush_thread_events()` to move events to a shared
+   `LazyLock<Mutex<HashMap>>` before the session owner calls `finish()`.
+
+2. **Chrome Trace Complete Events**: Type "X" events (vs Begin/End pairs) are simpler
+   to emit and represent full duration in a single record. Hierarchy is implicit from
+   overlapping time ranges on the same tid.
+
+3. **RSS import from benchmarking module**: Memory tracker imports `read_current_rss_kb`
+   and `read_peak_rss_kb` directly from `crate::benchmarking::rss` rather than factoring
+   into a shared utility module. Both modules are behind `test-util`, so the dependency
+   direction is clean.
+
+4. **Density-based sparsity visualization**: Unicode block characters (`█▓▒░`) at 4
+   density levels with ASCII fallback (`#+-`). Downsampling bins rows/columns into
+   display cells and computes non-zero density per bin.
+
+5. **Peer modules, no coupling**: `profiling` and `debug` are independent peer modules
+   with no cross-imports. Either can be used without the other.
+
+### Issues Encountered
+
+- **`Mutex::new` not const in HashMap context**: `static SHARED_FLUSHED: Mutex<HashMap<...>>`
+  requires `LazyLock` wrapper since `HashMap::new()` is not a const fn.
+
+- **Clippy type_complexity**: The `LazyLock<Mutex<HashMap<u64, Vec<(usize, RawEvent)>>>>`
+  type triggered clippy. Fixed with a type alias.
+
+---
+
 ## Phase 1.3: Continuous Integration Setup
 
 **Status**: Complete
