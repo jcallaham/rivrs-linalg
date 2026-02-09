@@ -1,5 +1,102 @@
 # SSIDS Development Log
 
+## Phase 2: APTP Data Structures
+
+**Status**: Complete
+**Branch**: `009-aptp-data-structures`
+**Date**: 2026-02-08
+
+### What Was Built
+
+Core data structures for A Posteriori Threshold Pivoting (APTP) factorization,
+implementing the mixed 1x1/2x2 block diagonal D storage, pivot classification,
+inertia computation, and permutation construction.
+
+**APTP module** (`src/aptp/`):
+- `pivot.rs` — `PivotType` enum (`OneByOne`, `TwoByTwo { partner }`, `Delayed`)
+  for classifying column pivot decisions per Hogg, Duff & Lopez (2020) Section 3;
+  `Block2x2` struct storing symmetric 2x2 diagonal blocks `[[a, b], [b, c]]` with
+  `determinant()` and `trace()` methods, citing Bunch & Kaufman (1977)
+- `diagonal.rs` — `MixedDiagonal` struct with parallel array storage
+  (`pivot_map: Vec<PivotType>`, `diag_1x1: Vec<f64>`, `blocks_2x2: Vec<Block2x2>`,
+  `n: usize`); construction/query API (`new`, `set_1x1`, `set_2x2`, `get_pivot_type`,
+  `get_1x1`, `get_2x2`, `num_delayed`, `num_1x1`, `num_2x2_pairs`, `dimension`);
+  `solve_in_place` (1x1 via division, 2x2 via Cramer's rule); `compute_inertia`
+  (trace/determinant eigenvalue sign classification)
+- `inertia.rs` — `Inertia` struct relocated from `io/reference.rs` with backward-
+  compatible re-export; enhanced rustdoc citing eigenvalue inertia theory
+- `perm.rs` — `perm_from_forward` function bridging ordering output (forward
+  permutation array) to faer's `Perm<usize>` by computing inverse and calling
+  `Perm::new_checked`; validates via `validate::validate_permutation`
+- `mod.rs` — Module hub with re-exports of all public types
+
+**Integration tests** (`tests/aptp_data_structures.rs`):
+- `inertia_matches_all_15_hand_constructed_references` — constructs MixedDiagonal
+  from each reference factorization's DBlock entries, verifies `compute_inertia()`
+  matches reference inertia (SC-003)
+- `perm_from_forward_matches_hand_constructed_references` — passes reference
+  permutations through `perm_from_forward`, verifies forward/inverse relationship
+  (SC-004)
+
+**Tests**: 49 new tests (28 pivot/diagonal unit + 6 inertia unit + 9 perm unit +
+2 integration + 4 doc-tests), all passing. Total suite: 197 unit + 5 integration +
+4 doc-tests. Clippy, fmt, and rustdoc all clean.
+
+### Key Decisions
+
+1. **Parallel array storage for MixedDiagonal**: Three parallel arrays (`pivot_map`,
+   `diag_1x1`, `blocks_2x2`) rather than a single `Vec<PivotEntry>` enum. This
+   provides cache-friendly access patterns during solve (sequential scan of `diag_1x1`)
+   and avoids match-per-element overhead. Research finding R3 from spec.
+
+2. **Debug-assert for internal invariants**: `solve_in_place` and `compute_inertia`
+   use `debug_assert!` (not `Result`) for invariant violations like singular pivots
+   or delayed columns. These are programming errors in the calling code, not runtime
+   failures. The caller is responsible for ensuring no delayed columns remain before
+   solving.
+
+3. **Separate DBlock and MixedDiagonal types (FR-012)**: Reference factorization
+   `DBlock` (IO deserialization) and live factorization `MixedDiagonal` are
+   intentionally separate types. Integration tests bridge them with a local helper
+   function. This avoids coupling the IO layer to the factorization layer.
+
+4. **Inertia relocation with re-export**: Moved `Inertia` from `io/reference.rs`
+   to `aptp/inertia.rs` with `pub use crate::aptp::Inertia;` re-export in the
+   original location. Zero breakage to 154+ existing tests.
+
+5. **Transparent composition with faer**: `perm_from_forward` returns `Perm<usize>`
+   directly (no custom wrapper), following the project's faer integration principle.
+   Uses `Perm::new_checked` with owned `Box<[usize]>` arrays.
+
+6. **Cramer's rule for 2x2 solve**: Explicit `det = a*c - b²`, `x1 = (c*r1 - b*r2)/det`,
+   `x2 = (a*r2 - b*r1)/det` rather than computing an inverse matrix. Numerically
+   equivalent and avoids temporary allocation.
+
+7. **Trace/determinant inertia classification**: For 2x2 blocks, eigenvalue signs are
+   determined from det and trace without computing actual eigenvalues. det < 0 means
+   one positive + one negative; det > 0 with trace > 0 means both positive; det > 0
+   with trace < 0 means both negative. Research finding R2.
+
+### Issues Encountered
+
+- **faer `Perm::arrays()` on owned type**: Owned `Perm<usize>` does not have an
+  `.arrays()` method — it has `.into_arrays()` (consuming). The correct borrowing
+  approach is `.as_ref().arrays()` to get `(&[usize], &[usize])` without consuming
+  the permutation.
+
+- **Incremental re-exports in mod.rs**: Initially added all `pub use` re-exports
+  before types existed, causing unresolved import errors. Fixed by adding re-exports
+  incrementally as each type was implemented.
+
+- **Clippy `neg_multiply`**: `-1.0 * x[2]` flagged; simplified to `-x[2]`.
+
+### Feature Spec
+
+Full specification in `specs/009-aptp-data-structures/` including spec.md, plan.md,
+research.md, data-model.md, contracts/aptp-api.md, quickstart.md, and tasks.md.
+
+---
+
 ## Phase 1.4: Profiling and Debug Tools
 
 **Status**: Complete

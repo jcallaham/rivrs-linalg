@@ -31,6 +31,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+pub mod aptp;
 pub mod error;
 pub mod io;
 pub mod validate;

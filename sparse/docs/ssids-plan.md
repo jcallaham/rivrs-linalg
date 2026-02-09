@@ -17,16 +17,17 @@
 - Build on faer ecosystem and design patterns
 
 **Architecture Strategy:**
-- **Leverage faer infrastructure** (~70% reuse): CSC storage, elimination trees, AMD ordering, permutation utilities, workspace management
-- **Build APTP-specific components** (~30% new): 2x2 pivot logic, mixed diagonal storage, indefinite factorization kernel
-- **Simplicial first, supernodal later**: Start with column-by-column factorization (Phases 2-8), add supernodal optimization in Phase 9
+- **Leverage faer infrastructure** (~70% reuse): CSC storage, elimination trees, AMD ordering, permutation utilities, workspace management, supernodal symbolic analysis
+- **Build APTP-specific components** (~30% new): 2x2 pivot logic, mixed diagonal storage, multifrontal APTP factorization kernel
+- **Multifrontal from the start**: APTP is inherently a blocked algorithm operating on dense frontal matrices — a simplicial (column-by-column) implementation would be throwaway code. faer already provides simplicial LDL^T as a fallback for positive-definite or mildly indefinite problems. Our value-add is the APTP kernel, which requires frontal matrices. Phases 2-7 build the multifrontal solver directly; Phase 9 adds parallelism and performance optimization.
 - **Clean room implementation**: All code derived from BSD-licensed references (LAPACK, SLICOT-Reference, SPRAL) and academic papers
 
 **Development Timeline:**
-- Phases 0-8: Simplicial APTP solver (~12-16 weeks with faer reuse)
-- Phase 9: Supernodal optimization (~4-6 weeks)
-- Phases 10-11: Polish and release (~4-6 weeks)
-- **Total**: ~20-28 weeks to production-ready solver
+- Phases 0-1: Foundation, infrastructure, and tooling
+- Phases 2-5: APTP data structures, symbolic analysis, ordering, dense kernel
+- Phases 6-8: Multifrontal factorization, solve, end-to-end integration
+- Phase 9: Parallelization and performance optimization
+- Phases 10-11: Polish and release
 
 ---
 
@@ -547,7 +548,7 @@ Implemented as `src/profiling/` and `src/debug/` modules behind `test-util` feat
 
 ---
 
-## Phase 2: APTP Data Structures
+## Phase 2: APTP Data Structures (**COMPLETE**)
 
 ### Objectives
 Define the data structures unique to indefinite APTP factorization: mixed 1×1/2×2 diagonal
@@ -626,7 +627,6 @@ direct usage is readable. This can be revisited if the API surface grows signifi
 
 ### Deliverables
 
-#### 2.1: APTP-Specific Storage Structures
 **Task:** Define data structures unique to indefinite APTP factorization
 
 These structures are the foundation for the numeric factorization kernel (Phase 5)
@@ -699,12 +699,12 @@ impl<T: faer::RealField> MixedDiagonal<T> {
 - Property: `MixedDiagonal::solve_in_place` inverts `MixedDiagonal` multiplication
 
 **Success Criteria:**
-- [ ] MixedDiagonal correctly stores mixed 1×1/2×2 blocks
-- [ ] `solve_in_place` produces correct results for mixed block patterns
-- [ ] PivotType tracks 1×1, 2×2, and delayed states
-- [ ] Block2x2 solve is numerically correct (2×2 symmetric system)
-- [ ] Efficient access patterns (no unnecessary allocation in solve)
-- [ ] `perm_from_forward()` helper tested (round-trip with faer `Perm` operations)
+- [x] MixedDiagonal correctly stores mixed 1×1/2×2 blocks
+- [x] `solve_in_place` produces correct results for mixed block patterns
+- [x] PivotType tracks 1×1, 2×2, and delayed states
+- [x] Block2x2 solve is numerically correct (2×2 symmetric system)
+- [x] Efficient access patterns (no unnecessary allocation in solve)
+- [x] `perm_from_forward()` helper tested (round-trip with faer `Perm` operations)
 
 **Time Estimate:** 2–3 days
 
@@ -725,17 +725,10 @@ mixed 1×1/2×2 patterns. Demonstrate PivotType tracking across a sequence of se
 
 ---
 
-## Phase 3: Symbolic Analysis (Leverage faer, Defer Supernodes)
+## Phase 3: Symbolic Analysis (Leverage faer)
 
 ### Objectives
-Build symbolic analysis using faer's elimination tree construction. Focus on simplicial APTP initially; defer supernodal optimization to Phase 9.
-
-### Architecture Decision
-**Start with simplicial (column-by-column) APTP factorization:**
-- Simpler data structures
-- Easier 2x2 pivot handling
-- Faster path to working solver
-- Supernodal optimization becomes Phase 9
+Build symbolic analysis using faer's elimination tree construction.
 
 ### Design Decisions
 
@@ -769,9 +762,20 @@ provides `SymbolicSimplicialCholesky<I>` with the same data (col_ptr, row_idx) p
 methods (`len_val()`, `col_ptr()`, `row_idx()`, `factor()`). No need to duplicate this —
 it's accessible through `SymbolicCholesky::raw()`.
 
+#### Supernodal symbolic for multifrontal path (decided)
+
+`SymbolicCholesky<usize>` computes both simplicial and supernodal symbolic structure.
+The multifrontal factorization (Phase 6) needs access to the supernodal structure:
+supernode column ranges, assembly tree, row structure per supernode, and postorder
+traversal. `AptpSymbolic` should expose these through accessor methods that delegate
+to faer's `SymbolicSupernodalCholesky<I>` (accessible via `SymbolicCholesky::raw()`).
+
+This absorbs old Phase 9.1 (Supernode Detection) — faer handles supernode detection
+internally. If APTP-specific supernode adjustments are needed (e.g., due to delayed
+pivots crossing supernode boundaries), they can be handled at the numeric level.
+
 ### Deliverables
 
-#### 3.1: Symbolic Analysis Wrapper
 **Task:** Build `AptpSymbolic` as a thin composition over faer's symbolic pipeline,
 adding APTP-specific delayed-pivot buffer estimation
 
@@ -915,2404 +919,1037 @@ predicted NNZ is reasonable. Demonstrate custom ordering passthrough.
 
 ---
 
-## Phase 4: Ordering & Scaling (Partial faer Reuse)
+## Phase 4: MC64 Matching & Scaling
 
 ### Objectives
-Integrate ordering algorithms: reuse faer's AMD, add METIS wrapper, implement MC64 matching-based ordering for indefinite systems.
+Implement MC64 matching-based ordering and scaling for indefinite systems. This is the
+only ordering work needed beyond what faer already provides — AMD, identity, and custom
+orderings are already handled by Phase 3's `SymmetricOrdering` API.
+
+### What was already completed / absorbed
+
+The original plan had four sub-deliverables (4.1–4.4). After the Phase 3 transparent
+composition decision, most are absorbed:
+
+- **4.1 (Ordering framework)**: Absorbed by Phase 3. faer's `SymmetricOrdering` enum
+  already provides `Amd`, `Identity`, and `Custom(PermRef)`. No framework to build.
+- **4.3 (Combined ordering)**: Thin — just `mc64_perm * amd_perm` via faer's `Perm`
+  multiplication, then `SymmetricOrdering::Custom(combined.as_ref())`. Documented as
+  a usage pattern, not a separate deliverable.
+- **4.4 (Integration with analysis)**: Completely absorbed. `AptpSymbolic::analyze()`
+  already accepts ordering as input and stores the permutation. No `AnalysisWithOrdering`
+  struct needed.
+
+### Design Decisions
+
+#### Use `Perm<usize>` not custom `Permutation` (decided, Phase 2)
+
+The original plan defined a custom `Permutation` struct with forward/inverse arrays,
+`identity()`, `from_vec()`, `compose()`, etc. Per the Phase 2 decision, all permutation
+handling uses faer's `Perm<usize>` directly. The custom struct is deleted. See Phase 2
+design decisions for details.
+
+#### METIS ordering: deferred
+
+METIS (nested dissection) is deferred. Rationale:
+- AMD (already available via faer) is adequate for initial development
+- METIS adds a C FFI dependency (libmetis)
+- METIS primarily benefits very large problems and is most valuable with supernodal
+  factorization (Phase 9), where nested dissection creates favorable separator structure
+- The solver works correctly without METIS — it's a fill-reduction optimization
+
+**Where METIS plugs in:** A `metis_ordering(matrix) -> Perm<usize>` function that
+gets passed to `AptpSymbolic::analyze()` as `SymmetricOrdering::Custom(perm.as_ref())`.
+Same slot as any other ordering, no API changes needed. Consider adding alongside
+supernodal optimization (Phase 9) or as an independent enhancement at any later point.
+
+#### Scaling flows to numeric phase, not symbolic (decided)
+
+MC64 produces two outputs with different consumers:
+- **Permutation** (`Perm<usize>`) → feeds into Phase 3 as `SymmetricOrdering::Custom`
+- **Scaling** (`Vec<f64>`) → feeds into Phase 5 numeric factorization
+
+For symmetric matrices, scaling is Â_ij = s_i · A_ij · s_j (same vector for rows and
+columns). Scaling does not affect sparsity structure, so Phase 3 (symbolic) never sees it.
+The numeric pipeline applies scaling before factorization and reverses it after solve:
+
+1. Scale: Â = S A S
+2. Factorize: Â = P^T L D L^T P
+3. Solve: b̂ = S b, solve Â x̂ = b̂, then x = S x̂
+
+MC64 returns `(Perm<usize>, Vec<f64>)` as a pure function. The exact API for threading
+scaling into numeric factorization is deferred to Phase 5 design.
 
 ### Deliverables
 
-#### 4.1: Ordering Framework (Reuse AMD from faer)
-**Task:** Set up ordering interface and leverage faer's AMD implementation
-
-**Approach:**
-faer provides AMD; we add METIS and matching-based orderings.
-
-**Implementation:**
-
-```rust
-use faer::sparse::linalg::amd;
-use metis::Graph;
-
-pub enum OrderingMethod {
-    Natural,          // No reordering
-    Amd,             // AMD via faer
-    Metis,           // Nested dissection (new)
-    Mc64Amd,         // MC64 + AMD for indefinite (new)
-    Custom(Vec<usize>),
-}
-
-pub fn compute_ordering(
-    matrix: SymbolicSparseColMatRef<'_, usize>,
-    method: OrderingMethod,
-) -> Result<Permutation> {
-    match method {
-        OrderingMethod::Natural => {
-            Ok(Permutation::identity(matrix.nrows()))
-        }
-        OrderingMethod::Amd => {
-            // Use faer's AMD directly
-            let perm_data = amd::order(matrix, Default::default())?;
-            Ok(Permutation::from_faer(perm_data))
-        }
-        OrderingMethod::Metis => {
-            // New implementation
-            metis_nested_dissection(matrix)
-        }
-        OrderingMethod::Mc64Amd => {
-            // New: matching + AMD
-            mc64_then_amd(matrix)
-        }
-        OrderingMethod::Custom(perm) => {
-            Permutation::from_vec(perm)
-        }
-    }
-}
-
-pub struct Permutation {
-    perm: Vec<usize>,      // forward: old -> new
-    inv_perm: Vec<usize>,  // inverse: new -> old
-}
-
-impl Permutation {
-    pub fn identity(n: usize) -> Self {
-        let perm: Vec<usize> = (0..n).collect();
-        Self {
-            inv_perm: perm.clone(),
-            perm,
-        }
-    }
-
-    pub fn from_vec(perm: Vec<usize>) -> Result<Self> {
-        let n = perm.len();
-        let mut inv_perm = vec![0; n];
-        for (new_pos, &old_pos) in perm.iter().enumerate() {
-            inv_perm[old_pos] = new_pos;
-        }
-        Ok(Self { perm, inv_perm })
-    }
-
-    pub fn from_faer(perm: faer::perm::PermRef<'_, usize>) -> Self {
-        Self::from_vec(perm.arrays().0.to_vec()).unwrap()
-    }
-
-    pub fn apply<T: Clone>(&self, x: &[T]) -> Vec<T> {
-        self.perm.iter().map(|&i| x[i].clone()).collect()
-    }
-
-    pub fn is_valid(&self) -> bool {
-        let n = self.perm.len();
-        let mut seen = vec![false; n];
-        for &p in &self.perm {
-            if p >= n || seen[p] {
-                return false;
-            }
-            seen[p] = true;
-        }
-        true
-    }
-}
-
-// METIS-specific implementation (new code)
-fn metis_nested_dissection(
-    matrix: SymbolicSparseColMatRef<'_, usize>
-) -> Result<Permutation> {
-    // Convert to METIS graph format
-    let graph = matrix_to_metis_graph(matrix)?;
-
-    // Call METIS for nested dissection ordering
-    let perm = graph.part_nd()?;
-
-    Ok(Permutation::from_vec(perm)?)
-}
-```
-
-**Testing:**
-
-```rust
-#[test]
-fn test_metis_ordering() {
-    let pattern = load_pattern("laplacian-2d-100");
-
-    let perm = compute_ordering(&pattern, OrderingMethod::METIS)
-        .unwrap();
-
-    // Permutation should be valid
-    assert!(perm.is_valid());
-    assert_eq!(perm.len(), pattern.n);
-
-    // Should reduce fill-in
-    let natural_nnz = predict_fill(&pattern, &Permutation::identity(pattern.n));
-    let metis_nnz = predict_fill(&pattern, &perm);
-
-    assert!(metis_nnz <= natural_nnz);
-}
-
-#[test]
-fn test_ordering_quality() {
-    for case in test_cases_by_difficulty(Difficulty::Hard) {
-        let pattern = case.matrix.pattern();
-
-        let natural = Permutation::identity(pattern.n);
-        let metis = compute_ordering(pattern, OrderingMethod::METIS)
-            .unwrap();
-
-        let natural_analysis = SymbolicAnalysis::analyze_with_ordering(
-            pattern, &natural
-        );
-        let metis_analysis = SymbolicAnalysis::analyze_with_ordering(
-            pattern, &metis
-        );
-
-        // METIS should not increase fill-in
-        assert!(metis_analysis.predicted_nnz
-               <= natural_analysis.predicted_nnz * 1.1);
-    }
-}
-```
-
-**Success Criteria:**
-- [ ] METIS ordering reduces fill-in on test matrices
-- [ ] Integration with metis-rs crate works
-- [ ] Ordering quality comparable to SPRAL
-
-#### 4.2: MC64 Matching Algorithm
-**Task:** Implement maximum matching for indefinite matrices
+**Task:** Implement weighted bipartite matching for indefinite matrix preprocessing
 
 **Algorithm Reference:**
-- Duff & Koster (2001) - "On algorithms for permuting large entries to the diagonal"
+- Duff & Koster (2001) — "On algorithms for permuting large entries to the diagonal of a
+  sparse matrix", SIAM J. Matrix Anal. Appl. (/workspace/rivrs-linalg/references/ssids/duff2001.md)
 
-**Implementation:**
+**Approach:**
+MC64 computes a weighted bipartite matching that permutes large entries onto the diagonal,
+improving diagonal dominance for indefinite systems. For APTP, this reduces the number of
+delayed pivots. The algorithm also produces symmetric scaling factors.
+
+faer has no matching or scaling functionality — this is genuinely new code.
+
+**Notional API** (to be refined during speccing):
 
 ```rust
-pub struct MatchingResult {
-    pub permutation: Permutation,
+use faer::perm::Perm;
+use faer::sparse::SparseColMat;
+
+/// Result of MC64 matching-based preprocessing.
+pub struct Mc64Result {
+    /// Matching permutation (maximizes diagonal product).
+    pub perm: Perm<usize>,
+    /// Symmetric scaling factors: Â_ij = s_i * A_ij * s_j.
     pub scaling: Vec<f64>,
-    pub matched: usize,  // Number of matched entries
+    /// Number of matched diagonal entries.
+    pub matched: usize,
 }
 
+pub enum Mc64Job {
+    /// Maximize product of diagonal entries (default for APTP).
+    MaximumProduct,
+    /// Maximize sum of diagonal entries.
+    MaximumSum,
+}
+
+/// Compute MC64 matching and scaling for a symmetric sparse matrix.
 pub fn mc64_matching(
-    matrix: &SparseColMat<f64>,
-    job: MC64Job
-) -> Result<MatchingResult>;
+    matrix: &SparseColMat<usize, f64>,
+    job: Mc64Job,
+) -> Result<Mc64Result, SparseError>;
+```
 
-pub enum MC64Job {
-    MaximumProduct,      // Maximize product of diagonal
-    MaximumSum,          // Maximize sum (for scaling)
-    MaximumMin,          // Maximize minimum diagonal
-}
+**Usage with Phase 3 (ordering) and Phase 5 (scaling):**
 
-// Hungarian algorithm implementation
-fn hungarian_algorithm(
-    cost_matrix: &[Vec<f64>]
-) -> Vec<usize>;
+```rust
+// MC64 produces permutation + scaling
+let mc64 = mc64_matching(&matrix, Mc64Job::MaximumProduct)?;
 
-// Auction algorithm (faster alternative)
-pub fn auction_scaling(
-    matrix: &SparseColMat<f64>,
-    params: AuctionParams
-) -> Result<MatchingResult>;
+// Permutation feeds into symbolic analysis via SymmetricOrdering::Custom
+let symbolic = AptpSymbolic::analyze(
+    matrix.symbolic(),
+    SymmetricOrdering::Custom(mc64.perm.as_ref()),
+)?;
 
-pub struct AuctionParams {
-    pub epsilon: f64,
-    pub max_iterations: usize,
-}
+// Scaling feeds into numeric factorization (Phase 5 — API TBD)
+// let numeric = factorize(&matrix, &symbolic, Some(&mc64.scaling))?;
+```
+
+**Combined ordering (MC64 + AMD):**
+
+```rust
+// When both matching and fill-reduction are desired:
+// 1. Compute MC64 matching permutation
+let mc64 = mc64_matching(&matrix, Mc64Job::MaximumProduct)?;
+// 2. Run symbolic analysis with AMD on the matched pattern
+//    (faer applies AMD internally when using SymmetricOrdering::Amd)
+// 3. The effective ordering is the composition of both permutations
+//    This is handled internally by factorize_symbolic_cholesky when
+//    the matrix is pre-permuted, or can be composed explicitly:
+let combined = mc64.perm * amd_perm;  // faer Perm composition
 ```
 
 **Testing:**
 
 ```rust
 #[test]
-fn test_mc64_basic() {
-    // Matrix with small diagonal elements
+fn test_mc64_produces_valid_matching() {
     let matrix = create_badly_scaled_matrix();
-
-    let result = mc64_matching(&matrix, MC64Job::MaximumProduct)
-        .unwrap();
+    let result = mc64_matching(&matrix, Mc64Job::MaximumProduct).unwrap();
 
     // Should find full matching
     assert_eq!(result.matched, matrix.nrows());
-
-    // Diagonal should be larger after permutation + scaling
-    let scaled = matrix
-        .permute_symmetric(&result.permutation)
-        .scale_symmetric(&result.scaling);
-
-    let diag_before = matrix.diagonal_max();
-    let diag_after = scaled.diagonal_max();
-
-    assert!(diag_after >= diag_before);
+    // Scaling factors should be positive
+    assert!(result.scaling.iter().all(|&s| s > 0.0));
 }
 
 #[test]
-fn test_auction_vs_mc64() {
+fn test_mc64_improves_diagonal_dominance() {
     for case in test_cases_indefinite() {
-        let mc64_result = mc64_matching(
-            &case.matrix,
-            MC64Job::MaximumProduct
-        ).unwrap();
+        let result = mc64_matching(&case.matrix, Mc64Job::MaximumProduct).unwrap();
 
-        let auction_result = auction_scaling(
-            &case.matrix,
-            AuctionParams::default()
-        ).unwrap();
+        // Apply permutation and scaling
+        let scaled = apply_mc64(&case.matrix, &result);
 
-        // Both should find full matching
-        assert_eq!(mc64_result.matched, case.matrix.nrows());
-        assert_eq!(auction_result.matched, case.matrix.nrows());
-
-        // Quality should be similar (within 10%)
-        let mc64_quality = measure_scaling_quality(
-            &case.matrix, &mc64_result
-        );
-        let auction_quality = measure_scaling_quality(
-            &case.matrix, &auction_result
-        );
-
-        assert!((mc64_quality - auction_quality).abs() / mc64_quality < 0.1);
+        // Diagonal entries should be larger relative to off-diagonal
+        let dominance_before = diagonal_dominance_metric(&case.matrix);
+        let dominance_after = diagonal_dominance_metric(&scaled);
+        assert!(dominance_after >= dominance_before);
     }
 }
-```
 
-**Success Criteria:**
-- [ ] MC64 produces valid matching
-- [ ] Improves diagonal dominance
-- [ ] Auction algorithm is faster with similar quality
-
-#### 4.3: Combined Ordering Strategy
-**Task:** Implement matching-based ordering for indefinite systems
-
-**Implementation:**
-
-```rust
-pub fn matching_based_ordering(
-    matrix: &SparseColMat<f64>,
-    params: MatchingOrderingParams
-) -> Result<(Permutation, Vec<f64>)> {
-    // 1. Compute matching to identify large off-diagonal entries
-    let matching = mc64_matching(matrix, MC64Job::MaximumProduct)?;
-
-    // 2. Apply matching permutation
-    let matched_matrix = matrix.permute_symmetric(&matching.permutation);
-
-    // 3. Constrained METIS ordering that keeps matched entries near diagonal
-    let ordering = constrained_metis_ordering(
-        &matched_matrix,
-        &matching,
-        params
-    )?;
-
-    // 4. Combine permutations
-    let combined_perm = matching.permutation.compose(&ordering);
-
-    Ok((combined_perm, matching.scaling))
-}
-
-pub struct MatchingOrderingParams {
-    pub matching_algorithm: MatchingAlgorithm,
-    pub ordering_method: OrderingMethod,
-    pub scaling_method: ScalingMethod,
-}
-
-pub enum MatchingAlgorithm {
-    MC64,
-    Auction,
-}
-
-pub enum ScalingMethod {
-    None,
-    MC64,
-    Auction,
-    EquilibrationIterative,
-}
-```
-
-**Testing:**
-
-```rust
 #[test]
-fn test_matching_ordering_on_hard_indefinite() {
-    for case in test_cases_by_difficulty(Difficulty::Hard) {
-        let (perm, scaling) = matching_based_ordering(
-            &case.matrix,
-            MatchingOrderingParams::default()
-        ).unwrap();
+fn test_mc64_perm_works_with_symbolic_analysis() {
+    let matrix = load_test_matrix("arrow-10-indef").unwrap();
+    let mc64 = mc64_matching(&matrix, Mc64Job::MaximumProduct).unwrap();
 
-        // Analyze with this ordering
-        let reordered = case.matrix
-            .permute_symmetric(&perm)
-            .scale_symmetric(&scaling);
+    // Should integrate cleanly with Phase 3 API
+    let symbolic = AptpSymbolic::analyze(
+        matrix.symbolic(),
+        SymmetricOrdering::Custom(mc64.perm.as_ref()),
+    ).unwrap();
 
-        let analysis = SymbolicAnalysis::analyze(
-            reordered.pattern(),
-            AnalysisOptions::default()
-        );
-
-        // Should have reasonable fill-in
-        if let Some(ref_results) = case.reference {
-            // Should be within 20% of SPRAL's fill-in
-            let ratio = analysis.predicted_nnz as f64
-                       / ref_results.predicted_nnz as f64;
-            assert!(ratio < 1.2);
-        }
-    }
+    assert!(symbolic.predicted_nnz() > 0);
 }
 ```
 
 **Success Criteria:**
-- [ ] Matching-based ordering works on hard indefinite problems
-- [ ] Fill-in comparable to SPRAL
-- [ ] Numerical stability improved
+- [ ] MC64 produces valid matching (full matching on test suite)
+- [ ] Improves diagonal dominance on indefinite matrices
+- [ ] Scaling factors are positive and well-conditioned
+- [ ] Permutation integrates with Phase 3 via `SymmetricOrdering::Custom`
+- [ ] Returns `(Perm<usize>, Vec<f64>)` — no custom `Permutation` type
 
-#### 4.4: Integration with Analysis
-**Task:** Connect ordering/scaling to symbolic analysis
-
-**Implementation:**
-
-```rust
-pub struct AnalysisWithOrdering {
-    pub analysis: SymbolicAnalysis,
-    pub permutation: Permutation,
-    pub scaling: Option<Vec<f64>>,
-}
-
-impl AnalysisWithOrdering {
-    pub fn analyze_full(
-        matrix: &SparseColMat<f64>,
-        options: AnalysisOptions
-    ) -> Result<Self> {
-        // 1. Compute ordering and scaling
-        let (perm, scaling) = match options.ordering_method {
-            OrderingMethod::METIS => {
-                let p = compute_ordering(matrix.pattern(), OrderingMethod::METIS)?;
-                (p, None)
-            }
-            OrderingMethod::MatchingAMD => {
-                let (p, s) = matching_based_ordering(matrix, options.matching_params)?;
-                (p, Some(s))
-            }
-            // ... other methods
-        };
-
-        // 2. Apply permutation to pattern
-        let reordered_pattern = matrix.pattern()
-            .permute_symmetric(&perm);
-
-        // 3. Perform symbolic analysis
-        let analysis = SymbolicAnalysis::analyze(
-            &reordered_pattern,
-            options
-        );
-
-        Ok(Self {
-            analysis,
-            permutation: perm,
-            scaling,
-        })
-    }
-}
-```
-
-**Testing:**
-
-```rust
-#[test]
-fn test_full_analysis_pipeline() {
-    for case in all_test_cases() {
-        let result = AnalysisWithOrdering::analyze_full(
-            &case.matrix,
-            AnalysisOptions {
-                ordering_method: OrderingMethod::MatchingAMD,
-                ..Default::default()
-            }
-        ).unwrap();
-
-        // Should produce valid analysis
-        assert!(result.analysis.predicted_nnz > 0);
-
-        // Compare with reference
-        if let Some(ref_results) = case.reference {
-            compare_analysis(&result.analysis, &ref_results);
-        }
-    }
-}
-```
-
-**Success Criteria:**
-- [ ] Full analysis pipeline works end-to-end
-- [ ] Ordering choices affect fill-in as expected
-- [ ] Results match SPRAL's analysis
+**Time Estimate:** 5–7 days
 
 ### Phase 4 Exit Criteria
 
 **Required Outcomes:**
-1. METIS ordering integrated and tested
-2. MC64 matching produces quality results
-3. Matching-based ordering works on hard indefinite matrices
-4. Full analysis pipeline validated on test suite
-5. Ordering quality comparable to SPRAL
+1. MC64 matching produces valid matchings on all indefinite test matrices
+2. Scaling improves diagonal dominance measurably
+3. Permutation integrates with `AptpSymbolic::analyze()` via `SymmetricOrdering::Custom`
+4. Combined MC64 + AMD ordering demonstrated
+5. Scaling vector stored and documented for Phase 5 consumption
 
 **Validation Questions:**
-- Does ordering reduce fill-in significantly?
-- Does matching improve stability on hard indefinite problems?
-- Are we making good ordering choices automatically?
+- Does MC64 find full matching on hard indefinite problems?
+- Does scaling improve diagonal dominance (reduce off-diagonal/diagonal ratio)?
+- Does the MC64 permutation reduce delayed pivots compared to AMD alone? (May need Phase 5
+  to fully validate — can check indirectly via diagonal dominance metrics.)
 
-**Checkpoint:** Run full analysis (with ordering/scaling) on entire test suite. Compare fill-in predictions with SPRAL. Should be within 20% on hard indefinite problems.
+**Checkpoint:** Run MC64 on indefinite test matrices. Verify full matching, positive scaling
+factors, and improved diagonal dominance. Demonstrate integration with Phase 3 symbolic
+analysis.
 
 ---
 
-## Phase 5: Dense APTP Factorization
+## Phase 5: Dense APTP Factorization Kernel
 
 ### Objectives
-Implement A Posteriori Threshold Pivoting for dense symmetric indefinite matrices. This is the core numerical kernel.
+Implement A Posteriori Threshold Pivoting for dense symmetric indefinite matrices. This is the core numerical kernel that Phase 7 (sparse factorization) will call on each frontal matrix.
+
+### What was already completed / absorbed
+
+- **5.4 (Integration with faer)**: Per transparent composition, we use faer's dense
+  matmul and triangular solve from the start — not as a separate integration step.
+  There is no "naive" version followed by a "faer" version.
+- **5.5 (Validation on hard indefinite)**: Validation testing is exit criteria for
+  this feature, using existing test infrastructure (NumericalValidator, TestCaseFilter,
+  SuiteSparse collection). Not a separate deliverable.
+- **5.3 (Two-level APTP)**: Deferred to Phase 9 (supernodal optimization). Two-level
+  blocking is a cache performance optimization for large frontal matrices. In the
+  simplicial solver (Phases 5–8), fronts are small (column-level). Two-level APTP
+  becomes relevant when supernodal fronts reach hundreds of rows.
+
+### Design Decisions
+
+#### Use Phase 2 types for D storage (decided)
+
+The plan originally stored D as `Mat<f64>` (dense matrix). Phase 2 already defines
+`MixedDiagonal<T>` specifically for mixed 1×1/2×2 block diagonal storage with a
+`solve_in_place` method. The APTP factorization result should use `MixedDiagonal`,
+not `Mat<f64>`.
+
+Phase 5 also defines a `Pivot` enum with data (`OneByOne { index, value }`,
+`TwoByTwo { indices, block }`). This is complementary to Phase 2's `PivotType`
+(classification tag): `PivotType` goes in `MixedDiagonal`'s pivot map, while the
+APTP kernel returns a richer pivot log for diagnostics.
+
+#### Use faer dense BLAS from day one (decided)
+
+Per transparent composition, the Schur complement update uses `faer::linalg::matmul`
+and triangular solves use faer's TRSM. The parallelism parameter is `Par` (not the
+old `Parallelism` enum). There is no separate "faer integration" deliverable.
+
+#### FallbackStrategy::Delayed semantics (decided)
+
+In the dense kernel, "delay" means "mark this column as uneliminated and return it
+to the caller." The kernel does not know about the elimination tree or parent nodes.
+The caller (Phase 7 sparse factorization) decides what to do with delayed columns
+(pass to parent node in the multifrontal assembly).
+
+#### faer's Bunch-Kaufman as reference for fallback path (noted)
+
+faer's `linalg::cholesky::bunch_kaufman` module provides a full dense indefinite
+factorization with multiple pivoting strategies (Partial, PartialDiag, Rook,
+RookDiag, Full). This is a valuable reference for the 2×2 pivot selection logic
+in APTP's fallback path. The APTP kernel may delegate to faer's BK implementation
+for the fallback, or implement a simplified version — to be decided during speccing.
 
 ### Deliverables
 
-#### 5.1: Basic APTP Implementation (Single-Level)
-**Task:** Implement simplest version of APTP
+**Task:** Implement the APTP algorithm for dense symmetric indefinite matrices,
+including fallback pivoting strategies
 
 **Algorithm Reference:**
-- Hogg, Duff, Lopez (2020) - Section 3 "A posteriori threshold pivoting"
-- Algorithm 1 in the paper
+- Hogg, Duff, Lopez (2020) - Section 3 "A posteriori threshold pivoting" (Algorithm 1)
+- Hogg, Duff, Lopez (2020) - Section 4.1 "Fallback strategies"
+- faer `linalg::cholesky::bunch_kaufman` module — reference for 2×2 pivot selection
 
-**Implementation:**
+**Approach:**
+
+The APTP algorithm is fundamentally different from both faer's dynamic regularization
+(which corrects pivots without recomputing) and standard Bunch-Kaufman (which decides
+pivot size before elimination). APTP:
+
+1. Factors a block optimistically, assuming all 1×1 pivots
+2. Checks stability a posteriori: `|l_ij| < 1/threshold` for all entries
+3. If any entry fails: falls back to 2×2 Bunch-Kaufman pivot, or marks column as delayed
+4. Delayed columns are returned to the caller (the sparse factorization in Phase 7)
+
+This is genuinely new work — faer has no APTP implementation.
+
+**Notional API** (to be refined during speccing):
 
 ```rust
-pub struct APTPFactorization {
-    pub l: Mat<f64>,        // Unit lower triangular
-    pub d: Mat<f64>,        // Block diagonal (1×1 and 2×2 blocks)
-    pub pivot_sequence: Vec<Pivot>,
-    pub num_delays: usize,
+use faer::{Mat, MatRef, MatMut, Par};
+
+/// Result of dense APTP factorization on a frontal matrix.
+pub struct AptpFactorization {
+    /// Unit lower triangular factor (dense).
+    l: Mat<f64>,
+    /// Block diagonal factor — mixed 1×1 and 2×2 blocks (from Phase 2).
+    d: MixedDiagonal<f64>,
+    /// Columns that failed the stability check and could not be eliminated.
+    /// The caller (sparse factorization) decides what to do with these.
+    delayed_cols: Vec<usize>,
+    /// Per-step pivot record for diagnostics.
+    pivot_log: Vec<AptpPivotRecord>,
+    /// Summary statistics.
+    stats: AptpStatistics,
 }
 
-pub enum Pivot {
-    OneByOne { index: usize, value: f64 },
-    TwoByTwo { indices: [usize; 2], block: [[f64; 2]; 2] },
+/// Diagnostic record for a single pivot step.
+pub struct AptpPivotRecord {
+    pub col: usize,
+    pub pivot_type: PivotType,  // From Phase 2
+    pub max_l_entry: f64,       // Worst stability metric
+    pub was_fallback: bool,     // True if 2×2 fallback was needed
 }
 
+pub struct AptpStatistics {
+    pub num_1x1: usize,
+    pub num_2x2: usize,
+    pub num_delayed: usize,
+    pub max_l_entry: f64,
+}
+
+/// Configuration for the APTP kernel.
+pub struct AptpOptions {
+    /// Stability threshold: entries must satisfy |l_ij| < 1/threshold.
+    /// Typical value: 0.01 (allowing growth factor up to 100).
+    pub threshold: f64,
+    /// What to do when a 1×1 pivot fails the stability check.
+    pub fallback: AptpFallback,
+}
+
+pub enum AptpFallback {
+    /// Try 2×2 Bunch-Kaufman pivot; if that also fails, delay the column.
+    BunchKaufman,
+    /// Use complete pivoting on the failed block.
+    CompletePivoting,
+    /// Immediately delay the column (return to caller).
+    Delay,
+}
+
+/// Factor a dense symmetric matrix using APTP.
+///
+/// Uses faer's matmul for Schur complement updates and TRSM for
+/// triangular solves internally.
 pub fn aptp_factor(
     a: MatRef<f64>,
-    threshold: f64,
-    options: APTPOptions
-) -> Result<APTPFactorization>;
-
-pub struct APTPOptions {
-    pub block_size: usize,
-    pub threshold: f64,
-    pub fallback_strategy: FallbackStrategy,
-}
-
-pub enum FallbackStrategy {
-    CompleteBlocking,   // Use complete pivoting on failed block
-    TPP,                // Fall back to threshold partial pivoting
-    Delayed,            // Delay to parent node
-}
-
-// Core APTP algorithm
-fn aptp_block(
-    a: MatMut<f64>,
-    threshold: f64
-) -> BlockResult {
-    // 1. Attempt to factor block assuming diagonal pivots
-    // 2. Check stability: |l_ij| < 1/threshold
-    // 3. If any entry fails, mark as failed pivot
-    // 4. Return factorization + list of failed pivots
-}
+    options: &AptpOptions,
+) -> Result<AptpFactorization, SparseError>;
 ```
 
-**Testing:**
+**Usage example:**
 
 ```rust
-#[test]
-fn test_aptp_simple() {
-    // Small positive definite matrix (should succeed with no delays)
-    let a = Mat::from_fn(4, 4, |i, j| {
-        if i == j { 4.0 } else if i.abs_diff(j) == 1 { 1.0 } else { 0.0 }
-    });
+let a = load_dense_frontal_matrix();
+let options = AptpOptions {
+    threshold: 0.01,
+    fallback: AptpFallback::BunchKaufman,
+};
 
-    let result = aptp_factor(a.as_ref(), 0.01, APTPOptions::default())
-        .unwrap();
+let result = aptp_factor(a.as_ref(), &options)?;
 
-    // Should have no delays
-    assert_eq!(result.num_delays, 0);
+// Check stability guarantee
+assert!(result.stats.max_l_entry < 1.0 / options.threshold);
 
-    // Check factorization: A = LDL'
-    let reconstructed = reconstruct_ldlt(&result);
-    assert_matrix_close(&a, &reconstructed, 1e-12);
+// Delayed columns are returned to the caller
+if !result.delayed_cols.is_empty() {
+    // In sparse context: pass these to the parent node
+    println!("{} columns delayed", result.delayed_cols.len());
 }
 
-#[test]
-fn test_aptp_indefinite() {
-    // Indefinite matrix (some negative eigenvalues)
-    let a = create_indefinite_matrix(10);
-
-    let result = aptp_factor(a.as_ref(), 0.01, APTPOptions::default())
-        .unwrap();
-
-    // Should successfully factor
-    let reconstructed = reconstruct_ldlt(&result);
-    assert_matrix_close(&a, &reconstructed, 1e-10);
-}
-
-#[test]
-fn test_stability_bounds() {
-    for _ in 0..100 {
-        let a = random_symmetric_matrix(20);
-        let threshold = 0.01;
-
-        let result = aptp_factor(a.as_ref(), threshold, APTPOptions::default())
-            .unwrap();
-
-        // Check stability: all |l_ij| < 1/threshold
-        let max_l_entry = result.l.as_ref()
-            .iter()
-            .map(|&x| x.abs())
-            .max_by(|a, b| a.partial_cmp(b).unwrap())
-            .unwrap();
-
-        assert!(max_l_entry < 1.0 / threshold + 1e-10);
-    }
-}
+// Solve D x = b using Phase 2's MixedDiagonal
+let mut x = b.clone();
+result.d.solve_in_place(&mut x);
 ```
+
+**Testing strategy:**
+
+- **Positive definite**: should factor with no delays, all 1×1 pivots
+- **Indefinite**: should factor correctly, some 2×2 pivots expected
+- **Stability bounds**: `|l_ij| < 1/threshold` verified on 100+ random matrices
+- **Reconstruction**: `||A - LDL^T|| / ||A|| < 10^-12` (using existing NumericalValidator)
+- **Fallback comparison**: all AptpFallback variants produce valid factorizations
+- **Hard indefinite**: matrices from SuiteSparse collection (via TestCaseFilter)
+- **Pathological cases**: near-singular, highly indefinite, clustered eigenvalues
 
 **Success Criteria:**
 - [ ] Factors positive definite matrices with no delays
-- [ ] Handles indefinite matrices correctly
-- [ ] Stability bounds enforced
-- [ ] Reconstructed matrix matches input (within tolerance)
-
-#### 5.2: Fallback Pivoting Strategies
-**Task:** Implement strategies for failed pivots
-
-**Implementation:**
-
-```rust
-// Complete pivoting for small failed blocks
-fn complete_pivoting_fallback(
-    block: MatMut<f64>
-) -> FallbackResult {
-    let (i, j, max_val) = find_absolute_maximum(block.as_ref());
-
-    if i == j {
-        // Diagonal pivot
-        pivot_1x1(block, i)
-    } else {
-        // Off-diagonal pivot -> use 2×2
-        pivot_2x2(block, i, j)
-    }
-}
-
-// TPP fallback
-fn tpp_fallback(
-    block: MatMut<f64>,
-    threshold: f64
-) -> FallbackResult {
-    // Standard threshold partial pivoting
-    // Similar to MA57 algorithm
-}
-
-// Delayed pivoting
-fn delay_pivots(
-    block: MatRef<f64>,
-    failed_indices: &[usize]
-) -> DelayResult {
-    // Mark these variables for elimination at parent node
-    // Return contribution block
-}
-```
-
-**Testing:**
-
-```rust
-#[test]
-fn test_complete_pivoting_fallback() {
-    // Create block designed to fail APTP
-    let block = create_aptp_failure_case();
-
-    let result = complete_pivoting_fallback(block.as_mut());
-
-    // Should still factor correctly
-    assert!(result.is_stable());
-}
-
-#[test]
-fn test_fallback_strategy_comparison() {
-    for case in challenging_matrices() {
-        let cp_result = aptp_factor(
-            case.as_ref(),
-            0.01,
-            APTPOptions {
-                fallback_strategy: FallbackStrategy::CompleteBlocking,
-                ..Default::default()
-            }
-        ).unwrap();
-
-        let tpp_result = aptp_factor(
-            case.as_ref(),
-            0.01,
-            APTPOptions {
-                fallback_strategy: FallbackStrategy::TPP,
-                ..Default::default()
-            }
-        ).unwrap();
-
-        // Both should produce valid factorizations
-        assert!(cp_result.is_valid());
-        assert!(tpp_result.is_valid());
-
-        // Complete pivoting may have fewer delays
-        assert!(cp_result.num_delays <= tpp_result.num_delays);
-    }
-}
-```
-
-**Success Criteria:**
+- [ ] Handles indefinite matrices correctly (2×2 pivots used as needed)
+- [ ] Stability bound `|l_ij| < 1/threshold` enforced for all entries
+- [ ] Reconstruction error < 10^-12 on all test matrices
 - [ ] All fallback strategies produce valid factorizations
-- [ ] Complete pivoting handles worst-case blocks
-- [ ] TPP fallback matches traditional behavior
+- [ ] Delayed columns correctly identified and returned
+- [ ] Uses faer matmul/TRSM for Schur complement (no naive implementation)
+- [ ] Successfully factors hard indefinite SuiteSparse matrices
 
-#### 5.3: Two-Level APTP (Recursive)
-**Task:** Implement nested APTP structure from SPRAL
-
-**Algorithm Reference:**
-- Hogg, Duff, Lopez (2020) - Section 4.2 "Two-level APTP"
-
-**Implementation:**
-
-```rust
-pub struct TwoLevelAPTPOptions {
-    pub outer_block_size: usize,     // e.g., 256
-    pub inner_block_size: usize,     // e.g., 32
-    pub outer_threshold: f64,
-    pub inner_threshold: f64,
-}
-
-pub fn two_level_aptp_factor(
-    a: MatRef<f64>,
-    options: TwoLevelAPTPOptions
-) -> Result<APTPFactorization> {
-    let n = a.nrows();
-    let nb_outer = options.outer_block_size;
-    let nb_inner = options.inner_block_size;
-
-    // Outer loop: process nb_outer columns at a time
-    for outer_block in (0..n).step_by(nb_outer) {
-        // Recursive APTP on this outer block
-        let outer_result = aptp_block_recursive(
-            a.submatrix(/* ... */),
-            nb_inner,
-            options.outer_threshold
-        )?;
-
-        // Handle any failed pivots
-        if !outer_result.failed_pivots.is_empty() {
-            handle_failed_outer_pivots(/* ... */)?;
-        }
-
-        // Update trailing submatrix
-        update_schur_complement(/* ... */);
-    }
-
-    Ok(/* ... */)
-}
-
-fn aptp_block_recursive(
-    block: MatMut<f64>,
-    inner_block_size: usize,
-    threshold: f64
-) -> BlockResult {
-    // Inner loop: process inner_block_size columns at a time
-    // Use complete pivoting for truly small blocks
-    // ...
-}
-```
-
-**Testing:**
-
-```rust
-#[test]
-fn test_two_level_vs_single_level() {
-    let a = random_symmetric_matrix(256);
-
-    let single_result = aptp_factor(
-        a.as_ref(),
-        0.01,
-        APTPOptions::default()
-    ).unwrap();
-
-    let two_level_result = two_level_aptp_factor(
-        a.as_ref(),
-        TwoLevelAPTPOptions {
-            outer_block_size: 64,
-            inner_block_size: 16,
-            outer_threshold: 0.01,
-            inner_threshold: 0.01,
-        }
-    ).unwrap();
-
-    // Both should produce equivalent results
-    assert_eq!(single_result.num_delays, two_level_result.num_delays);
-
-    // Factorizations should be equally accurate
-    let recon_single = reconstruct_ldlt(&single_result);
-    let recon_two_level = reconstruct_ldlt(&two_level_result);
-
-    assert_matrix_close(&recon_single, &recon_two_level, 1e-12);
-}
-```
-
-**Success Criteria:**
-- [ ] Two-level APTP produces same results as single-level
-- [ ] Performance improves for large blocks
-- [ ] Memory access patterns improved
-
-#### 5.4: Integration with faer
-**Task:** Use faer for dense operations
-
-**Implementation:**
-
-```rust
-use faer::{MatMut, MatRef, Parallelism};
-use faer::linalg::{matmul, triangular_solve};
-
-// Use faer's GEMM for Schur complement updates
-fn update_schur_with_faer(
-    schur: MatMut<f64>,
-    l21: MatRef<f64>,
-    d: MatRef<f64>,
-    parallelism: Parallelism
-) {
-    // schur -= L21 * D * L21'
-    let temp = matmul::matmul(
-        Mat::zeros(l21.nrows(), l21.ncols()),
-        l21,
-        d,
-        None,
-        1.0,
-        parallelism
-    );
-
-    matmul::matmul(
-        schur,
-        temp.as_ref(),
-        l21.transpose(),
-        Some(1.0),
-        -1.0,
-        parallelism
-    );
-}
-
-// Use faer's TRSM for triangular solves
-fn solve_with_l_faer(
-    l: MatRef<f64>,
-    rhs: MatMut<f64>,
-    parallelism: Parallelism
-) {
-    triangular_solve::solve_lower_triangular(
-        l,
-        rhs,
-        parallelism
-    );
-}
-```
-
-**Testing:**
-
-```rust
-#[test]
-fn test_faer_integration() {
-    let a = random_symmetric_matrix(100);
-
-    // Factor using APTP with faer operations
-    let result = aptp_factor_with_faer(
-        a.as_ref(),
-        0.01,
-        Parallelism::Rayon(4)
-    ).unwrap();
-
-    // Should produce identical results to non-faer version
-    let result_no_faer = aptp_factor(
-        a.as_ref(),
-        0.01,
-        APTPOptions::default()
-    ).unwrap();
-
-    assert_matrix_close(
-        &reconstruct_ldlt(&result),
-        &reconstruct_ldlt(&result_no_faer),
-        1e-14
-    );
-}
-
-#[test]
-fn test_faer_performance() {
-    let sizes = [100, 500, 1000];
-
-    for n in sizes {
-        let a = random_symmetric_matrix(n);
-
-        let start = Instant::now();
-        let _ = aptp_factor_with_faer(
-            a.as_ref(),
-            0.01,
-            Parallelism::Rayon(4)
-        );
-        let faer_time = start.elapsed();
-
-        let start = Instant::now();
-        let _ = aptp_factor_naive(a.as_ref(), 0.01);
-        let naive_time = start.elapsed();
-
-        println!("n={}: faer={:.2}ms, naive={:.2}ms, speedup={:.2}x",
-                 n, faer_time.as_millis(), naive_time.as_millis(),
-                 naive_time.as_secs_f64() / faer_time.as_secs_f64());
-    }
-}
-```
-
-**Success Criteria:**
-- [ ] faer integration produces correct results
-- [ ] Performance improved over naive implementation
-- [ ] Parallelism through faer works correctly
-
-#### 5.5: Validation on Hard Indefinite Problems
-**Task:** Stress test APTP on challenging matrices
-
-**Critical Test:**
-
-```rust
-#[test]
-fn test_hard_indefinite_suite() {
-    let hard_cases = test_cases_by_difficulty(Difficulty::Hard);
-
-    for case in hard_cases {
-        println!("Testing: {}", case.name);
-
-        // Extract a large frontal matrix from the problem
-        // (This simulates what would happen in multifrontal factorization)
-        let front = extract_representative_front(&case.matrix, 500);
-
-        let result = aptp_factor(
-            front.as_ref(),
-            0.01,
-            APTPOptions::default()
-        );
-
-        match result {
-            Ok(factorization) => {
-                // Check residual
-                let residual = compute_residual(&front, &factorization);
-
-                println!("  SUCCESS: residual={:.2e}, delays={}",
-                         residual, factorization.num_delays);
-
-                assert!(residual < 1e-6,
-                        "Poor residual on {}: {:.2e}",
-                        case.name, residual);
-            }
-            Err(e) => {
-                panic!("FAILED to factor {}: {:?}", case.name, e);
-            }
-        }
-    }
-}
-
-#[test]
-fn test_against_spral_dense() {
-    // For matrices where we have SPRAL dense factorizations
-    for case in get_spral_dense_references() {
-        let result = aptp_factor(
-            case.matrix.as_ref(),
-            case.threshold,
-            APTPOptions::default()
-        ).unwrap();
-
-        // Number of delays should match SPRAL (or be better)
-        assert!(result.num_delays <= case.spral_delays);
-
-        // Residual should be similar
-        let our_residual = compute_residual(&case.matrix, &result);
-        assert!(our_residual <= case.spral_residual * 10.0);
-    }
-}
-```
-
-**Success Criteria:**
-- [ ] Successfully factors all hard indefinite matrices
-- [ ] Residuals acceptable (< 1e-6)
-- [ ] Number of delays reasonable
-- [ ] Performance within 2× of SPRAL on dense problems
+**Time Estimate:** 2–3 weeks
 
 ### Phase 5 Exit Criteria
 
 **Required Outcomes:**
-1. APTP algorithm implemented and validated
-2. All fallback strategies working
-3. Two-level structure improves performance
-4. faer integration provides speedup
-5. Hard indefinite problems factor correctly
+1. Dense APTP kernel implemented with fallback strategies
+2. Uses Phase 2's `MixedDiagonal` and `PivotType` for D storage
+3. Uses faer dense BLAS (matmul, TRSM) for all heavy computation
+4. Hard indefinite problems factor correctly with acceptable residuals
+5. Stability bounds enforced and verified
 
 **Validation Questions:**
-- Does APTP maintain stability on all test cases?
-- Are delayed pivots handled correctly?
-- Is performance competitive with SPRAL's dense factorization?
+- Does APTP maintain stability (`|l_ij| < 1/threshold`) on all test cases?
+- Are delayed columns correctly reported to the caller?
+- Does reconstruction error meet tolerance on hard indefinite matrices?
 
 **Checkpoint: HIGH RISK VALIDATION**
 
-This is the critical checkpoint. Run comprehensive tests:
+This is the critical checkpoint. APTP is the foundation of the entire solver.
+Run comprehensive validation using the existing test infrastructure:
 
-```rust
-#[test]
-#[ignore]  // Run manually with: cargo test critical_checkpoint -- --ignored
-fn critical_checkpoint_aptp_validation() {
-    println!("\n========================================");
-    println!("CRITICAL CHECKPOINT: APTP VALIDATION");
-    println!("========================================\n");
+- All hand-constructed matrices (15) via `TestCaseFilter::hand_constructed()`
+- All hard indefinite SuiteSparse matrices via `TestCaseFilter` difficulty filter
+- 100+ random symmetric indefinite matrices via generators (Phase 0.5)
+- Pathological cases: near-singular, highly indefinite, clustered eigenvalues
 
-    let mut report = ValidationReport::new();
+**If this checkpoint fails:** Investigate before proceeding. Options:
+1. Tune threshold parameter
+2. Improve fallback strategy (try CompletePivoting vs BunchKaufman)
+3. Consult SPRAL's dense kernel implementation (BSD-3) for reference
+4. Check for numerical issues in Schur complement update
 
-    // Test 1: All hard indefinite matrices
-    for case in test_cases_by_difficulty(Difficulty::Hard) {
-        let result = test_aptp_on_case(&case);
-        report.add_result(&case.name, result);
-    }
-
-    // Test 2: Random matrices
-    for i in 0..100 {
-        let matrix = random_symmetric_indefinite(100);
-        let result = test_aptp_stability(&matrix);
-        report.add_result(&format!("random_{}", i), result);
-    }
-
-    // Test 3: Pathological cases
-    let pathological = vec![
-        create_near_singular_matrix(),
-        create_highly_indefinite_matrix(),
-        create_clustered_eigenvalue_matrix(),
-    ];
-    for (i, matrix) in pathological.iter().enumerate() {
-        let result = test_aptp_on_matrix(matrix);
-        report.add_result(&format!("pathological_{}", i), result);
-    }
-
-    // Generate report
-    report.print();
-
-    // Pass/fail criteria
-    assert!(report.success_rate() > 0.95,
-            "APTP failed on too many cases: {:.1}%",
-            100.0 - report.success_rate() * 100.0);
-
-    println!("\n✓ CRITICAL CHECKPOINT PASSED");
-}
-```
-
-**If this checkpoint fails:** Investigate deeply before proceeding. APTP is the foundation of the entire solver. Options:
-1. Tune thresholds and parameters
-2. Improve fallback strategies
-3. Consider alternative pivoting strategies
-4. Consult with numerical analysis experts
-
-**If it passes:** You have a working core factorization kernel. The rest is "just" assembly and orchestration.
+**If it passes:** Working core factorization kernel. The remaining phases
+are assembly (Phase 6), sparse integration (Phase 7), and solve (Phase 8).
 
 ---
 
-## Phase 6: Multifrontal Assembly
+## Phase 6: Multifrontal Numeric Factorization
 
 ### Objectives
-Implement the multifrontal method: assemble frontal matrices, perform dense factorizations, propagate updates up the assembly tree.
+Implement the multifrontal factorization loop: assemble frontal matrices from
+original matrix entries and child contributions, factor each front using Phase 5's
+dense APTP kernel, and propagate contribution blocks up the assembly tree.
+
+### Design Decisions
+
+#### Multifrontal is the primary factorization path (decided)
+
+APTP is inherently a blocked algorithm — it factors a block of columns optimistically,
+then checks stability a posteriori. A column-by-column "simplicial APTP" would be a
+different algorithm from Hogg et al. (2020). The multifrontal approach directly matches
+the paper's algorithm: each supernodal front is a dense block that Phase 5's
+`aptp_factor()` operates on.
+
+faer provides `factorize_simplicial_numeric_ldlt` with dynamic regularization for
+users who need a simpler indefinite factorization. Our value-add is the APTP algorithm,
+which requires blocked/frontal computation.
+
+#### Supernode detection via faer (decided)
+
+faer's `SymbolicCholesky<usize>` (wrapped by Phase 3's `AptpSymbolic`) already computes
+supernodal structure via `SymbolicSupernodalCholesky<I>`. This includes supernode column
+ranges, assembly tree, row structure per supernode, and postorder traversal. We delegate
+to faer rather than reimplementing supernode detection.
+
+Old Phase 9.1 (Supernode Detection) is absorbed here.
+
+#### Frontal matrices use Phase 2 types (decided)
+
+The D factor within each front uses `MixedDiagonal<f64>` (Phase 2), not `Mat<f64>`
+or `Vec<f64>`. Pivot decisions are tracked as `PivotType` (Phase 2).
+
+#### Delayed pivot propagation (noted)
+
+When `aptp_factor()` returns delayed columns from a front, they are added to the
+parent front's row structure as additional fully-summed columns. This is the standard
+multifrontal delayed pivot mechanism (Duff & Reid 1983). The exact propagation
+mechanism will be refined during speccing.
 
 ### Deliverables
 
-#### 6.1: Frontal Matrix Structure
-**Task:** Define frontal matrix data structure
+**Task:** Implement the multifrontal factorization loop that processes each
+supernode's frontal matrix in assembly-tree postorder
 
-**Implementation:**
+**Algorithm Reference:**
+- Duff & Reid (1983) - "The multifrontal solution of indefinite sparse symmetric
+  linear equations"
+- Liu (1992) - "The Multifrontal Method for Sparse Matrix Solution: Theory and
+  Practice"
+- Hogg, Duff, Lopez (2020) - Sections 2-3 (APTP within multifrontal framework)
+
+**Approach:**
+
+For each supernode in assembly-tree postorder:
+1. **Create** frontal matrix (F11/F21/F22 partitioning from supernode structure)
+2. **Scatter** original matrix entries into frontal matrix
+3. **Extend-add** contribution blocks from child supernodes
+4. **Factor** F11 using Phase 5's `aptp_factor()` → L11, D11, delayed columns
+5. **Solve** for L21: L21 = F21 × L11^{-T} × D11^{-1} (using faer TRSM)
+6. **Compute** Schur complement: contribution = F22 - L21 × D11 × L21^T (using faer matmul)
+7. **Store** L11, D11, L21 as this supernode's factors
+8. **Propagate** contribution block and delayed columns to parent
+
+**Notional API** (to be refined during speccing):
 
 ```rust
+/// Frontal matrix for a supernode.
+///
+/// Structured as:
+///   [F11  |  ---]
+///   [F21  |  F22]
+///
+/// F11 (fully_summed × fully_summed): factored with APTP.
+/// F21 (remaining × fully_summed): solved via triangular solve.
+/// F22 (remaining × remaining): Schur complement → contribution to parent.
 pub struct FrontalMatrix {
-    pub node_id: usize,
-    pub supernode: Supernode,
-
-    // Frontal matrix structure: [F11  F12]
-    //                           [F21  F22]
-    // where F11 is the fully summed part
-    pub nrows: usize,
-    pub ncols: usize,
-    pub fully_summed_cols: usize,
-
-    // Dense storage
-    pub data: Mat<f64>,
-
-    // Row indices (mapping to global indices)
-    pub row_indices: Vec<usize>,
+    /// Dense storage.
+    data: Mat<f64>,
+    /// Number of fully summed columns (supernode size + any delayed from children).
+    fully_summed: usize,
+    /// Global row indices (maps local row → global column index).
+    row_indices: Vec<usize>,
 }
 
 impl FrontalMatrix {
-    pub fn new(supernode: Supernode, row_indices: Vec<usize>) -> Self;
-
     pub fn f11(&self) -> MatRef<f64>;
-    pub fn f11_mut(&mut self) -> MatMut<f64>;
-
     pub fn f21(&self) -> MatRef<f64>;
-    pub fn f21_mut(&mut self) -> MatMut<f64>;
-
     pub fn f22(&self) -> MatRef<f64>;
-    pub fn f22_mut(&mut self) -> MatMut<f64>;
-
-    pub fn contribution_block(&self) -> MatRef<f64> {
-        self.f22()
-    }
+    pub fn contribution(&self) -> MatRef<f64> { self.f22() }
 }
 
-pub struct FactorStorage {
-    // Store L and D factors for each supernode
-    factors: Vec<SupernodeFactors>,
+/// Per-supernode factorization result.
+pub struct FrontFactors {
+    /// Dense L11 (unit lower triangular).
+    l11: Mat<f64>,
+    /// D11 (mixed 1×1/2×2 from Phase 2).
+    d11: MixedDiagonal<f64>,
+    /// Dense L21 (subdiagonal block).
+    l21: Mat<f64>,
+    /// Global indices of delayed columns (passed to parent).
+    delayed_cols: Vec<usize>,
 }
 
-pub struct SupernodeFactors {
-    pub l: Mat<f64>,        // Lower triangular
-    pub d: Vec<f64>,        // Diagonal (1×1 and 2×2 blocks)
-    pub pivot_sequence: Vec<Pivot>,
+/// Complete numeric factorization result.
+pub struct AptpNumeric {
+    /// Per-supernode factors, indexed by supernode ID.
+    front_factors: Vec<FrontFactors>,
+    /// Factorization statistics.
+    stats: FactorizationStats,
+}
+
+pub struct FactorizationStats {
+    pub total_1x1_pivots: usize,
+    pub total_2x2_pivots: usize,
+    pub total_delayed: usize,
+    pub max_front_size: usize,
+}
+
+impl AptpNumeric {
+    /// Factor a sparse symmetric matrix using multifrontal APTP.
+    ///
+    /// Requires symbolic analysis from Phase 3.
+    pub fn factor(
+        symbolic: &AptpSymbolic,
+        matrix: &SparseColMat<usize, f64>,
+        options: &AptpOptions,
+    ) -> Result<Self, SparseError>;
 }
 ```
 
-**Testing:**
+**Usage example:**
 
 ```rust
-#[test]
-fn test_frontal_matrix_structure() {
-    let supernode = Supernode {
-        first_col: 0,
-        last_col: 3,
-        row_structure: vec![0, 1, 2, 3, 5, 7],
-    };
+// Symbolic analysis (Phase 3)
+let symbolic = AptpSymbolic::analyze(
+    matrix.symbolic(),
+    SymmetricOrdering::Amd,
+)?;
 
-    let front = FrontalMatrix::new(
-        supernode,
-        vec![0, 1, 2, 3, 5, 7]
-    );
+// Numeric factorization (Phase 6)
+let numeric = AptpNumeric::factor(
+    &symbolic,
+    &matrix,
+    &AptpOptions { threshold: 0.01, fallback: AptpFallback::BunchKaufman },
+)?;
 
-    assert_eq!(front.nrows, 6);
-    assert_eq!(front.ncols, 4);
-    assert_eq!(front.fully_summed_cols, 4);
-
-    // Check submatrix views
-    assert_eq!(front.f11().nrows(), 4);
-    assert_eq!(front.f11().ncols(), 4);
-}
+println!("Stats: {} delays, max front size {}",
+    numeric.stats.total_delayed,
+    numeric.stats.max_front_size);
 ```
+
+**Testing strategy:**
+
+- **Small matrices**: compare factorization against dense APTP (convert to dense,
+  factor, verify same reconstruction error)
+- **Assembly correctness**: verify assembled fronts match expected dense blocks
+  for hand-constructed elimination trees
+- **Contribution propagation**: verify Schur complement is correctly passed to parent
+- **Delayed pivots**: construct matrices where delays occur, verify they propagate
+  correctly and the factorization still produces correct results
+- **All test matrices**: reconstruction error < 10^-12 using NumericalValidator
 
 **Success Criteria:**
-- [ ] Frontal matrix structure correct
-- [ ] Submatrix views work properly
-- [ ] Memory layout efficient
+- [ ] Multifrontal factorization produces correct factors on all hand-constructed matrices
+- [ ] Reconstruction error < 10^-12 on all test matrices
+- [ ] Assembly correctly scatters original entries + child contributions
+- [ ] Delayed pivots propagate to parent and are eventually eliminated
+- [ ] Uses Phase 5's `aptp_factor()` for intra-front factorization
+- [ ] Uses Phase 2's `MixedDiagonal` for D storage
+- [ ] Matches dense APTP factorization on small problems (converted to dense)
+- [ ] Factors all "easy indefinite" SuiteSparse matrices correctly
 
-#### 6.2: Assembly Process
-**Task:** Assemble contributions from children into parent front
-
-**Implementation:**
-
-```rust
-pub fn assemble_front(
-    front: &mut FrontalMatrix,
-    child_contributions: &[ContributionBlock],
-    original_matrix: &SparseColMat<f64>
-) {
-    // 1. Initialize front with original matrix entries
-    initialize_from_sparse(front, original_matrix);
-
-    // 2. Add contributions from child nodes
-    for contrib in child_contributions {
-        add_contribution(front, contrib);
-    }
-}
-
-pub struct ContributionBlock {
-    pub row_indices: Vec<usize>,
-    pub data: Mat<f64>,
-}
-
-fn initialize_from_sparse(
-    front: &mut FrontalMatrix,
-    matrix: &SparseColMat<f64>
-) {
-    // Extract entries of A corresponding to this front
-    for col in front.supernode.columns() {
-        for (row, val) in matrix.column(col) {
-            if let Some(local_row) = front.global_to_local_row(row) {
-                front.data[(local_row, col)] = val;
-            }
-        }
-    }
-}
-
-fn add_contribution(
-    front: &mut FrontalMatrix,
-    contrib: &ContributionBlock
-) {
-    // Map contribution's row indices to front's row indices
-    // Add contribution block to appropriate part of front
-
-    for (i, &global_i) in contrib.row_indices.iter().enumerate() {
-        if let Some(local_i) = front.global_to_local_row(global_i) {
-            for (j, &global_j) in contrib.row_indices.iter().enumerate() {
-                if let Some(local_j) = front.global_to_local_row(global_j) {
-                    front.data[(local_i, local_j)] += contrib.data[(i, j)];
-                }
-            }
-        }
-    }
-}
-```
-
-**Testing:**
-
-```rust
-#[test]
-fn test_assembly_simple() {
-    // Create simple 2-level assembly tree
-    let child_front = create_child_front();
-    let child_factors = factor_front(&child_front);
-    let child_contrib = compute_contribution(&child_factors);
-
-    let mut parent_front = create_parent_front();
-    assemble_front(
-        &mut parent_front,
-        &[child_contrib],
-        &original_matrix
-    );
-
-    // Parent should contain original entries + child contribution
-    verify_assembly(&parent_front, &original_matrix, &child_contrib);
-}
-
-#[test]
-fn test_assembly_commutativity() {
-    // Assembly order shouldn't matter
-    let contribs = vec![contrib1, contrib2, contrib3];
-
-    let mut front1 = create_front();
-    for c in &contribs {
-        add_contribution(&mut front1, c);
-    }
-
-    let mut front2 = create_front();
-    for c in contribs.iter().rev() {
-        add_contribution(&mut front2, c);
-    }
-
-    assert_matrix_close(&front1.data, &front2.data, 1e-14);
-}
-```
-
-**Success Criteria:**
-- [ ] Assembly process correct
-- [ ] Contributions added properly
-- [ ] Order independence verified
-
-#### 6.3: Front Factorization
-**Task:** Factor each frontal matrix using APTP
-
-**Implementation:**
-
-```rust
-pub fn factor_front(
-    front: &FrontalMatrix,
-    options: APTPOptions
-) -> Result<FrontFactorization> {
-    // 1. Factor F11 (fully summed part)
-    let f11_factors = aptp_factor(
-        front.f11(),
-        options.threshold,
-        options
-    )?;
-
-    // 2. Solve for F21: F21 = F21 * inv(L11)
-    let mut f21 = front.f21().to_owned();
-    solve_with_l(f11_factors.l.as_ref(), f21.as_mut());
-
-    // 3. Compute contribution block: F22 - F21 * D11 * F21'
-    let contrib = compute_schur_complement(
-        front.f22(),
-        f21.as_ref(),
-        f11_factors.d.as_ref()
-    );
-
-    Ok(FrontFactorization {
-        l11: f11_factors.l,
-        d11: f11_factors.d,
-        l21: f21,
-        contribution: contrib,
-    })
-}
-
-pub struct FrontFactorization {
-    pub l11: Mat<f64>,
-    pub d11: Mat<f64>,
-    pub l21: Mat<f64>,
-    pub contribution: ContributionBlock,
-}
-```
-
-**Testing:**
-
-```rust
-#[test]
-fn test_front_factorization() {
-    let front = create_test_front(10, 10);
-
-    let factors = factor_front(&front, APTPOptions::default())
-        .unwrap();
-
-    // Verify: F11 = L11 * D11 * L11'
-    let f11_reconstructed = reconstruct_ldlt_from_front(&factors);
-    assert_matrix_close(&f11_reconstructed, front.f11(), 1e-12);
-
-    // Verify contribution block
-    let expected_contrib = compute_expected_contribution(&front, &factors);
-    assert_matrix_close(
-        &factors.contribution.data,
-        &expected_contrib,
-        1e-12
-    );
-}
-```
-
-**Success Criteria:**
-- [ ] Front factorization correct
-- [ ] Contribution blocks computed properly
-- [ ] Numerical accuracy maintained
-
-#### 6.4: Tree Traversal
-**Task:** Implement bottom-up tree traversal
-
-**Implementation:**
-
-```rust
-pub fn factor_tree(
-    assembly_tree: &AssemblyTree,
-    matrix: &SparseColMat<f64>,
-    options: FactorOptions
-) -> Result<TreeFactorization> {
-    let mut factors = FactorStorage::new();
-
-    // Postorder traversal (children before parents)
-    for node_id in assembly_tree.postorder() {
-        let node = assembly_tree.node(node_id);
-
-        // 1. Create frontal matrix for this node
-        let mut front = FrontalMatrix::new(
-            node.supernode.clone(),
-            node.row_indices.clone()
-        );
-
-        // 2. Gather contributions from children
-        let child_contribs: Vec<_> = node.children
-            .iter()
-            .map(|&child_id| factors.get_contribution(child_id))
-            .collect();
-
-        // 3. Assemble front
-        assemble_front(&mut front, &child_contribs, matrix);
-
-        // 4. Factor front
-        let front_factors = factor_front(&front, options.aptp_options)?;
-
-        // 5. Store factors
-        factors.store(node_id, front_factors);
-    }
-
-    Ok(TreeFactorization {
-        storage: factors,
-        tree: assembly_tree.clone(),
-    })
-}
-```
-
-**Testing:**
-
-```rust
-#[test]
-fn test_tree_factorization_small() {
-    let matrix = load_test_matrix("laplacian-5x5");
-    let analysis = AnalysisWithOrdering::analyze_full(
-        &matrix,
-        AnalysisOptions::default()
-    ).unwrap();
-
-    let factorization = factor_tree(
-        &analysis.analysis.assembly_tree,
-        &matrix,
-        FactorOptions::default()
-    ).unwrap();
-
-    // Should have factors for every node
-    assert_eq!(
-        factorization.storage.len(),
-        analysis.analysis.assembly_tree.num_nodes()
-    );
-}
-
-#[test]
-fn test_against_dense_factorization() {
-    // For small matrices, compare with dense APTP
-    let matrix = create_test_matrix(20, 20);
-
-    let dense_factors = aptp_factor(
-        matrix.to_dense().as_ref(),
-        0.01,
-        APTPOptions::default()
-    ).unwrap();
-
-    let analysis = analyze(&matrix);
-    let tree_factors = factor_tree(
-        &analysis.assembly_tree,
-        &matrix,
-        FactorOptions::default()
-    ).unwrap();
-
-    // Should produce equivalent factorizations
-    let dense_reconstructed = reconstruct_from_dense(&dense_factors);
-    let tree_reconstructed = reconstruct_from_tree(&tree_factors);
-
-    assert_matrix_close(&dense_reconstructed, &tree_reconstructed, 1e-10);
-}
-```
-
-**Success Criteria:**
-- [ ] Tree traversal in correct order
-- [ ] All nodes factored successfully
-- [ ] Equivalent to dense factorization (for small problems)
+**Time Estimate:** 3–4 weeks
 
 ### Phase 6 Exit Criteria
 
 **Required Outcomes:**
-1. Multifrontal assembly implemented
-2. Tree traversal working correctly
-3. Full factorization on small matrices
-4. Numerical correctness validated
+1. Multifrontal numeric factorization working end-to-end
+2. All hand-constructed and easy indefinite matrices factor correctly
+3. Reconstruction error meets tolerance on all test cases
+4. Delayed pivot mechanism working
 
 **Validation Questions:**
-- Does factorization work on entire test suite?
+- Does factorization match dense APTP on small test matrices?
 - Are contribution blocks computed correctly?
-- Does tree factorization match dense factorization?
+- Do delayed pivots eventually get eliminated?
 
-**Checkpoint:** Factor all "easy indefinite" test matrices. Verify residuals < 1e-10.
+**Checkpoint:** Factor all "easy indefinite" test matrices. Verify reconstruction
+error < 10^-12.
 
 ---
 
-## Phase 7: Solve Phase & Integration
+## Phase 7: Triangular Solve
 
 ### Objectives
-Implement forward/backward substitution, integrate all components, create user-facing API.
+Implement forward/backward substitution through the multifrontal factor structure,
+completing the core solve pipeline: analyze → factor → solve.
 
 ### Deliverables
 
-#### 7.1: Triangular Solve
-**Task:** Implement solve with L and D
+**Task:** Implement the solve phase using the multifrontal factorization from Phase 6
 
-**Implementation:**
+**Approach:**
+
+Given P^T A P = L D L^T from the multifrontal factorization, solve Ax = b via:
+1. Permute: b̂ = P b
+2. Scale (if MC64 from Phase 4): b̂ = S b̂
+3. Forward solve: L y = b̂ (postorder traversal of assembly tree)
+4. Diagonal solve: D z = y (via `MixedDiagonal::solve_in_place` from Phase 2)
+5. Backward solve: L^T w = z (reverse postorder traversal)
+6. Unscale: w = S w
+7. Unpermute: x = P^T w
+
+The forward/backward solves traverse the assembly tree, using dense TRSM
+(via faer) within each supernode's L11 and L21 blocks.
+
+**Notional API** (to be refined during speccing):
 
 ```rust
-pub fn solve_ldlt(
-    factorization: &TreeFactorization,
-    rhs: &[f64]
-) -> Vec<f64> {
-    let mut x = rhs.to_vec();
+impl AptpNumeric {
+    /// Solve Ax = b given the factorization P^T A P = L D L^T.
+    pub fn solve(
+        &self,
+        symbolic: &AptpSymbolic,
+        rhs: ColRef<f64>,
+    ) -> Result<Col<f64>, SparseError>;
 
-    // 1. Permute RHS
-    apply_permutation(&mut x, &factorization.permutation);
-
-    // 2. Scale if needed
-    if let Some(scaling) = &factorization.scaling {
-        apply_scaling(&mut x, scaling);
-    }
-
-    // 3. Forward solve: L * y = Pb
-    forward_solve_tree(&factorization, &mut x);
-
-    // 4. Diagonal solve: D * z = y
-    diagonal_solve(&factorization, &mut x);
-
-    // 5. Backward solve: L' * x = z
-    backward_solve_tree(&factorization, &mut x);
-
-    // 6. Unscale
-    if let Some(scaling) = &factorization.scaling {
-        apply_scaling(&mut x, scaling);  // S is its own inverse
-    }
-
-    // 7. Unpermute
-    apply_inverse_permutation(&mut x, &factorization.permutation);
-
-    x
-}
-
-fn forward_solve_tree(
-    factorization: &TreeFactorization,
-    x: &mut [f64]
-) {
-    // Postorder traversal
-    for node_id in factorization.tree.postorder() {
-        let node_factors = factorization.storage.get(node_id);
-
-        // Solve with this node's L factor
-        forward_solve_supernode(node_factors, x);
-    }
-}
-
-fn backward_solve_tree(
-    factorization: &TreeFactorization,
-    x: &mut [f64]
-) {
-    // Reverse postorder traversal
-    for node_id in factorization.tree.postorder().iter().rev() {
-        let node_factors = factorization.storage.get(node_id);
-
-        // Solve with this node's L' factor
-        backward_solve_supernode(node_factors, x);
-    }
+    /// Solve Ax = b in-place.
+    pub fn solve_in_place(
+        &self,
+        symbolic: &AptpSymbolic,
+        rhs: ColMut<f64>,
+    ) -> Result<(), SparseError>;
 }
 ```
 
-**Testing:**
+**Testing strategy:**
 
-```rust
-#[test]
-fn test_solve_correctness() {
-    for case in all_test_cases() {
-        let analysis = analyze_full(&case.matrix);
-        let factorization = factor_tree(&analysis, &case.matrix).unwrap();
-
-        // Create random RHS
-        let b = random_vector(case.matrix.nrows());
-
-        // Solve
-        let x = solve_ldlt(&factorization, &b);
-
-        // Check residual: ||Ax - b|| / ||b||
-        let ax = case.matrix.mul_vec(&x);
-        let residual = compute_residual(&ax, &b);
-
-        println!("{}: residual = {:.2e}", case.name, residual);
-
-        assert!(residual < 1e-10,
-                "Poor solve accuracy on {}: {:.2e}",
-                case.name, residual);
-    }
-}
-
-#[test]
-fn test_solve_multiple_rhs() {
-    let matrix = load_test_matrix("medium-matrix");
-    let analysis = analyze_full(&matrix);
-    let factorization = factor_tree(&analysis, &matrix).unwrap();
-
-    let nrhs = 10;
-    let b_mat = random_matrix(matrix.nrows(), nrhs);
-
-    // Solve each RHS
-    let mut x_mat = Mat::zeros(matrix.nrows(), nrhs);
-    for j in 0..nrhs {
-        let b_j = b_mat.col(j).try_as_slice().unwrap();
-        let x_j = solve_ldlt(&factorization, b_j);
-        x_mat.col_mut(j).copy_from_slice(&x_j);
-    }
-
-    // Check all solutions
-    for j in 0..nrhs {
-        let b_j = b_mat.col(j).try_as_slice().unwrap();
-        let x_j = x_mat.col(j).try_as_slice().unwrap();
-        let ax = matrix.mul_vec(x_j);
-        let residual = compute_residual(&ax, b_j);
-
-        assert!(residual < 1e-10);
-    }
-}
-```
+- **Known solutions**: construct b = A x_exact, solve, verify x ≈ x_exact
+- **Backward error**: ||Ax - b|| / (||A|| ||x|| + ||b||) < 10^-10
+  using existing NumericalValidator
+- **Multiple RHS**: solve with several right-hand sides reusing same factorization
+- **All test matrices**: backward error on hand-constructed + SuiteSparse
 
 **Success Criteria:**
-- [ ] Solve produces correct solutions
-- [ ] Residuals < 1e-10 on all test matrices
-- [ ] Multiple RHS handled efficiently
+- [ ] Backward error < 10^-10 on all test matrices
+- [ ] Permutation and scaling correctly applied/unapplied
+- [ ] Forward and backward traversals use correct supernode ordering
+- [ ] D solve via Phase 2's `MixedDiagonal::solve_in_place`
+- [ ] Multiple RHS handled efficiently (reusing factorization)
 
-#### 7.2: User-Facing API
-**Task:** Create ergonomic public API
-
-**Implementation:**
-
-```rust
-// High-level solver interface
-pub struct SparseLDLT {
-    analysis: AnalysisWithOrdering,
-    factorization: Option<TreeFactorization>,
-}
-
-impl SparseLDLT {
-    /// Create solver from sparse matrix
-    pub fn new(matrix: SparseColMat<f64>) -> Result<Self> {
-        Self::with_options(matrix, SolverOptions::default())
-    }
-
-    pub fn with_options(
-        matrix: SparseColMat<f64>,
-        options: SolverOptions
-    ) -> Result<Self> {
-        // Analyze
-        let analysis = AnalysisWithOrdering::analyze_full(
-            &matrix,
-            options.analysis_options
-        )?;
-
-        Ok(Self {
-            analysis,
-            factorization: None,
-        })
-    }
-
-    /// Perform numerical factorization
-    pub fn factor(&mut self, matrix: &SparseColMat<f64>) -> Result<()> {
-        let factorization = factor_tree(
-            &self.analysis.analysis.assembly_tree,
-            matrix,
-            FactorOptions::default()
-        )?;
-
-        self.factorization = Some(factorization);
-        Ok(())
-    }
-
-    /// Solve Ax = b
-    pub fn solve(&self, b: &[f64]) -> Result<Vec<f64>> {
-        let factorization = self.factorization.as_ref()
-            .ok_or(Error::NotFactored)?;
-
-        Ok(solve_ldlt(factorization, b))
-    }
-
-    /// One-shot solve: analyze + factor + solve
-    pub fn solve_matrix(
-        matrix: SparseColMat<f64>,
-        b: &[f64]
-    ) -> Result<Vec<f64>> {
-        let mut solver = Self::new(matrix.clone())?;
-        solver.factor(&matrix)?;
-        solver.solve(b)
-    }
-
-    /// Get inertia (num positive, num negative, num zero eigenvalues)
-    pub fn inertia(&self) -> Option<(usize, usize, usize)> {
-        self.factorization.as_ref().map(|f| f.inertia())
-    }
-
-    /// Refactor with same sparsity pattern
-    pub fn refactor(&mut self, matrix: &SparseColMat<f64>) -> Result<()> {
-        // Check pattern matches
-        if !same_pattern(&self.analysis.analysis.assembly_tree, matrix) {
-            return Err(Error::PatternMismatch);
-        }
-
-        self.factor(matrix)
-    }
-}
-
-pub struct SolverOptions {
-    pub ordering: OrderingMethod,
-    pub scaling: ScalingMethod,
-    pub threshold: f64,
-    pub analysis_options: AnalysisOptions,
-    pub factor_options: FactorOptions,
-}
-
-impl Default for SolverOptions {
-    fn default() -> Self {
-        Self {
-            ordering: OrderingMethod::MatchingAMD,
-            scaling: ScalingMethod::MC64,
-            threshold: 0.01,
-            analysis_options: AnalysisOptions::default(),
-            factor_options: FactorOptions::default(),
-        }
-    }
-}
-```
-
-**Testing:**
-
-```rust
-#[test]
-fn test_api_basic() {
-    let matrix = load_test_matrix("small-indefinite");
-    let b = vec![1.0; matrix.nrows()];
-
-    // One-shot solve
-    let x = SparseLDLT::solve_matrix(matrix, &b).unwrap();
-
-    // Verify
-    let residual = compute_residual_sparse(&matrix, &x, &b);
-    assert!(residual < 1e-10);
-}
-
-#[test]
-fn test_api_refactor() {
-    let matrix1 = load_test_matrix("truss-1");
-    let matrix2 = load_test_matrix("truss-2");  // Same pattern
-
-    let mut solver = SparseLDLT::new(matrix1.clone()).unwrap();
-    solver.factor(&matrix1).unwrap();
-
-    let b = vec![1.0; matrix1.nrows()];
-    let x1 = solver.solve(&b).unwrap();
-
-    // Refactor with same pattern
-    solver.refactor(&matrix2).unwrap();
-    let x2 = solver.solve(&b).unwrap();
-
-    // Both should be correct solutions
-    assert!(compute_residual_sparse(&matrix1, &x1, &b) < 1e-10);
-    assert!(compute_residual_sparse(&matrix2, &x2, &b) < 1e-10);
-}
-
-#[test]
-fn test_api_error_handling() {
-    let matrix = load_test_matrix("small-matrix");
-
-    let solver = SparseLDLT::new(matrix.clone()).unwrap();
-
-    // Should error if try to solve before factoring
-    let b = vec![1.0; matrix.nrows()];
-    assert!(solver.solve(&b).is_err());
-}
-```
-
-**Success Criteria:**
-- [ ] API is ergonomic and safe
-- [ ] Error handling is clear
-- [ ] Documentation is comprehensive
-- [ ] Examples work correctly
-
-#### 7.3: Integration Tests
-**Task:** End-to-end testing on full test suite
-
-**Implementation:**
-
-```rust
-#[test]
-fn test_full_suite_sequential() {
-    let mut report = TestReport::new();
-
-    for case in all_test_cases() {
-        println!("Testing: {}", case.name);
-
-        let result = test_full_solve(&case);
-        report.add(case.name.clone(), result);
-    }
-
-    report.print();
-
-    // Success criteria
-    assert!(report.success_rate() > 0.95);
-    assert!(report.median_residual() < 1e-9);
-}
-
-fn test_full_solve(case: &SolverTestCase) -> TestResult {
-    // 1. Solve
-    let b = random_vector(case.matrix.nrows());
-
-    let solver_result = SparseLDLT::solve_matrix(
-        case.matrix.clone(),
-        &b
-    );
-
-    let x = match solver_result {
-        Ok(x) => x,
-        Err(e) => return TestResult::Failed(format!("{:?}", e)),
-    };
-
-    // 2. Check residual
-    let residual = compute_residual_sparse(&case.matrix, &x, &b);
-
-    // 3. Check inertia if available
-    let inertia_ok = if let Some(ref_inertia) = case.reference.as_ref()
-        .and_then(|r| r.inertia)
-    {
-        let solver = SparseLDLT::new(case.matrix.clone()).unwrap();
-        let computed_inertia = solver.inertia().unwrap();
-        computed_inertia == ref_inertia
-    } else {
-        true
-    };
-
-    // 4. Compare with SPRAL if available
-    let spral_comparison = if let Some(ref_results) = case.reference {
-        compare_with_spral_results(&case, &ref_results)
-    } else {
-        None
-    };
-
-    TestResult::Success {
-        residual,
-        inertia_ok,
-        spral_comparison,
-    }
-}
-```
-
-**Success Criteria:**
-- [ ] >95% of test matrices solve successfully
-- [ ] Median residual < 1e-9
-- [ ] Inertia matches reference when available
-- [ ] Performance within 2× of SPRAL (sequential)
+**Time Estimate:** 1–2 weeks
 
 ### Phase 7 Exit Criteria
 
 **Required Outcomes:**
-1. Complete solver working end-to-end
-2. All test matrices solve correctly
-3. API is usable and documented
-4. Integration tests pass
+1. Complete solve pipeline working: analyze → factor → solve
+2. Backward error meets tolerance on all test matrices
+3. Permutation and optional scaling correctly integrated
 
 **Validation Questions:**
-- Can users solve their problems with simple API?
-- Are error messages clear and actionable?
-- Is performance acceptable?
+- Does solve produce correct solutions on all test matrices?
+- Is backward error acceptable on hard indefinite problems?
+- Does refactoring with same sparsity pattern work correctly?
 
-**Checkpoint:** Run full test suite and generate comprehensive report. Should match or exceed SPRAL's numerical quality.
+**Checkpoint:** Solve Ax = b for all test matrices. Verify backward error < 10^-10.
 
 ---
 
-## Phase 8: Parallelization
+## Phase 8: End-to-End Integration & API
 
 ### Objectives
-Add parallel execution using Rayon, following faer's parallelism patterns.
+Assemble the complete solver pipeline into a user-facing API, run comprehensive
+integration tests, and validate against the full SuiteSparse test suite. This is
+the "working solver" milestone.
+
+### What was absorbed from other phases
+
+- **Old Phase 7.2** (User-Facing API): moved here from the solve phase
+- **Old Phase 7.3** (Integration Tests): moved here from the solve phase
+
+### Design Decisions
+
+#### SparseLDLT follows faer's solver wrapper pattern (decided)
+
+faer's `Llt<I, T>` in `sparse/solvers.rs` wraps `SymbolicLlt<I>` + `numeric: Vec<T>`
+and provides solve methods. Our `SparseLDLT` is the APTP equivalent, wrapping
+`AptpSymbolic` + `Option<AptpNumeric>`. The `Option` allows the analyze-then-factor-later
+pattern. Users familiar with faer's solver API will find ours immediately recognizable.
+
+#### Stack-based workspace allocation (decided)
+
+faer uses `MemStack` for all temporary workspace during solve — no heap allocations
+in the hot path. All scratch space is queried upfront via `solve_in_place_scratch()`
+and allocated from a reusable `MemBuffer`. This is the right pattern for a
+performance-oriented solver: callers can amortize allocation across multiple solves,
+and the solver itself has predictable, zero-allocation performance. Our solve and
+factor methods should accept `&mut MemStack` and expose `*_scratch() -> StackReq`
+methods following faer's convention. The one-shot `solve_full` convenience method
+can allocate internally.
 
 ### Deliverables
 
-#### 8.1: Parallel Tree Traversal
-**Task:** Parallelize bottom-up tree factorization
+**Task:** Create the user-facing API and validate end-to-end on the full test suite
 
-**Implementation:**
+**Notional API** (to be refined during speccing):
 
 ```rust
-pub fn factor_tree_parallel(
-    assembly_tree: &AssemblyTree,
-    matrix: &SparseColMat<f64>,
-    options: FactorOptions,
-    parallelism: Parallelism
-) -> Result<TreeFactorization> {
-    let mut factors = Arc::new(Mutex::new(FactorStorage::new()));
-
-    match parallelism {
-        Parallelism::None => {
-            factor_tree_sequential(assembly_tree, matrix, options)
-        }
-        Parallelism::Rayon(n_threads) => {
-            rayon::ThreadPoolBuilder::new()
-                .num_threads(n_threads)
-                .build()
-                .unwrap()
-                .install(|| {
-                    factor_tree_level_by_level(
-                        assembly_tree,
-                        matrix,
-                        options,
-                        factors
-                    )
-                })
-        }
-    }
+/// High-level sparse symmetric indefinite solver.
+///
+/// Implements the three-phase API: analyze → factor → solve.
+/// The symbolic analysis is reusable across factorizations with
+/// the same sparsity pattern.
+pub struct SparseLDLT {
+    symbolic: AptpSymbolic,
+    numeric: Option<AptpNumeric>,
 }
 
-fn factor_tree_level_by_level(
-    assembly_tree: &AssemblyTree,
-    matrix: &SparseColMat<f64>,
-    options: FactorOptions,
-    factors: Arc<Mutex<FactorStorage>>
-) -> Result<TreeFactorization> {
-    // Process tree level-by-level for parallelism
-    let levels = assembly_tree.level_order();
+impl SparseLDLT {
+    /// Symbolic analysis phase.
+    pub fn analyze(
+        matrix: SymbolicSparseColMatRef<'_, usize>,
+        options: &AnalyzeOptions,
+    ) -> Result<Self, SparseError>;
 
-    for level_nodes in levels {
-        // All nodes at same level can be factored in parallel
-        level_nodes.par_iter().try_for_each(|&node_id| {
-            let node = assembly_tree.node(node_id);
+    /// Numeric factorization phase.
+    pub fn factor(
+        &mut self,
+        matrix: &SparseColMat<usize, f64>,
+        options: &FactorOptions,
+        stack: &mut MemStack,
+    ) -> Result<(), SparseError>;
 
-            // Create and assemble front
-            let mut front = create_and_assemble_front(
-                node,
-                matrix,
-                &factors.lock().unwrap()
-            );
+    /// Workspace requirement for factor.
+    pub fn factor_scratch(&self) -> StackReq;
 
-            // Factor
-            let front_factors = factor_front(&front, options.aptp_options)?;
+    /// Solve phase (allocating).
+    pub fn solve(&self, rhs: ColRef<f64>, stack: &mut MemStack) -> Result<Col<f64>, SparseError>;
 
-            // Store
-            factors.lock().unwrap().store(node_id, front_factors);
+    /// Solve phase (in-place).
+    pub fn solve_in_place(&self, rhs: ColMut<f64>, stack: &mut MemStack) -> Result<(), SparseError>;
 
-            Ok::<(), Error>(())
-        })?;
-    }
+    /// Workspace requirement for solve.
+    pub fn solve_scratch(&self, rhs_ncols: usize) -> StackReq;
 
-    Ok(TreeFactorization {
-        storage: Arc::try_unwrap(factors).unwrap().into_inner().unwrap(),
-        tree: assembly_tree.clone(),
-    })
+    /// One-shot: analyze + factor + solve (allocates workspace internally).
+    pub fn solve_full(
+        matrix: &SparseColMat<usize, f64>,
+        rhs: ColRef<f64>,
+        options: &SolverOptions,
+    ) -> Result<Col<f64>, SparseError>;
+
+    /// Refactor with same sparsity pattern (reuses symbolic analysis).
+    pub fn refactor(
+        &mut self,
+        matrix: &SparseColMat<usize, f64>,
+        options: &FactorOptions,
+        stack: &mut MemStack,
+    ) -> Result<(), SparseError>;
+
+    /// Get inertia from the factorization.
+    pub fn inertia(&self) -> Option<Inertia>;
+
+    /// Get factorization statistics.
+    pub fn stats(&self) -> Option<&FactorizationStats>;
+}
+
+pub struct SolverOptions {
+    pub ordering: SymmetricOrdering<'static, usize>,
+    pub threshold: f64,
+    pub fallback: AptpFallback,
 }
 ```
 
-**Testing:**
+**Testing strategy:**
 
-```rust
-#[test]
-fn test_parallel_determinism() {
-    let matrix = load_test_matrix("medium-matrix");
-    let analysis = analyze_full(&matrix);
-
-    // Run 10 times in parallel
-    let results: Vec<_> = (0..10)
-        .into_par_iter()
-        .map(|_| {
-            factor_tree_parallel(
-                &analysis.assembly_tree,
-                &matrix,
-                FactorOptions::default(),
-                Parallelism::Rayon(4)
-            ).unwrap()
-        })
-        .collect();
-
-    // All results should be identical
-    for (i, result) in results.iter().enumerate() {
-        assert_eq!(result.inertia(), results[0].inertia(),
-                   "Run {} differs from run 0", i);
-
-        // Solve and check residuals match
-        let b = vec![1.0; matrix.nrows()];
-        let x_i = solve_ldlt(result, &b);
-        let x_0 = solve_ldlt(&results[0], &b);
-
-        assert_vector_close(&x_i, &x_0, 1e-14);
-    }
-}
-
-#[test]
-fn test_parallel_vs_sequential() {
-    for case in test_cases_medium() {
-        let analysis = analyze_full(&case.matrix);
-
-        let seq = factor_tree(
-            &analysis.assembly_tree,
-            &case.matrix,
-            FactorOptions::default()
-        ).unwrap();
-
-        let par = factor_tree_parallel(
-            &analysis.assembly_tree,
-            &case.matrix,
-            FactorOptions::default(),
-            Parallelism::Rayon(4)
-        ).unwrap();
-
-        // Should produce identical results
-        assert_eq!(seq.inertia(), par.inertia());
-
-        // Test solve
-        let b = vec![1.0; case.matrix.nrows()];
-        let x_seq = solve_ldlt(&seq, &b);
-        let x_par = solve_ldlt(&par, &b);
-
-        assert_vector_close(&x_seq, &x_par, 1e-13);
-    }
-}
-```
+- **API ergonomics**: one-shot solve, analyze-factor-solve, refactor
+- **Error handling**: solve before factor, pattern mismatch on refactor
+- **Documentation examples**: compile and run
+- **Integration**: all hand-constructed matrices (15), backward error < 10^-10,
+  inertia match
+- **SuiteSparse**: all easy/hard indefinite matrices, backward error, factor success
+- **Random matrices** (via Phase 0.5 generators): backward error
+- **Multiple RHS**: solve with several right-hand sides reusing same factorization
+- **Comprehensive report**: using existing test infrastructure
 
 **Success Criteria:**
-- [ ] Parallel execution is deterministic
-- [ ] Results identical to sequential
-- [ ] Speedup observed on large problems
+- [ ] Three-phase API working end-to-end
+- [ ] MemStack-based workspace for factor and solve (no heap allocation in hot path)
+- [ ] One-shot convenience method works (allocates internally)
+- [ ] Refactoring with same sparsity pattern works
+- [ ] Error messages clear and actionable
+- [ ] >95% of test matrices solve successfully
+- [ ] Median backward error < 10^-9
+- [ ] Inertia matches reference when available
 
-#### 8.2: Load Balancing
-**Task:** Implement work-stealing for unbalanced trees
-
-**Implementation:**
-
-```rust
-pub struct LoadBalancingStrategy {
-    pub method: BalancingMethod,
-    pub min_work_per_thread: f64,  // flops
-}
-
-pub enum BalancingMethod {
-    LevelByLevel,      // Simple: all nodes at same level
-    WorkStealing,      // Dynamic: steal from other threads
-    StaticPartition,   // Map subtrees to threads
-}
-
-fn static_partition_tree(
-    assembly_tree: &AssemblyTree,
-    n_threads: usize
-) -> Vec<Vec<usize>> {
-    // Partition tree into subtrees of roughly equal work
-    let total_flops = assembly_tree.total_flops();
-    let target_flops_per_thread = total_flops / n_threads as f64;
-
-    // Greedy assignment of subtrees to threads
-    let mut thread_assignments = vec![Vec::new(); n_threads];
-    let mut thread_loads = vec![0.0; n_threads];
-
-    for node_id in assembly_tree.postorder() {
-        let node_flops = assembly_tree.node(node_id).flops;
-
-        // Assign to thread with least work
-        let min_thread = thread_loads
-            .iter()
-            .enumerate()
-            .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
-            .unwrap()
-            .0;
-
-        thread_assignments[min_thread].push(node_id);
-        thread_loads[min_thread] += node_flops;
-    }
-
-    thread_assignments
-}
-```
-
-**Testing:**
-
-```rust
-#[test]
-fn test_load_balancing() {
-    let unbalanced_matrix = create_unbalanced_tree_matrix();
-    let analysis = analyze_full(&unbalanced_matrix);
-
-    // Time with different strategies
-    let strategies = vec![
-        LoadBalancingStrategy {
-            method: BalancingMethod::LevelByLevel,
-            min_work_per_thread: 1e6,
-        },
-        LoadBalancingStrategy {
-            method: BalancingMethod::StaticPartition,
-            min_work_per_thread: 1e6,
-        },
-    ];
-
-    for strategy in strategies {
-        let start = Instant::now();
-        let _ = factor_tree_parallel_balanced(
-            &analysis.assembly_tree,
-            &unbalanced_matrix,
-            FactorOptions::default(),
-            Parallelism::Rayon(4),
-            strategy
-        ).unwrap();
-        let time = start.elapsed();
-
-        println!("{:?}: {:.2}ms", strategy.method, time.as_millis());
-    }
-}
-```
-
-**Success Criteria:**
-- [ ] Load balancing improves performance on unbalanced trees
-- [ ] Thread utilization >80%
-- [ ] Overhead acceptable
-
-#### 8.3: Parallel Solve
-**Task:** Parallelize forward/backward substitution
-
-**Implementation:**
-
-```rust
-pub fn solve_ldlt_parallel(
-    factorization: &TreeFactorization,
-    rhs: &[f64],
-    parallelism: Parallelism
-) -> Vec<f64> {
-    match parallelism {
-        Parallelism::None => solve_ldlt(factorization, rhs),
-        Parallelism::Rayon(n_threads) => {
-            solve_ldlt_parallel_impl(factorization, rhs, n_threads)
-        }
-    }
-}
-
-fn solve_ldlt_parallel_impl(
-    factorization: &TreeFactorization,
-    rhs: &[f64],
-    n_threads: usize
-) -> Vec<f64> {
-    // Forward/backward solve has limited parallelism
-    // due to dependencies
-    //
-    // Strategy: parallelize within supernodes for large fronts
-    // use level-set parallelism for small fronts
-
-    let mut x = rhs.to_vec();
-
-    // Permute/scale
-    apply_permutation(&mut x, &factorization.permutation);
-    if let Some(scaling) = &factorization.scaling {
-        apply_scaling(&mut x, scaling);
-    }
-
-    // Forward solve with level-set parallelism
-    for level in factorization.tree.level_order() {
-        level.par_iter().for_each(|&node_id| {
-            // Independent operations at same level
-            forward_solve_node(factorization, node_id, &mut x);
-        });
-    }
-
-    // Similar for backward solve...
-
-    x
-}
-```
-
-**Testing:**
-
-```rust
-#[test]
-fn test_parallel_solve() {
-    for case in test_cases_large() {
-        let analysis = analyze_full(&case.matrix);
-        let factorization = factor_tree_parallel(
-            &analysis.assembly_tree,
-            &case.matrix,
-            FactorOptions::default(),
-            Parallelism::Rayon(4)
-        ).unwrap();
-
-        let b = random_vector(case.matrix.nrows());
-
-        let x_seq = solve_ldlt(&factorization, &b);
-        let x_par = solve_ldlt_parallel(
-            &factorization,
-            &b,
-            Parallelism::Rayon(4)
-        );
-
-        // Should produce same results
-        assert_vector_close(&x_seq, &x_par, 1e-13);
-    }
-}
-```
-
-**Success Criteria:**
-- [ ] Parallel solve correct
-- [ ] Speedup on large problems
-- [ ] Deterministic results
-
-#### 8.4: Parallel Benchmarking
-**Task:** Measure parallel performance
-
-**Implementation:**
-
-```rust
-#[bench]
-fn bench_parallel_scaling(b: &mut Bencher) {
-    let matrix = load_test_matrix("large-3d-fem");
-    let analysis = analyze_full(&matrix);
-
-    let thread_counts = [1, 2, 4, 8];
-
-    for &n_threads in &thread_counts {
-        b.iter_custom(|iters| {
-            let mut total_time = Duration::ZERO;
-
-            for _ in 0..iters {
-                let start = Instant::now();
-                let _ = factor_tree_parallel(
-                    &analysis.assembly_tree,
-                    &matrix,
-                    FactorOptions::default(),
-                    Parallelism::Rayon(n_threads)
-                );
-                total_time += start.elapsed();
-            }
-
-            total_time
-        });
-
-        // Compute speedup
-        let t1 = benchmark_time_one_thread();
-        let tn = benchmark_time_n_threads(n_threads);
-        let speedup = t1 / tn;
-
-        println!("Threads: {}, Speedup: {:.2}x", n_threads, speedup);
-    }
-}
-
-#[test]
-fn test_parallel_scaling_report() {
-    let mut report = ParallelScalingReport::new();
-
-    for case in test_cases_large() {
-        let scaling_data = measure_parallel_scaling(&case, &[1, 2, 4, 8]);
-        report.add(case.name, scaling_data);
-    }
-
-    report.print();
-    report.save_csv("parallel_scaling.csv");
-}
-```
-
-**Success Criteria:**
-- [ ] 3× speedup on 4 cores for large problems
-- [ ] Efficient: >75% parallel efficiency
-- [ ] No performance regressions
+**Time Estimate:** 2–3 weeks
 
 ### Phase 8 Exit Criteria
 
 **Required Outcomes:**
-1. Parallel factorization working
-2. Deterministic results
-3. Measurable speedup
-4. Load balancing effective
+1. Complete solver API working end-to-end
+2. All test matrices solve correctly via public API
+3. API is documented, follows faer's MemStack convention
+4. Integration tests comprehensive and passing
 
 **Validation Questions:**
-- Is parallelism adding value?
-- Are there race conditions?
-- Is the overhead acceptable?
+- Can users solve problems with a simple API call?
+- Are error messages clear and actionable?
+- Does refactoring with same pattern work?
+- Is workspace allocation pattern consistent with faer?
 
-**Checkpoint:** Run parallel scalability study on large test matrices. Generate scaling plots.
+**Checkpoint:** Run full test suite through public API. Generate comprehensive
+test report. This is the "working solver" milestone.
 
 ---
 
-## Phase 9: Supernodal APTP Optimization
+## Phase 9: Performance Optimization
 
 ### Objectives
-Implement supernodal (block-wise) APTP factorization for improved performance on large matrices. This phase adds the multifrontal infrastructure deferred from Phase 3.
+Optimize the working solver for performance: two-level blocking for large fronts,
+shared-memory parallelism for independent subtree processing, and benchmarking
+against reference implementations.
 
 ### Motivation
-Simplicial (column-by-column) APTP works but is inefficient for large dense blocks:
-- Poor cache locality
-- Limited use of BLAS-3 operations
-- Lower parallelism potential
+The solver from Phases 2–8 is correct but sequential and uses single-level APTP
+blocking. This phase adds:
+- Cache-efficient blocking for large frontal matrices (two-level APTP)
+- Shared-memory parallelism for independent subtree processing
+- Performance benchmarking and comparison
 
-Supernodal factorization processes dense blocks together, achieving 2-5x speedup on large problems.
+**NOTE**: Consider evaluating METIS integration here. See notes on deferral from
+Phase 4 — METIS plugs in as `SymmetricOrdering::Custom(metis_perm)` and primarily
+benefits large problems where fill-reducing ordering quality is critical.
+
+### Design Decisions
+
+#### Reuse faer's `Par` for parallelism control (decided)
+
+faer controls parallelism via the `Par` enum (`Par::Seq` for sequential,
+`Par::rayon(nthreads)` for parallel). Our factor and solve methods should accept
+a `Par` parameter rather than inventing a new parallelism mechanism. This is
+consistent with transparent composition: users set parallelism the same way they
+do for faer operations. Internally, we use Rayon for assembly-tree level-set
+scheduling (new infrastructure), but the user-facing control surface is faer's `Par`.
 
 ### Deliverables
 
-#### 9.1: Supernode Detection (Adapt faer)
-**Task:** Identify supernodes and build assembly tree
+#### 9.1: Two-Level APTP (Deferred from Phase 5)
+**Task:** Implement nested blocking for the dense APTP kernel to improve cache
+performance on large frontal matrices
 
-**Approach:**
-Adapt faer's supernodal infrastructure for APTP with 2x2 pivots:
-- Start with faer's `SymbolicSupernodalCholesky` as reference
-- Modify to accommodate potential supernode splitting due to delayed pivots
-- Use relaxed supernodes for better performance
+**Algorithm Reference:**
+- Hogg, Duff, Lopez (2020) - Section 4.2 "Two-level APTP"
 
-**Implementation:**
+**Motivation:**
+The single-level APTP kernel from Phase 5 processes columns one at a time within
+each block. For small frontal matrices this is sufficient, but large fronts (hundreds
+of rows) benefit from cache-efficient nested blocking. Two-level APTP applies the
+APTP algorithm recursively: an outer loop processes large blocks, and within each
+block an inner loop processes smaller sub-blocks, maximizing use of faer's blocked
+matmul.
+
+**Notional API:**
 
 ```rust
-use faer::sparse::linalg::cholesky::SymbolicSupernodalParams;
-
-pub struct SupernodalAptpSymbolic {
-    /// Elimination tree (from Phase 3)
-    etree: Vec<isize>,
-
-    /// Supernode structure
-    supernode_begin: Vec<usize>,  // supernode_begin[s] = first col of supernode s
-    supernode_end: Vec<usize>,    // supernode_end[s] = last col + 1
-
-    /// Assembly tree (parent-child relationships)
-    supernode_parent: Vec<Option<usize>>,
-
-    /// Row structure for each supernode
-    supernode_row_indices: Vec<usize>,
-    supernode_row_ptrs: Vec<usize>,
+pub struct TwoLevelAptpOptions {
+    /// Outer block size (e.g., 256). Processes this many columns at a time.
+    pub outer_block_size: usize,
+    /// Inner block size (e.g., 32). Sub-blocks within each outer block.
+    pub inner_block_size: usize,
+    /// Stability threshold (same semantics as single-level).
+    pub threshold: f64,
+    /// Fallback strategy (same as single-level).
+    pub fallback: AptpFallback,
 }
 
-impl SupernodalAptpSymbolic {
-    pub fn from_simplicial(
-        simplicial: &AptpSymbolic,
-        params: SupernodalParams,
-    ) -> Self {
-        // Detect fundamental supernodes
-        let fundamental = detect_fundamental_supernodes(
-            &simplicial.etree,
-            &simplicial.col_counts,
-        );
-
-        // Apply relaxation
-        let relaxed = relax_supernodes(fundamental, params);
-
-        // Build assembly tree
-        Self::build_assembly_tree(relaxed, &simplicial.etree)
-    }
-}
-
-pub struct SupernodalParams {
-    pub relax_factor: f64,     // How much extra fill to tolerate
-    pub min_size: usize,       // Minimum supernode size
-}
+/// Two-level APTP: same interface as single-level, different internal blocking.
+pub fn two_level_aptp_factor(
+    a: MatRef<f64>,
+    options: &TwoLevelAptpOptions,
+) -> Result<AptpFactorization, SparseError>;
 ```
 
 **Testing:**
-
-```rust
-#[test]
-fn test_supernode_detection() {
-    for case in test_cases() {
-        let simplicial = AptpSymbolic::analyze(case.matrix().symbolic()).unwrap();
-
-        let supernodal = SupernodalAptpSymbolic::from_simplicial(
-            &simplicial,
-            SupernodalParams::default(),
-        );
-
-        // Should have fewer "nodes" than columns
-        assert!(supernodal.num_supernodes() < simplicial.dimension());
-    }
-}
-```
+- Correctness: two-level must match single-level results (same delays, same
+  reconstruction error)
+- Performance: benchmark single-level vs two-level on fronts of size 64, 128, 256, 512
+- Identify crossover point where two-level blocking wins
 
 **Success Criteria:**
-- [ ] Supernode detection working on all test matrices
-- [ ] Matches faer's supernode counts on SPD matrices
-- [ ] Assembly tree correctly constructed
+- [ ] Two-level APTP produces same factorization quality as single-level
+- [ ] Performance improvement on large frontal matrices (n > ~128)
+- [ ] Cache-friendly memory access patterns verified via profiling
 
 **Time Estimate:** 1 week
 
-#### 9.2: Supernodal APTP Factorization Kernel
-**Task:** Implement dense APTP on frontal matrices
+#### 9.2: Parallel Factorization & Solve + Benchmarking
+**Task:** Add shared-memory parallelism to factorization and solve, and benchmark
+the complete optimized solver
 
-**Approach:**
-Process supernodes as dense blocks, applying APTP within each supernode:
-- Dense Bunch-Kaufman-style pivoting within supernode
-- Handle supernode splitting when 2x2 pivots cross boundaries
-- Update propagation to parent supernodes
+**Algorithm Reference:**
+- Duff & Reid (1983) — assembly tree parallelism
+- Liu (1992) — level-set scheduling for multifrontal methods
 
-**Implementation:**
+**Approach — Parallel Factorization:**
+Independent subtrees in the assembly tree can be factored in parallel.
+Use level-set parallelism (all supernodes at the same tree level are independent)
+or work-stealing via Rayon's `par_iter`. Accept faer's `Par` for user-facing
+parallelism control; use Rayon internally for tree-level scheduling.
+
+**Approach — Parallel Solve:**
+Level-set parallelism for independent supernodes at the same tree level.
+Limited parallelism due to data dependencies, but effective for wide trees.
+Use faer's dense TRSM parallelism within large supernodes via `Par`.
+
+**Notional API:**
 
 ```rust
-pub struct SupernodalAptpNumeric {
-    symbolic: SupernodalAptpSymbolic,
-    supernode_factors: Vec<SupernodeFactor>,
-    d_blocks: MixedDiagonal<f64>,
-}
-
-pub struct SupernodeFactor {
-    supernode_id: usize,
-    /// Dense L block (column-major)
-    l_dense: Vec<f64>,
-    nrows: usize,
-    ncols: usize,
-}
-
-impl SupernodalAptpNumeric {
+impl AptpNumeric {
+    /// Factor with parallelism control.
+    /// Par::Seq gives sequential; Par::rayon(n) uses n threads.
     pub fn factor(
-        symbolic: SupernodalAptpSymbolic,
-        matrix: AptpMatrixRef<'_, f64>,
-        options: AptpOptions,
-    ) -> Result<Self> {
-        // Process supernodes in postorder
-        for snode_id in symbolic.postorder() {
-            // Assemble frontal matrix
-            let mut frontal = assemble_frontal_matrix(snode_id, &symbolic, &matrix);
-
-            // Apply APTP to dense frontal
-            let (l_block, d_block, pivots) = factor_frontal_aptp(
-                &mut frontal,
-                options.threshold,
-            )?;
-
-            // Store factors
-            // Update parent supernodes
-        }
-
-        Ok(Self { /* ... */ })
-    }
+        symbolic: &AptpSymbolic,
+        matrix: &SparseColMat<usize, f64>,
+        options: &AptpOptions,
+        par: Par,
+        stack: &mut MemStack,
+    ) -> Result<Self, SparseError>;
 }
 
-/// Factor dense frontal matrix with APTP
-fn factor_frontal_aptp(
-    frontal: &mut DenseFrontalMatrix,
-    threshold: f64,
-) -> Result<(Vec<f64>, Vec<Block2x2<f64>>, Vec<PivotType>)> {
-    // Dense APTP algorithm (from Phase 5) on frontal matrix
-    todo!()
+impl SparseLDLT {
+    /// Factor and solve accept Par for parallelism control.
+    pub fn factor(
+        &mut self,
+        matrix: &SparseColMat<usize, f64>,
+        options: &FactorOptions,
+        par: Par,
+        stack: &mut MemStack,
+    ) -> Result<(), SparseError>;
+
+    pub fn solve_in_place(
+        &self,
+        rhs: ColMut<f64>,
+        par: Par,
+        stack: &mut MemStack,
+    ) -> Result<(), SparseError>;
 }
 ```
 
-**Success Criteria:**
-- [ ] Supernodal factorization produces correct factors
-- [ ] Residuals match simplicial version
-- [ ] Performance improvement on large matrices
+**NOTE**: The `Par` parameter will also be added to Phase 6–8 APIs retroactively
+(with `Par::Seq` default until Phase 9 adds the parallel implementation). The
+exact threading boundary — which methods accept `Par` — will be refined during
+speccing.
 
-**Time Estimate:** 2-3 weeks
+**Benchmarking deliverable:** Performance report showing:
+- Factor time vs matrix size (sequential and parallel)
+- Solve time vs matrix size (sequential and parallel)
+- Parallel scaling (1, 2, 4, 8 threads)
+- Memory usage
+- Effect of two-level APTP on large fronts
+- Comparison with faer's built-in solvers and SPRAL (if available)
 
-#### 9.3: Supernodal Solve
-**Task:** Implement triangular solves with supernodal structure
-
-**Implementation:**
-
-```rust
-impl SupernodalAptpNumeric {
-    pub fn solve(&self, rhs: &[f64]) -> Vec<f64> {
-        let mut x = rhs.to_vec();
-
-        // Forward solve: L * y = P * rhs
-        for snode_id in self.symbolic.postorder() {
-            solve_supernode_forward(snode_id, &self.supernode_factors, &mut x);
-        }
-
-        // D solve
-        self.d_blocks.solve(&mut x);
-
-        // Backward solve: L^T * x = y
-        for snode_id in self.symbolic.postorder().rev() {
-            solve_supernode_backward(snode_id, &self.supernode_factors, &mut x);
-        }
-
-        x
-    }
-}
-```
+**Testing:**
+- Parallel results must be deterministic
+- Parallel results must match sequential results exactly (bitwise)
+- Speedup observed on large problems
 
 **Success Criteria:**
-- [ ] Solve produces correct results (matches simplicial)
-- [ ] Faster than simplicial solve
+- [ ] Deterministic parallel execution
+- [ ] Results identical to sequential
+- [ ] Speedup on factorization (≥3× on 4 cores for large problems)
+- [ ] Speedup on solve for wide assembly trees
+- [ ] Load balancing effective for unbalanced trees
+- [ ] Performance competitive with SPRAL on sequential
+- [ ] ≥75% parallel efficiency on 4 cores
+- [ ] No correctness regressions from optimization changes
 
-**Time Estimate:** 1 week
-
-#### 9.4: Performance Comparison
-**Task:** Benchmark simplicial vs. supernodal
-
-**Deliverable:** Performance report showing:
-- Factor time: simplicial vs. supernodal
-- Solve time: simplicial vs. supernodal
-- Memory usage comparison
-- Identification of problem sizes where supernodal wins
-
-**Success Criteria:**
-- [ ] Supernodal 2-5x faster on large problems (n > 10,000)
-- [ ] Simplicial still correct and available as fallback
-
-**Time Estimate:** 3-4 days
+**Time Estimate:** 3 weeks
 
 ### Phase 9 Exit Criteria
 
 **Required Outcomes:**
-1. Supernodal APTP working and tested
-2. Performance improvement demonstrated
-3. Both simplicial and supernodal available as solver options
-4. Clear guidance on when to use each
+1. Two-level APTP improves cache performance on large fronts
+2. Parallel factorization and solve working and deterministic
+3. Performance benchmarked and documented
+4. No correctness regressions from optimization
 
 **Validation Questions:**
-- Does supernodal match simplicial accuracy?
-- Is the speedup significant?
-- Are there any correctness issues?
+- Does two-level APTP improve performance on large fronts?
+- Is parallel speedup significant?
+- Is performance competitive with SPRAL?
 
-**Checkpoint:** Run full benchmark suite comparing simplicial vs. supernodal. Document performance characteristics.
+**Checkpoint:** Run full benchmark suite. Generate performance report with
+scaling plots and comparison data.
 
-**Time Estimate:** 4-6 weeks
+**Time Estimate:** 4 weeks
 
 ---
 

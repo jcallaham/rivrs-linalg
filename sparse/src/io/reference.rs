@@ -11,23 +11,8 @@ use serde::Deserialize;
 use crate::error::SparseError;
 use crate::validate;
 
-/// Eigenvalue sign classification of a symmetric matrix.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, Deserialize)]
-pub struct Inertia {
-    /// Count of positive eigenvalues.
-    pub positive: usize,
-    /// Count of negative eigenvalues.
-    pub negative: usize,
-    /// Count of zero eigenvalues.
-    pub zero: usize,
-}
-
-impl Inertia {
-    /// Total matrix dimension (positive + negative + zero).
-    pub fn dimension(&self) -> usize {
-        self.positive + self.negative + self.zero
-    }
-}
+// Inertia relocated to aptp module; re-export for backward compatibility.
+pub use crate::aptp::Inertia;
 
 /// Single entry in the strict lower triangle of L.
 #[derive(Debug, Clone, Deserialize)]
