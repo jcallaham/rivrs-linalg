@@ -20,10 +20,15 @@ use super::pivot::{Block2x2, PivotType};
 ///
 /// # Storage layout
 ///
-/// Uses parallel arrays for cache-friendly access during solve:
+/// Uses parallel arrays indexed by column for O(1) access during solve:
 /// - `pivot_map[col]`: pivot classification per column
-/// - `diag_1x1[col]`: diagonal value for 1x1 pivots (unused at 2x2/delayed columns)
-/// - `blocks_2x2`: collected 2x2 blocks (one per pair, owned by the lower column)
+/// - `diag[col]`: diagonal value — for 1x1 pivots the scalar value, for 2x2
+///   blocks the `a` value at the owner column and `c` at the partner column
+/// - `off_diag[col]`: off-diagonal `b` for 2x2 blocks (at the owner column);
+///   0.0 at 1x1 and delayed columns
+///
+/// [`Block2x2`] serves as the API type for input ([`set_2x2`](Self::set_2x2))
+/// and output ([`get_2x2`](Self::get_2x2)) but is not the storage format.
 ///
 /// # References
 ///
@@ -31,8 +36,8 @@ use super::pivot::{Block2x2, PivotType};
 /// - Bunch & Kaufman (1977): 2x2 pivot block structure
 pub struct MixedDiagonal {
     pivot_map: Vec<PivotType>,
-    diag_1x1: Vec<f64>,
-    blocks_2x2: Vec<Block2x2>,
+    diag: Vec<f64>,
+    off_diag: Vec<f64>,
     n: usize,
 }
 
@@ -43,8 +48,8 @@ impl MixedDiagonal {
     pub fn new(n: usize) -> Self {
         Self {
             pivot_map: vec![PivotType::Delayed; n],
-            diag_1x1: vec![0.0; n],
-            blocks_2x2: Vec::new(),
+            diag: vec![0.0; n],
+            off_diag: vec![0.0; n],
             n,
         }
     }
@@ -69,7 +74,7 @@ impl MixedDiagonal {
             self.pivot_map[col]
         );
         self.pivot_map[col] = PivotType::OneByOne;
-        self.diag_1x1[col] = value;
+        self.diag[col] = value;
     }
 
     /// Set a 2x2 pivot block starting at `block.first_col`.
@@ -102,7 +107,9 @@ impl MixedDiagonal {
         );
         self.pivot_map[col] = PivotType::TwoByTwo { partner: col + 1 };
         self.pivot_map[col + 1] = PivotType::TwoByTwo { partner: col };
-        self.blocks_2x2.push(block);
+        self.diag[col] = block.a;
+        self.diag[col + 1] = block.c;
+        self.off_diag[col] = block.b;
     }
 
     /// Matrix dimension.
@@ -137,25 +144,29 @@ impl MixedDiagonal {
             col,
             self.pivot_map[col]
         );
-        self.diag_1x1[col]
+        self.diag[col]
     }
 
     /// Block data for a 2x2 pivot (by the lower-indexed column).
     ///
+    /// Constructs a [`Block2x2`] from the inline parallel arrays. This is O(1).
+    ///
     /// # Panics (debug only)
     ///
     /// Column is not the owner (lower-indexed) of a [`PivotType::TwoByTwo`] block.
-    pub fn get_2x2(&self, first_col: usize) -> &Block2x2 {
+    pub fn get_2x2(&self, first_col: usize) -> Block2x2 {
         debug_assert!(
             matches!(self.pivot_map[first_col], PivotType::TwoByTwo { partner } if partner > first_col),
             "get_2x2: col {} is not a 2x2 block owner ({:?})",
             first_col,
             self.pivot_map[first_col]
         );
-        self.blocks_2x2
-            .iter()
-            .find(|b| b.first_col == first_col)
-            .expect("2x2 block not found for column")
+        Block2x2 {
+            first_col,
+            a: self.diag[first_col],
+            b: self.off_diag[first_col],
+            c: self.diag[first_col + 1],
+        }
     }
 
     /// Number of columns still marked as [`PivotType::Delayed`].
@@ -176,7 +187,11 @@ impl MixedDiagonal {
 
     /// Number of 2x2 pivot pairs.
     pub fn num_2x2_pairs(&self) -> usize {
-        self.blocks_2x2.len()
+        self.pivot_map
+            .iter()
+            .enumerate()
+            .filter(|(i, p)| matches!(p, PivotType::TwoByTwo { partner } if *partner > *i))
+            .count()
     }
 
     /// Solve D x = b in place, where `x` initially contains the right-hand side b.
@@ -214,16 +229,19 @@ impl MixedDiagonal {
         while col < self.n {
             match self.pivot_map[col] {
                 PivotType::OneByOne => {
-                    let d = self.diag_1x1[col];
+                    let d = self.diag[col];
                     debug_assert!(d != 0.0, "solve_in_place: zero 1x1 pivot at col {}", col);
                     x[col] /= d;
                     col += 1;
                 }
                 PivotType::TwoByTwo { partner } => {
                     if partner > col {
-                        // This is the owner (lower-indexed column) of the 2x2 block
-                        let block = self.get_2x2(col);
-                        let det = block.determinant();
+                        // This is the owner (lower-indexed column) of the 2x2 block.
+                        // Read a, b, c directly from parallel arrays — O(1).
+                        let a = self.diag[col];
+                        let b = self.off_diag[col];
+                        let c = self.diag[partner];
+                        let det = a * c - b * b;
                         debug_assert!(
                             det != 0.0,
                             "solve_in_place: zero determinant 2x2 block at col {}",
@@ -232,8 +250,8 @@ impl MixedDiagonal {
                         let r1 = x[col];
                         let r2 = x[partner];
                         // Cramer's rule: [[a,b],[b,c]]^-1 = (1/det) * [[c,-b],[-b,a]]
-                        x[col] = (block.c * r1 - block.b * r2) / det;
-                        x[partner] = (block.a * r2 - block.b * r1) / det;
+                        x[col] = (c * r1 - b * r2) / det;
+                        x[partner] = (a * r2 - b * r1) / det;
                     }
                     // Skip partner column if we've already processed this pair
                     col += 1;
@@ -284,7 +302,7 @@ impl MixedDiagonal {
         while col < self.n {
             match self.pivot_map[col] {
                 PivotType::OneByOne => {
-                    let d = self.diag_1x1[col];
+                    let d = self.diag[col];
                     if d > 0.0 {
                         positive += 1;
                     } else if d < 0.0 {
@@ -296,9 +314,12 @@ impl MixedDiagonal {
                 }
                 PivotType::TwoByTwo { partner } => {
                     if partner > col {
-                        let block = self.get_2x2(col);
-                        let det = block.determinant();
-                        let trace = block.trace();
+                        // Read a, b, c directly from parallel arrays — O(1).
+                        let a = self.diag[col];
+                        let b = self.off_diag[col];
+                        let c = self.diag[partner];
+                        let det = a * c - b * b;
+                        let trace = a + c;
 
                         if det > 0.0 {
                             if trace > 0.0 {
@@ -389,7 +410,7 @@ mod tests {
 
         assert_eq!(diag.get_pivot_type(2), PivotType::TwoByTwo { partner: 3 });
         assert_eq!(diag.get_pivot_type(3), PivotType::TwoByTwo { partner: 2 });
-        assert_eq!(diag.get_2x2(2), &block);
+        assert_eq!(diag.get_2x2(2), block);
         assert_eq!(diag.num_2x2_pairs(), 1);
         assert_eq!(diag.num_delayed(), 4);
     }
