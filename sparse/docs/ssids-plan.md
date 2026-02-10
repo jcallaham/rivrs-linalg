@@ -1953,343 +1953,113 @@ scaling plots and comparison data.
 
 ---
 
-## Phase 10: Optimization & Polish
+## Phase 10: Polish & Release
 
 ### Objectives
-Performance optimization, memory efficiency, API refinement, comprehensive documentation.
+Harden the solver for production use (memory optimization, robustness testing) and
+prepare for public release (documentation, examples, packaging).
+
+### What was absorbed or superseded from original Phases 10–11
+
+- **Old 10.1 (Performance Profiling)**: Profiling tools already built in Phase 1.4.
+  Benchmarking already covered by Phase 9.2. Targeted bottleneck fixes are part of
+  10.1 below.
+- **Old 10.2 (Memory Optimization)**: Workspace allocation addressed by Phase 8's
+  MemStack pattern. Compact factor storage addressed by Phase 2's MixedDiagonal and
+  Phase 6's FrontFactors. Arena allocation for frontal matrices remains (10.1 below).
+- **Old 10.3 (API Refinement)**: Superseded by Phase 8's SparseLDLT API design and
+  Phase 9's Par integration. Builder pattern is minor sugar, deferred to 10.2 if needed.
+- **Old 11.3 (Benchmarks)**: Fully superseded by Phase 9.2's performance report.
+- **Old 11.4 (CI/CD)**: Already done in Phase 1.3.
 
 ### Deliverables
 
-#### 10.1: Performance Profiling
-**Task:** Identify and optimize bottlenecks
+#### 10.1: Solver Hardening
+**Task:** Improve robustness and memory efficiency of the working solver
 
-**Process:**
+**Memory optimization:**
+- Arena allocation for frontal matrices during factorization — allocate from a
+  pre-sized memory pool rather than individual heap allocations per front. This
+  complements Phase 8's MemStack (which handles solve-phase workspace) by
+  optimizing the factorization-phase memory pattern.
+- Peak memory tracking and validation against symbolic predictions
+- Memory usage within 50% of prediction from AptpSymbolic
 
-```rust
-// Use built-in profiling tools
-#[test]
-#[ignore]
-fn profile_full_solve() {
-    let cases = test_cases_by_difficulty(Difficulty::Hard);
+**Property-based testing (proptest):**
+- Generate random symmetric matrices (varying size, density, definiteness)
+- Verify backward error < tolerance for all solvable systems
+- Verify no panics on singular or near-singular matrices
 
-    for case in cases {
-        println!("\nProfiling: {}", case.name);
+**Fuzzing:**
+- Malformed inputs (invalid sparsity patterns, non-symmetric matrices)
+- Extreme values (near-overflow, near-underflow, exact zeros)
+- Singular and structurally singular matrices
+- Goal: no panics, only clean error returns
 
-        let profiler = ProfileRecorder::new();
-
-        // Analyze
-        profiler.start_section("analyze");
-        let analysis = analyze_full(&case.matrix);
-        profiler.end_section();
-
-        // Factor
-        profiler.start_section("factor");
-        let factorization = factor_tree(
-            &analysis.assembly_tree,
-            &case.matrix,
-            FactorOptions::default()
-        ).unwrap();
-        profiler.end_section();
-
-        // Solve
-        profiler.start_section("solve");
-        let b = random_vector(case.matrix.nrows());
-        let _ = solve_ldlt(&factorization, &b);
-        profiler.end_section();
-
-        // Report
-        profiler.print_report();
-        profiler.export_flamegraph(&format!("{}.svg", case.name));
-    }
-}
-```
-
-**Optimization Targets:**
-1. Memory allocation patterns
-2. Cache utilization
-3. SIMD utilization (via faer)
-4. Minimize copies
-5. Thread synchronization overhead
+**Targeted performance fixes:**
+- Use Phase 1.4 profiling tools and Phase 9.2 benchmark results to identify
+  top 3 bottlenecks
+- Optimize allocation patterns, cache utilization, unnecessary copies
+- Verify no performance regressions
 
 **Success Criteria:**
-- [ ] Identified top 3 bottlenecks
-- [ ] Optimization opportunities documented
-- [ ] Performance improvement plan created
+- [ ] Arena allocation reduces peak memory on large problems
+- [ ] Peak memory within 50% of symbolic prediction
+- [ ] Property-based tests pass on random matrices (size 5–500)
+- [ ] No panics on any invalid input (clean error returns)
+- [ ] >90% code coverage
+- [ ] Top bottlenecks identified and addressed
 
-#### 10.2: Memory Optimization
-**Task:** Reduce memory footprint and improve locality
+**Time Estimate:** 2 weeks
 
-**Strategies:**
-
-```rust
-// Use arena allocators for frontal matrices
-pub struct FrontalArena {
-    memory_pool: Vec<f64>,
-    allocations: Vec<AllocationInfo>,
-}
-
-impl FrontalArena {
-    pub fn allocate_front(&mut self, nrows: usize, ncols: usize)
-        -> FrontalMatrix;
-
-    pub fn free_front(&mut self, front: FrontalMatrix);
-
-    pub fn peak_usage(&self) -> usize;
-}
-
-// Memory-efficient factor storage
-pub struct CompactFactorStorage {
-    // Store only lower triangle
-    // Pack 1×1 and 2×2 blocks efficiently
-}
-```
-
-**Testing:**
-
-```rust
-#[test]
-fn test_memory_usage() {
-    for case in test_cases() {
-        let before = get_memory_usage();
-
-        let analysis = analyze_full(&case.matrix);
-        let factorization = factor_tree(
-            &analysis.assembly_tree,
-            &case.matrix,
-            FactorOptions::default()
-        ).unwrap();
-
-        let peak = get_peak_memory_usage();
-        let after = get_memory_usage();
-
-        println!("{}: peak={:.1}MB, final={:.1}MB, predicted={:.1}MB",
-                 case.name,
-                 peak / 1e6,
-                 after / 1e6,
-                 analysis.analysis.predicted_memory / 1e6);
-
-        // Peak should be close to prediction
-        let ratio = peak as f64 / analysis.analysis.predicted_memory as f64;
-        assert!(ratio < 1.5, "Memory usage higher than predicted");
-    }
-}
-```
-
-**Success Criteria:**
-- [ ] Memory usage predictable
-- [ ] Peak memory within 50% of prediction
-- [ ] No memory leaks
-
-#### 10.3: API Refinement
-**Task:** Polish public API based on feedback
+#### 10.2: Release Preparation
+**Task:** Documentation, examples, and packaging for public release
 
 **Documentation:**
+- README with quick start guide
+- User guide covering the three-phase API, options, and common patterns
+- API reference (rustdoc with examples on key types and methods)
+- Performance guide (when to use APTP vs faer's built-in solvers, tuning options)
+- Migration guide for users coming from SPRAL, MUMPS, or HSL solvers
 
-```rust
-/// Sparse symmetric indefinite linear system solver.
-///
-/// Uses LDL^T factorization with A Posteriori Threshold Pivoting (APTP)
-/// for numerical stability on indefinite systems.
-///
-/// # Examples
-///
-/// Basic usage:
-/// ```
-/// use sparse_ldlt::SparseLDLT;
-///
-/// let matrix = /* load your matrix */;
-/// let b = vec![1.0; matrix.nrows()];
-///
-/// let x = SparseLDLT::solve_matrix(matrix, &b)?;
-/// ```
-///
-/// Reusing factorization:
-/// ```
-/// let mut solver = SparseLDLT::new(matrix.clone())?;
-/// solver.factor(&matrix)?;
-///
-/// let x1 = solver.solve(&b1)?;
-/// let x2 = solver.solve(&b2)?;  // Reuse factorization
-/// ```
-pub struct SparseLDLT { /* ... */ }
+**Examples** (standalone `examples/` directory):
+- `basic_solve.rs` — one-shot solve with `SparseLDLT::solve_full`
+- `three_phase.rs` — analyze/factor/solve with workspace reuse
+- `multiple_rhs.rs` — solving with several right-hand sides
+- `refactorization.rs` — reusing symbolic analysis for updated values
+- `interior_point.rs` — integration with an interior point optimization loop
 
-// Add builder pattern for options
-impl SparseLDLT {
-    pub fn builder() -> SparseLDLTBuilder {
-        SparseLDLTBuilder::new()
-    }
-}
-
-pub struct SparseLDLTBuilder {
-    ordering: OrderingMethod,
-    scaling: ScalingMethod,
-    threshold: f64,
-    parallelism: Parallelism,
-}
-
-impl SparseLDLTBuilder {
-    pub fn ordering(mut self, method: OrderingMethod) -> Self {
-        self.ordering = method;
-        self
-    }
-
-    pub fn threshold(mut self, threshold: f64) -> Self {
-        self.threshold = threshold;
-        self
-    }
-
-    pub fn parallel(mut self, n_threads: usize) -> Self {
-        self.parallelism = Parallelism::Rayon(n_threads);
-        self
-    }
-
-    pub fn build(self, matrix: SparseColMat<f64>) -> Result<SparseLDLT> {
-        // ...
-    }
-}
-```
-
-**Examples:**
-
-```rust
-// examples/basic_solve.rs
-//! Basic sparse LDL^T solve example
-
-use sparse_ldlt::*;
-
-fn main() -> Result<()> {
-    // Load matrix
-    let matrix = io::read_matrix_market("test.mtx")?;
-
-    // Create RHS
-    let b = vec![1.0; matrix.nrows()];
-
-    // Solve
-    let x = SparseLDLT::solve_matrix(matrix, &b)?;
-
-    println!("Solution norm: {:.6}", x.iter().map(|&v| v*v).sum::<f64>().sqrt());
-
-    Ok(())
-}
-```
+**Packaging:**
+- Version 0.1.0 on crates.io
+- Issue templates and contributing guide
+- Verify CI passes on Linux/macOS (Windows stretch goal)
 
 **Success Criteria:**
-- [ ] API is intuitive
-- [ ] Documentation comprehensive
-- [ ] Examples cover common use cases
-- [ ] Error messages actionable
+- [ ] README and user guide complete
+- [ ] All examples compile and run correctly
+- [ ] Rustdoc examples on public types and methods
+- [ ] Published on crates.io
+- [ ] Contributing guide and issue templates in place
 
-#### 10.4: Comprehensive Testing
-**Task:** Expand test coverage
+**Time Estimate:** 2 weeks
 
-**Additional Tests:**
-
-```rust
-// Property-based testing
-#[cfg(test)]
-mod property_tests {
-    use proptest::prelude::*;
-
-    proptest! {
-        #[test]
-        fn test_solve_always_correct(
-            matrix in arbitrary_symmetric_matrix(10, 20)
-        ) {
-            if let Ok(solver) = SparseLDLT::new(matrix.clone()) {
-                let b = random_vector(matrix.nrows());
-                let x = solver.solve(&b).unwrap();
-
-                let residual = compute_residual_sparse(&matrix, &x, &b);
-                prop_assert!(residual < 1e-6);
-            }
-        }
-    }
-}
-
-// Fuzzing
-#[test]
-fn test_fuzz_inputs() {
-    // Test with malformed inputs
-    // - Invalid matrix patterns
-    // - Singular matrices
-    // - Extreme values
-    // Should not panic
-}
-
-// Regression tests
-#[test]
-fn test_known_issues() {
-    // Test cases that previously failed
-    // Ensure they now work
-}
-```
-
-**Success Criteria:**
-- [ ] >90% code coverage
-- [ ] Property tests pass
-- [ ] No panics on invalid inputs
-- [ ] All known issues resolved
-
-### Phase 9 Exit Criteria
+### Phase 10 Exit Criteria
 
 **Required Outcomes:**
-1. Performance optimized
-2. Memory usage efficient
-3. API polished and documented
-4. Comprehensive test suite
+1. Solver robust against malformed inputs (no panics)
+2. Memory usage predictable and efficient
+3. Documentation and examples complete
+4. Published on crates.io
 
 **Validation Questions:**
-- Is performance competitive with SPRAL?
 - Is the library ready for public use?
-- Are there any remaining bugs?
+- Can a new user solve a problem from the README alone?
+- Are there any remaining robustness issues?
 
-**Final Checkpoint:**
-- Run full benchmark suite
-- Compare with SPRAL on all metrics
-- Generate final report
-- Create publication-ready plots
+**Checkpoint:** Run full test suite including property-based tests. Verify all
+examples compile and run. Publish to crates.io.
 
----
-
-## Phase 11: Release Preparation
-
-### Objectives
-Prepare for public release: documentation, examples, tutorials, packaging.
-
-### Deliverables
-
-#### 11.1: Documentation
-- [ ] README with quick start
-- [ ] User guide
-- [ ] API reference (rustdoc)
-- [ ] Performance guide
-- [ ] Migration guide (from other solvers)
-
-#### 11.2: Examples
-- [ ] Basic solve
-- [ ] Interior point method integration
-- [ ] Iterative refinement
-- [ ] Multiple RHS
-- [ ] Refactorization
-
-#### 11.3: Benchmarks
-- [ ] Comparison with SPRAL
-- [ ] Performance plots
-- [ ] Scaling studies
-
-#### 11.4: Release
-- [ ] Version 0.1.0 on crates.io
-- [ ] CI/CD setup
-- [ ] Issue templates
-- [ ] Contributing guide
-
-### Phase 11 Exit Criteria
-
-**Required Outcomes:**
-1. Published on crates.io
-2. Documentation complete
-3. Examples working
-4. Community ready
+**Time Estimate:** 4 weeks
 
 ---
 
