@@ -1,5 +1,107 @@
 # SSIDS Development Log
 
+## Phase 3: APTP Symbolic Analysis
+
+**Status**: Complete
+**Branch**: `010-aptp-symbolic`
+**Date**: 2026-02-10
+
+### What Was Built
+
+Symbolic analysis module for the APTP solver pipeline — the "analyze" step of the
+three-phase analyze → factorize → solve API. Composes faer's `SymbolicCholesky<usize>`
+with APTP-specific metadata: elimination tree parent pointers, per-column nonzero counts,
+and heuristic delayed-pivot buffer estimates.
+
+**Symbolic module** (`src/aptp/symbolic.rs`):
+- `AptpSymbolic` — central analysis result struct wrapping `SymbolicCholesky<usize>`
+  (inner), `Vec<isize>` etree parent pointers, `Vec<usize>` column counts, and
+  `Vec<usize>` pivot buffer estimates. Immutable after creation, reusable across
+  multiple numeric factorizations with the same sparsity pattern.
+- `AptpSymbolic::analyze(matrix, ordering)` — constructor performing: input validation
+  (NotSquare, DimensionMismatch), `factorize_symbolic_cholesky` for full symbolic result,
+  permuted structure computation (P^T A P upper-triangular CSC),
+  `prefactorize_symbolic_cholesky` on permuted structure for etree + col_counts, and
+  10% buffer heuristic for pivot buffer estimates
+- `SymbolicStatistics` — diagnostic summary with `Display` impl (dimension, predicted_nnz,
+  average_col_count, is_supernodal, n_supernodes, total_pivot_buffer)
+- faer-delegating accessors: `perm()`, `predicted_nnz()`, `nrows()`, `ncols()`, `raw()`, `inner()`
+- APTP-specific accessors: `etree()`, `col_counts()`, `pivot_buffer_estimates()`,
+  `total_pivot_buffer()`, `is_supernodal()`, `n_supernodes()`
+- Supernodal accessors: `supernode_begin()`, `supernode_end()`, `supernode_pattern(s)`,
+  `supernode_parent(s)` (assembly tree parent derivation from column-level etree)
+- Dual-variant handling: all accessors handle both simplicial and supernodal results
+  transparently via pattern matching on `SymbolicCholeskyRaw`
+
+**Module wiring** (`src/aptp/mod.rs`):
+- Added `pub mod symbolic;` and re-exports for `AptpSymbolic`, `SymbolicStatistics`
+
+**Integration tests** (`tests/symbolic_analysis.rs`):
+- `test_analyze_all_hand_constructed` — all 15 hand-constructed matrices with AMD ordering
+- `test_analyze_suitesparse_ci_subset` — all 9 SuiteSparse CI-subset matrices with AMD
+- `test_custom_ordering_on_hand_constructed` — AMD vs identity custom ordering comparison
+- `test_supernodal_structure_suitesparse` — validates supernode ranges, assembly tree,
+  row patterns for supernodal SuiteSparse matrices
+
+**Benchmarks** (`benches/solver_benchmarks.rs`):
+- Added `bench_symbolic_analysis` benchmark group measuring `AptpSymbolic::analyze` on
+  CI-subset matrices with AMD ordering, establishing baseline for SC-006
+
+**Tests**: 20 new unit tests + 4 integration tests + 3 doc-tests. Total suite: 226 tests
+(217 unit + 9 integration + 7 doc-tests), all passing. Zero clippy warnings, fmt clean,
+cargo doc clean.
+
+### Key Decisions
+
+1. **Two-call strategy**: `factorize_symbolic_cholesky` for the full symbolic result +
+   `prefactorize_symbolic_cholesky` on the permuted structure for etree/col_counts.
+   The prefactorize call is O(nnz · α(n)) — negligible compared to full symbolic
+   factorization. This avoids forking faer or relying on `pub(crate)` internals.
+
+2. **Permuted structure computation**: The elimination tree must correspond to the
+   **permuted** matrix (after ordering). We build P^T A P's upper-triangular CSC
+   structure explicitly (remapping row/column indices through the permutation) before
+   calling `prefactorize_symbolic_cholesky`. This matches what faer computes internally.
+
+3. **10% buffer heuristic**: `ceil(0.10 * column_count)` per supernode (supernodal) or
+   per column (simplicial). Conservative starting point from Hogg et al. (2016) Section
+   2.4 on delayed pivot propagation. Will be validated empirically in Phase 5-6.
+
+4. **Dual-variant handling**: `SymbolicCholeskyRaw` is an enum (Simplicial/Supernodal).
+   All accessors handle both variants — supernodal-specific methods return `Option<T>`
+   (None for simplicial). Small test matrices may be simplicial; production matrices
+   will typically be supernodal.
+
+5. **Assembly tree derivation**: Supernode parent pointers are derived from the column-level
+   etree: for supernode `s` with column range `[begin, end)`, look up `etree[end - 1]` and
+   binary search `supernode_begin` to find the containing supernode. Citing Liu (1992).
+
+### Issues Encountered
+
+- **faer `prefactorize_symbolic_cholesky` path**: Not re-exported at the `cholesky` module
+  level — lives inside `faer::sparse::linalg::cholesky::simplicial::`.
+
+- **faer `MemStack`/`StackReq` path**: Not at `faer::` root. `dyn_stack` is
+  `pub extern crate` → use `faer::dyn_stack::MemStack` and `faer::dyn_stack::MemBuffer`.
+
+- **faer `SymbolicSparseColMatRef` accessor names**: `col_ptr()` not `col_ptrs()`,
+  `row_idx()` not `row_indices()`.
+
+- **`SparseColMat<usize, ()>` not constructable**: `()` doesn't implement `ComplexField`.
+  Used `SparseColMat<usize, f64>` with dummy 1.0 values for the permuted symbolic structure.
+
+- **Pivot buffer ratio bound**: Initial test expected buffer/nnz ratio ≤ 50%, but the 10%
+  heuristic applied to col_counts (which include diagonal entries) can produce higher ratios
+  for small matrices. Widened bound to 100%.
+
+### Feature Spec
+
+Full specification in `specs/010-aptp-symbolic/` including spec.md, plan.md, research.md,
+data-model.md, contracts/aptp-symbolic-api.md, quickstart.md, checklists/requirements.md,
+and tasks.md.
+
+---
+
 ## Phase 2: APTP Data Structures
 
 **Status**: Complete

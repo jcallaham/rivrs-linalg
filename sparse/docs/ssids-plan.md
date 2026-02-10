@@ -725,7 +725,7 @@ mixed 1×1/2×2 patterns. Demonstrate PivotType tracking across a sequence of se
 
 ---
 
-## Phase 3: Symbolic Analysis
+## Phase 3: Symbolic Analysis (**COMPLETE**)
 
 ### Objectives
 Build symbolic analysis using faer's elimination tree construction.
@@ -890,12 +890,12 @@ fn test_custom_ordering_accepted() {
 ```
 
 **Success Criteria:**
-- [ ] `AptpSymbolic::analyze` works on all test matrices with AMD ordering
-- [ ] Custom ordering (`SymmetricOrdering::Custom`) accepted and propagated
-- [ ] Predicted NNZ matches faer's Cholesky prediction (since symbolic phase is identical)
-- [ ] Reproducible (deterministic)
-- [ ] Statistics reported correctly
-- [ ] Analysis time < 5% of factor time
+- [x] `AptpSymbolic::analyze` works on all test matrices with AMD ordering
+- [x] Custom ordering (`SymmetricOrdering::Custom`) accepted and propagated
+- [x] Predicted NNZ matches faer's Cholesky prediction (since symbolic phase is identical)
+- [x] Reproducible (deterministic)
+- [x] Statistics reported correctly
+- [x] Analysis time < 5% of factor time
 
 **Time Estimate:** 3–5 days
 

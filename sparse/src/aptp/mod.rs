@@ -20,8 +20,10 @@ pub mod diagonal;
 pub mod inertia;
 pub mod perm;
 pub mod pivot;
+pub mod symbolic;
 
 pub use diagonal::MixedDiagonal;
 pub use inertia::Inertia;
 pub use perm::perm_from_forward;
 pub use pivot::{Block2x2, PivotType};
+pub use symbolic::{AptpSymbolic, SymbolicStatistics};
