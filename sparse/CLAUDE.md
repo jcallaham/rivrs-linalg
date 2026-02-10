@@ -194,6 +194,7 @@ Preferences (can be violated if needed)
 - Rust 1.87+ (edition 2024) + faer 0.22 (sparse matrix types), serde/serde_json (Chrome Trace JSON export), std only for timing/threading (no new external deps) (008-profiling-debug-tools)
 - Rust 1.87+ (edition 2024) + faer 0.22 (sparse/dense LA), serde + serde_json (serialization for Inertia) (009-aptp-data-structures)
 - N/A (in-memory data structures only) (009-aptp-data-structures)
+- Rust 1.87+ (edition 2024) + faer 0.22 (symbolic Cholesky, AMD ordering, MemStack), serde/serde_json (existing, not new) (010-aptp-symbolic)
 
 ## Testing Strategy
 
@@ -211,6 +212,6 @@ Test infrastructure (Phase 0.5):
 - Random matrix generators (PD and indefinite) behind `test-util` feature
 
 ## Recent Changes
+- 010-aptp-symbolic: Added Rust 1.87+ (edition 2024) + faer 0.22 (symbolic Cholesky, AMD ordering, MemStack), serde/serde_json (existing, not new)
 - 009-aptp-data-structures: Added Rust 1.87+ (edition 2024) + faer 0.22 (sparse/dense LA), serde + serde_json (serialization for Inertia)
 - 009-aptp-data-structures: Added [if applicable, e.g., PostgreSQL, CoreData, files or N/A]
-- 008-profiling-debug-tools: Added Rust 1.87+ (edition 2024) + faer 0.22 (sparse matrix types), serde/serde_json (Chrome Trace JSON export), std only for timing/threading (no new external deps)

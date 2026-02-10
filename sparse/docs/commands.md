@@ -1,1 +1,3 @@
+/speckit.specify implement Phase 3 in ssids-plan.md.  Treat any code as notional and descriptive of *what* functionality is generally needed, not *how* to implement it. The actual spec should be based on the current codebase status and the high-level progress through the plan - mark anything that's unclear or conflicting for further clarification. Make sure to note algorithm references and the locations of the corresponding Markdown files in /workspace/rivrs-linalg/references/ssids/*.md
+
 Can you review PR #XX, looking for code quality, consistency with the plan outlined in docs/ssids-plan.md, Rust best practices, duplication of code or functionality, clarity, etc?
