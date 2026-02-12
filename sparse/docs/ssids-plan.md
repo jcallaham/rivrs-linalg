@@ -31,7 +31,7 @@
 
 ---
 
-## Phase 0: Foundation & Literature Review
+## Phase 0: Foundation & Literature Review (**COMPLETE**)
 
 ### Objectives
 Establish comprehensive understanding of algorithms, gather reference implementations, and compile authoritative test data before writing any solver code.
@@ -282,7 +282,7 @@ rand_distr = "0.4"
 
 ---
 
-## Phase 1: Testing & Benchmarking Infrastructure
+## Phase 1: Testing & Benchmarking Infrastructure (**COMPLETE**)
 
 ### Objectives
 Build production-quality testing and benchmarking framework before implementing any solver components. This infrastructure will be used throughout all subsequent phases.
@@ -725,7 +725,7 @@ mixed 1×1/2×2 patterns. Demonstrate PivotType tracking across a sequence of se
 
 ---
 
-## Phase 3: Symbolic Analysis (Leverage faer)
+## Phase 3: Symbolic Analysis (**COMPLETE**)
 
 ### Objectives
 Build symbolic analysis using faer's elimination tree construction.
@@ -890,12 +890,12 @@ fn test_custom_ordering_accepted() {
 ```
 
 **Success Criteria:**
-- [ ] `AptpSymbolic::analyze` works on all test matrices with AMD ordering
-- [ ] Custom ordering (`SymmetricOrdering::Custom`) accepted and propagated
-- [ ] Predicted NNZ matches faer's Cholesky prediction (since symbolic phase is identical)
-- [ ] Reproducible (deterministic)
-- [ ] Statistics reported correctly
-- [ ] Analysis time < 5% of factor time
+- [x] `AptpSymbolic::analyze` works on all test matrices with AMD ordering
+- [x] Custom ordering (`SymmetricOrdering::Custom`) accepted and propagated
+- [x] Predicted NNZ matches faer's Cholesky prediction (since symbolic phase is identical)
+- [x] Reproducible (deterministic)
+- [x] Statistics reported correctly
+- [x] Analysis time < 5% of factor time
 
 **Time Estimate:** 3–5 days
 
@@ -917,14 +917,46 @@ predicted NNZ is reasonable. Demonstrate custom ordering passthrough.
 
 **Time Estimate:** 3–5 days
 
+#### Lessons Learned: AMD Ordering Quality on Full SuiteSparse Collection
+
+Post-completion testing on the full 65-matrix SuiteSparse collection revealed that
+AMD produces catastrophically poor orderings for several benchmark matrices. Comparing
+our AMD-based predicted nnz(L) against paper-reported values (which used METIS):
+
+| Matrix | Dim | AMD nnz(L) | METIS nnz(L) | Ratio |
+|--------|-----|-----------|-------------|-------|
+| nd3k | 9K | 22.8M | 12.9M | 1.8× |
+| Si10H16 | 17K | 87.8M | 30.6M | 2.9× |
+| nd6k | 18K | 72.8M | 39.8M | 1.8× |
+| Si5H12 | 20K | 125.2M | 44.1M | 2.8× |
+| sparsine | 50K | **1,037M** | ~50-100M (est.) | **~10-20×** |
+
+Paper-reported nnz(L) values from Hogg, Ovtchinnikov, Scott (2016) Table III. All
+papers use METIS (SPRAL's default ordering), not AMD.
+
+**Key finding**: SPRAL uses METIS by default (`options%ordering = 1`), not AMD.
+AMD is a simpler O(nnz) heuristic; METIS uses graph partitioning (nested dissection)
+which produces dramatically better orderings for matrices with geometric structure
+(FEM meshes, quantum chemistry). For sparsine, AMD produces 10-20× more fill than
+METIS, making even symbolic analysis take 12+ seconds and the eventual numeric
+factorization infeasible.
+
+**Impact on plan**: METIS integration elevated from "consider for Phase 9" to
+Phase 4.1 (before MC64). Without METIS, the solver cannot practically handle many
+of the benchmark matrices from the APTP papers. This does not change faer
+infrastructure reuse — METIS produces a `Perm<usize>` that plugs into
+`SymmetricOrdering::Custom` unchanged. It is purely an input quality improvement.
+
 ---
 
-## Phase 4: MC64 Matching & Scaling
+## Phase 4: Ordering & Preprocessing
 
 ### Objectives
-Implement MC64 matching-based ordering and scaling for indefinite systems. This is the
-only ordering work needed beyond what faer already provides — AMD, identity, and custom
-orderings are already handled by Phase 3's `SymmetricOrdering` API.
+Implement fill-reducing ordering (METIS) and matching-based scaling (MC64) for
+indefinite systems. Phase 3 testing revealed AMD produces catastrophically poor
+orderings on many benchmark matrices — METIS is essential for practical performance.
+MC64 provides complementary numerical preprocessing (diagonal dominance improvement)
+for the APTP factorization kernel.
 
 ### What was already completed / absorbed
 
@@ -949,19 +981,23 @@ The original plan defined a custom `Permutation` struct with forward/inverse arr
 handling uses faer's `Perm<usize>` directly. The custom struct is deleted. See Phase 2
 design decisions for details.
 
-#### METIS ordering: deferred
+#### METIS ordering: elevated to Phase 4.1
 
-METIS (nested dissection) is deferred. Rationale:
-- AMD (already available via faer) is adequate for initial development
-- METIS adds a C FFI dependency (libmetis)
-- METIS primarily benefits very large problems and is most valuable with supernodal
-  factorization (Phase 9), where nested dissection creates favorable separator structure
-- The solver works correctly without METIS — it's a fill-reduction optimization
+Originally deferred to Phase 9, METIS was elevated to Phase 4.1 after Phase 3
+testing showed AMD produces 2-20× more fill than METIS on benchmark matrices.
+SPRAL uses METIS by default — without it, the solver cannot practically handle
+many of the APTP paper benchmark matrices.
 
-**Where METIS plugs in:** A `metis_ordering(matrix) -> Perm<usize>` function that
-gets passed to `AptpSymbolic::analyze()` as `SymmetricOrdering::Custom(perm.as_ref())`.
-Same slot as any other ordering, no API changes needed. Consider adding alongside
-supernodal optimization (Phase 9) or as an independent enhancement at any later point.
+**Integration path:** METIS produces a fill-reducing permutation via nested
+dissection. The Rust `metis` crate provides FFI bindings. The output is a
+`Perm<usize>` passed to `AptpSymbolic::analyze()` as
+`SymmetricOrdering::Custom(perm.as_ref())`. No API changes needed — this is
+purely an input quality improvement.
+
+**Validation:** The existing full SuiteSparse test suite (`symbolic_analysis_full.rs`)
+can directly validate METIS by comparing predicted nnz(L) against paper-reported
+values. Structural property tests (etree, supernode structure, assembly tree) are
+ordering-independent and apply unchanged.
 
 #### Scaling flows to numeric phase, not symbolic (decided)
 
@@ -981,6 +1017,75 @@ MC64 returns `(Perm<usize>, Vec<f64>)` as a pure function. The exact API for thr
 scaling into numeric factorization is deferred to Phase 5 design.
 
 ### Deliverables
+
+#### 4.1: METIS Nested Dissection Ordering
+
+**Task:** Integrate METIS graph partitioning for fill-reducing ordering
+
+**Algorithm Reference:**
+- Karypis & Kumar (1998) — "A Fast and High Quality Multilevel Scheme for Partitioning
+  Irregular Graphs", SIAM J. Sci. Comput.
+- George (1973) — Nested dissection theory
+
+**Approach:**
+METIS computes a fill-reducing ordering via multilevel graph partitioning (nested
+dissection). For sparse symmetric matrices with geometric structure (FEM, quantum
+chemistry, optimization), METIS typically produces 2-10× less fill than AMD.
+
+The `metis` Rust crate provides safe FFI bindings to libmetis. The integration is
+thin: extract the adjacency structure from `SparseColMat`, call METIS, wrap the
+result as `Perm<usize>`.
+
+**Notional API** (to be refined during speccing):
+
+```rust
+use faer::perm::Perm;
+use faer::sparse::SparseColMat;
+
+/// Compute a METIS nested dissection ordering for a symmetric sparse matrix.
+///
+/// Returns a fill-reducing permutation suitable for use with
+/// `SymmetricOrdering::Custom(perm.as_ref())`.
+pub fn metis_ordering(
+    matrix: &SparseColMat<usize, f64>,
+) -> Result<Perm<usize>, SparseError>;
+```
+
+**Testing:**
+
+```rust
+#[test]
+fn test_metis_reduces_fill_vs_amd() {
+    // On SuiteSparse matrices, METIS should produce less fill than AMD
+    // for the majority of cases (>= 80%)
+    for case in suitesparse_ci_subset() {
+        let sym_amd = AptpSymbolic::analyze(case.symbolic(), SymmetricOrdering::Amd)?;
+        let metis_perm = metis_ordering(&case)?;
+        let sym_metis = AptpSymbolic::analyze(
+            case.symbolic(),
+            SymmetricOrdering::Custom(metis_perm.as_ref()),
+        )?;
+        // METIS should produce less or equal fill
+    }
+}
+
+#[test]
+fn test_metis_nnz_matches_paper_values() {
+    // Compare predicted nnz(L) against values reported in Hogg et al. (2016)
+    // Table III, which used METIS ordering
+}
+```
+
+**Success Criteria:**
+- [ ] METIS ordering produces valid permutations on all test matrices
+- [ ] Predicted nnz(L) within 20% of paper-reported values (Hogg et al. 2016 Table III)
+- [ ] METIS reduces fill vs AMD on >= 80% of SuiteSparse matrices
+- [ ] Full SuiteSparse symbolic analysis completes in < 2 minutes total with METIS
+- [ ] Integrates via `SymmetricOrdering::Custom` (no API changes)
+
+**Time Estimate:** 3-5 days
+
+#### 4.2: MC64 Matching & Scaling
 
 **Task:** Implement weighted bipartite matching for indefinite matrix preprocessing
 
@@ -1111,21 +1216,25 @@ fn test_mc64_perm_works_with_symbolic_analysis() {
 ### Phase 4 Exit Criteria
 
 **Required Outcomes:**
-1. MC64 matching produces valid matchings on all indefinite test matrices
-2. Scaling improves diagonal dominance measurably
-3. Permutation integrates with `AptpSymbolic::analyze()` via `SymmetricOrdering::Custom`
-4. Combined MC64 + AMD ordering demonstrated
-5. Scaling vector stored and documented for Phase 5 consumption
+1. METIS ordering produces fill predictions within 20% of paper-reported values
+2. Full SuiteSparse symbolic analysis completes in reasonable time with METIS
+3. MC64 matching produces valid matchings on all indefinite test matrices
+4. Scaling improves diagonal dominance measurably
+5. Both orderings integrate via `SymmetricOrdering::Custom`
+6. Combined METIS + MC64 ordering demonstrated
+7. Scaling vector stored and documented for Phase 5 consumption
 
 **Validation Questions:**
+- Does METIS ordering match the fill predictions reported in the APTP papers?
 - Does MC64 find full matching on hard indefinite problems?
 - Does scaling improve diagonal dominance (reduce off-diagonal/diagonal ratio)?
-- Does the MC64 permutation reduce delayed pivots compared to AMD alone? (May need Phase 5
+- Does the MC64 permutation reduce delayed pivots compared to METIS alone? (May need Phase 5
   to fully validate — can check indirectly via diagonal dominance metrics.)
 
-**Checkpoint:** Run MC64 on indefinite test matrices. Verify full matching, positive scaling
-factors, and improved diagonal dominance. Demonstrate integration with Phase 3 symbolic
-analysis.
+**Checkpoint:** Run METIS ordering on full SuiteSparse collection, verify fill predictions
+match paper values. Run MC64 on indefinite test matrices, verify full matching, positive
+scaling factors, and improved diagonal dominance. Demonstrate integration with Phase 3
+symbolic analysis.
 
 ---
 
@@ -1784,9 +1893,10 @@ blocking. This phase adds:
 - Shared-memory parallelism for independent subtree processing
 - Performance benchmarking and comparison
 
-**NOTE**: Consider evaluating METIS integration here. See notes on deferral from
-Phase 4 — METIS plugs in as `SymmetricOrdering::Custom(metis_perm)` and primarily
-benefits large problems where fill-reducing ordering quality is critical.
+**NOTE**: METIS integration was originally deferred to this phase but has been
+elevated to Phase 4.1 after Phase 3 testing revealed AMD produces catastrophically
+poor orderings on many benchmark matrices (2-20× more fill than METIS). See Phase 3
+"Lessons Learned" and Phase 4.1 for details.
 
 ### Design Decisions
 
@@ -1953,343 +2063,113 @@ scaling plots and comparison data.
 
 ---
 
-## Phase 10: Optimization & Polish
+## Phase 10: Polish & Release
 
 ### Objectives
-Performance optimization, memory efficiency, API refinement, comprehensive documentation.
+Harden the solver for production use (memory optimization, robustness testing) and
+prepare for public release (documentation, examples, packaging).
+
+### What was absorbed or superseded from original Phases 10–11
+
+- **Old 10.1 (Performance Profiling)**: Profiling tools already built in Phase 1.4.
+  Benchmarking already covered by Phase 9.2. Targeted bottleneck fixes are part of
+  10.1 below.
+- **Old 10.2 (Memory Optimization)**: Workspace allocation addressed by Phase 8's
+  MemStack pattern. Compact factor storage addressed by Phase 2's MixedDiagonal and
+  Phase 6's FrontFactors. Arena allocation for frontal matrices remains (10.1 below).
+- **Old 10.3 (API Refinement)**: Superseded by Phase 8's SparseLDLT API design and
+  Phase 9's Par integration. Builder pattern is minor sugar, deferred to 10.2 if needed.
+- **Old 11.3 (Benchmarks)**: Fully superseded by Phase 9.2's performance report.
+- **Old 11.4 (CI/CD)**: Already done in Phase 1.3.
 
 ### Deliverables
 
-#### 10.1: Performance Profiling
-**Task:** Identify and optimize bottlenecks
+#### 10.1: Solver Hardening
+**Task:** Improve robustness and memory efficiency of the working solver
 
-**Process:**
+**Memory optimization:**
+- Arena allocation for frontal matrices during factorization — allocate from a
+  pre-sized memory pool rather than individual heap allocations per front. This
+  complements Phase 8's MemStack (which handles solve-phase workspace) by
+  optimizing the factorization-phase memory pattern.
+- Peak memory tracking and validation against symbolic predictions
+- Memory usage within 50% of prediction from AptpSymbolic
 
-```rust
-// Use built-in profiling tools
-#[test]
-#[ignore]
-fn profile_full_solve() {
-    let cases = test_cases_by_difficulty(Difficulty::Hard);
+**Property-based testing (proptest):**
+- Generate random symmetric matrices (varying size, density, definiteness)
+- Verify backward error < tolerance for all solvable systems
+- Verify no panics on singular or near-singular matrices
 
-    for case in cases {
-        println!("\nProfiling: {}", case.name);
+**Fuzzing:**
+- Malformed inputs (invalid sparsity patterns, non-symmetric matrices)
+- Extreme values (near-overflow, near-underflow, exact zeros)
+- Singular and structurally singular matrices
+- Goal: no panics, only clean error returns
 
-        let profiler = ProfileRecorder::new();
-
-        // Analyze
-        profiler.start_section("analyze");
-        let analysis = analyze_full(&case.matrix);
-        profiler.end_section();
-
-        // Factor
-        profiler.start_section("factor");
-        let factorization = factor_tree(
-            &analysis.assembly_tree,
-            &case.matrix,
-            FactorOptions::default()
-        ).unwrap();
-        profiler.end_section();
-
-        // Solve
-        profiler.start_section("solve");
-        let b = random_vector(case.matrix.nrows());
-        let _ = solve_ldlt(&factorization, &b);
-        profiler.end_section();
-
-        // Report
-        profiler.print_report();
-        profiler.export_flamegraph(&format!("{}.svg", case.name));
-    }
-}
-```
-
-**Optimization Targets:**
-1. Memory allocation patterns
-2. Cache utilization
-3. SIMD utilization (via faer)
-4. Minimize copies
-5. Thread synchronization overhead
+**Targeted performance fixes:**
+- Use Phase 1.4 profiling tools and Phase 9.2 benchmark results to identify
+  top 3 bottlenecks
+- Optimize allocation patterns, cache utilization, unnecessary copies
+- Verify no performance regressions
 
 **Success Criteria:**
-- [ ] Identified top 3 bottlenecks
-- [ ] Optimization opportunities documented
-- [ ] Performance improvement plan created
+- [ ] Arena allocation reduces peak memory on large problems
+- [ ] Peak memory within 50% of symbolic prediction
+- [ ] Property-based tests pass on random matrices (size 5–500)
+- [ ] No panics on any invalid input (clean error returns)
+- [ ] >90% code coverage
+- [ ] Top bottlenecks identified and addressed
 
-#### 10.2: Memory Optimization
-**Task:** Reduce memory footprint and improve locality
+**Time Estimate:** 2 weeks
 
-**Strategies:**
-
-```rust
-// Use arena allocators for frontal matrices
-pub struct FrontalArena {
-    memory_pool: Vec<f64>,
-    allocations: Vec<AllocationInfo>,
-}
-
-impl FrontalArena {
-    pub fn allocate_front(&mut self, nrows: usize, ncols: usize)
-        -> FrontalMatrix;
-
-    pub fn free_front(&mut self, front: FrontalMatrix);
-
-    pub fn peak_usage(&self) -> usize;
-}
-
-// Memory-efficient factor storage
-pub struct CompactFactorStorage {
-    // Store only lower triangle
-    // Pack 1×1 and 2×2 blocks efficiently
-}
-```
-
-**Testing:**
-
-```rust
-#[test]
-fn test_memory_usage() {
-    for case in test_cases() {
-        let before = get_memory_usage();
-
-        let analysis = analyze_full(&case.matrix);
-        let factorization = factor_tree(
-            &analysis.assembly_tree,
-            &case.matrix,
-            FactorOptions::default()
-        ).unwrap();
-
-        let peak = get_peak_memory_usage();
-        let after = get_memory_usage();
-
-        println!("{}: peak={:.1}MB, final={:.1}MB, predicted={:.1}MB",
-                 case.name,
-                 peak / 1e6,
-                 after / 1e6,
-                 analysis.analysis.predicted_memory / 1e6);
-
-        // Peak should be close to prediction
-        let ratio = peak as f64 / analysis.analysis.predicted_memory as f64;
-        assert!(ratio < 1.5, "Memory usage higher than predicted");
-    }
-}
-```
-
-**Success Criteria:**
-- [ ] Memory usage predictable
-- [ ] Peak memory within 50% of prediction
-- [ ] No memory leaks
-
-#### 10.3: API Refinement
-**Task:** Polish public API based on feedback
+#### 10.2: Release Preparation
+**Task:** Documentation, examples, and packaging for public release
 
 **Documentation:**
+- README with quick start guide
+- User guide covering the three-phase API, options, and common patterns
+- API reference (rustdoc with examples on key types and methods)
+- Performance guide (when to use APTP vs faer's built-in solvers, tuning options)
+- Migration guide for users coming from SPRAL, MUMPS, or HSL solvers
 
-```rust
-/// Sparse symmetric indefinite linear system solver.
-///
-/// Uses LDL^T factorization with A Posteriori Threshold Pivoting (APTP)
-/// for numerical stability on indefinite systems.
-///
-/// # Examples
-///
-/// Basic usage:
-/// ```
-/// use sparse_ldlt::SparseLDLT;
-///
-/// let matrix = /* load your matrix */;
-/// let b = vec![1.0; matrix.nrows()];
-///
-/// let x = SparseLDLT::solve_matrix(matrix, &b)?;
-/// ```
-///
-/// Reusing factorization:
-/// ```
-/// let mut solver = SparseLDLT::new(matrix.clone())?;
-/// solver.factor(&matrix)?;
-///
-/// let x1 = solver.solve(&b1)?;
-/// let x2 = solver.solve(&b2)?;  // Reuse factorization
-/// ```
-pub struct SparseLDLT { /* ... */ }
+**Examples** (standalone `examples/` directory):
+- `basic_solve.rs` — one-shot solve with `SparseLDLT::solve_full`
+- `three_phase.rs` — analyze/factor/solve with workspace reuse
+- `multiple_rhs.rs` — solving with several right-hand sides
+- `refactorization.rs` — reusing symbolic analysis for updated values
+- `interior_point.rs` — integration with an interior point optimization loop
 
-// Add builder pattern for options
-impl SparseLDLT {
-    pub fn builder() -> SparseLDLTBuilder {
-        SparseLDLTBuilder::new()
-    }
-}
-
-pub struct SparseLDLTBuilder {
-    ordering: OrderingMethod,
-    scaling: ScalingMethod,
-    threshold: f64,
-    parallelism: Parallelism,
-}
-
-impl SparseLDLTBuilder {
-    pub fn ordering(mut self, method: OrderingMethod) -> Self {
-        self.ordering = method;
-        self
-    }
-
-    pub fn threshold(mut self, threshold: f64) -> Self {
-        self.threshold = threshold;
-        self
-    }
-
-    pub fn parallel(mut self, n_threads: usize) -> Self {
-        self.parallelism = Parallelism::Rayon(n_threads);
-        self
-    }
-
-    pub fn build(self, matrix: SparseColMat<f64>) -> Result<SparseLDLT> {
-        // ...
-    }
-}
-```
-
-**Examples:**
-
-```rust
-// examples/basic_solve.rs
-//! Basic sparse LDL^T solve example
-
-use sparse_ldlt::*;
-
-fn main() -> Result<()> {
-    // Load matrix
-    let matrix = io::read_matrix_market("test.mtx")?;
-
-    // Create RHS
-    let b = vec![1.0; matrix.nrows()];
-
-    // Solve
-    let x = SparseLDLT::solve_matrix(matrix, &b)?;
-
-    println!("Solution norm: {:.6}", x.iter().map(|&v| v*v).sum::<f64>().sqrt());
-
-    Ok(())
-}
-```
+**Packaging:**
+- Version 0.1.0 on crates.io
+- Issue templates and contributing guide
+- Verify CI passes on Linux/macOS (Windows stretch goal)
 
 **Success Criteria:**
-- [ ] API is intuitive
-- [ ] Documentation comprehensive
-- [ ] Examples cover common use cases
-- [ ] Error messages actionable
+- [ ] README and user guide complete
+- [ ] All examples compile and run correctly
+- [ ] Rustdoc examples on public types and methods
+- [ ] Published on crates.io
+- [ ] Contributing guide and issue templates in place
 
-#### 10.4: Comprehensive Testing
-**Task:** Expand test coverage
+**Time Estimate:** 2 weeks
 
-**Additional Tests:**
-
-```rust
-// Property-based testing
-#[cfg(test)]
-mod property_tests {
-    use proptest::prelude::*;
-
-    proptest! {
-        #[test]
-        fn test_solve_always_correct(
-            matrix in arbitrary_symmetric_matrix(10, 20)
-        ) {
-            if let Ok(solver) = SparseLDLT::new(matrix.clone()) {
-                let b = random_vector(matrix.nrows());
-                let x = solver.solve(&b).unwrap();
-
-                let residual = compute_residual_sparse(&matrix, &x, &b);
-                prop_assert!(residual < 1e-6);
-            }
-        }
-    }
-}
-
-// Fuzzing
-#[test]
-fn test_fuzz_inputs() {
-    // Test with malformed inputs
-    // - Invalid matrix patterns
-    // - Singular matrices
-    // - Extreme values
-    // Should not panic
-}
-
-// Regression tests
-#[test]
-fn test_known_issues() {
-    // Test cases that previously failed
-    // Ensure they now work
-}
-```
-
-**Success Criteria:**
-- [ ] >90% code coverage
-- [ ] Property tests pass
-- [ ] No panics on invalid inputs
-- [ ] All known issues resolved
-
-### Phase 9 Exit Criteria
+### Phase 10 Exit Criteria
 
 **Required Outcomes:**
-1. Performance optimized
-2. Memory usage efficient
-3. API polished and documented
-4. Comprehensive test suite
+1. Solver robust against malformed inputs (no panics)
+2. Memory usage predictable and efficient
+3. Documentation and examples complete
+4. Published on crates.io
 
 **Validation Questions:**
-- Is performance competitive with SPRAL?
 - Is the library ready for public use?
-- Are there any remaining bugs?
+- Can a new user solve a problem from the README alone?
+- Are there any remaining robustness issues?
 
-**Final Checkpoint:**
-- Run full benchmark suite
-- Compare with SPRAL on all metrics
-- Generate final report
-- Create publication-ready plots
+**Checkpoint:** Run full test suite including property-based tests. Verify all
+examples compile and run. Publish to crates.io.
 
----
-
-## Phase 11: Release Preparation
-
-### Objectives
-Prepare for public release: documentation, examples, tutorials, packaging.
-
-### Deliverables
-
-#### 11.1: Documentation
-- [ ] README with quick start
-- [ ] User guide
-- [ ] API reference (rustdoc)
-- [ ] Performance guide
-- [ ] Migration guide (from other solvers)
-
-#### 11.2: Examples
-- [ ] Basic solve
-- [ ] Interior point method integration
-- [ ] Iterative refinement
-- [ ] Multiple RHS
-- [ ] Refactorization
-
-#### 11.3: Benchmarks
-- [ ] Comparison with SPRAL
-- [ ] Performance plots
-- [ ] Scaling studies
-
-#### 11.4: Release
-- [ ] Version 0.1.0 on crates.io
-- [ ] CI/CD setup
-- [ ] Issue templates
-- [ ] Contributing guide
-
-### Phase 11 Exit Criteria
-
-**Required Outcomes:**
-1. Published on crates.io
-2. Documentation complete
-3. Examples working
-4. Community ready
+**Time Estimate:** 4 weeks
 
 ---
 

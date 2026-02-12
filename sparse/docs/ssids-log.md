@@ -1,5 +1,210 @@
 # SSIDS Development Log
 
+## Phase 3 Follow-up: AMD Ordering Quality & METIS Elevation
+
+**Status**: Complete
+**Branch**: `010-aptp-symbolic`
+**Date**: 2026-02-10
+
+### What Was Done
+
+Timing analysis of the full SuiteSparse test suite revealed that AMD ordering produces
+catastrophically poor fill predictions for many benchmark matrices. Investigation traced
+the issue to SPRAL using METIS (nested dissection) by default, not AMD.
+
+**Timing diagnostic** on full 65-matrix collection (sorted by size, AMD ordering):
+- Small matrices (< 10K): < 100ms symbolic analysis
+- Medium matrices (10K-30K): 100ms - 4s
+- Pathological cases: sparsine (50K) → 1.04B predicted nnz(L), 12s analysis;
+  nd6k (18K) → 73M predicted nnz(L), 13s analysis
+
+**Comparison against paper values** (Hogg et al. 2016, Table III, METIS ordering):
+nd3k: 1.8× more fill with AMD; Si10H16: 2.9×; Si5H12: 2.8×; sparsine: ~10-20×.
+
+**Plan changes** (`docs/ssids-plan.md`):
+- Added "Lessons Learned: AMD Ordering Quality" section to Phase 3
+- Elevated METIS from "consider for Phase 9" to Phase 4.1 (before MC64)
+- Expanded Phase 4 from "MC64 Matching & Scaling" to "Ordering & Preprocessing"
+  with 4.1 (METIS) and 4.2 (MC64) sub-deliverables
+- Updated Phase 9 note (METIS no longer deferred there)
+
+**Test changes** (`tests/symbolic_analysis_full.rs`):
+- Added `MAX_DIM_FOR_AMD = 30_000` guard to all full-collection tests (skips matrices
+  where AMD produces excessive fill; to be removed when METIS is integrated)
+- Removed `test_amd_reduces_fill_full_suitesparse` (was testing faer's AMD quality,
+  not our code; will be replaced by METIS vs AMD comparison in Phase 4.1)
+- Added documentation explaining the dimension cap and its relationship to METIS
+
+### Key Findings
+
+1. **SPRAL uses METIS by default** (`options%ordering = 1`), not AMD. All APTP
+   benchmark papers (Duff/Hogg/Lopez 2020, Hogg et al. 2016) report results with
+   METIS ordering.
+
+2. **AMD is adequate for small/well-structured matrices** but produces 2-20× more
+   fill than METIS on matrices with geometric structure (FEM, quantum chemistry,
+   optimization problems).
+
+3. **faer infrastructure is unchanged** — METIS produces a `Perm<usize>` that plugs
+   into `SymmetricOrdering::Custom`. This is purely an input quality improvement,
+   not an architectural change.
+
+4. **Full SuiteSparse tests are reusable for METIS** — structural property tests
+   (etree validity, supernode partitioning, assembly tree postorder) are
+   ordering-independent. Predicted nnz(L) can be compared against paper values
+   to validate METIS integration.
+
+---
+
+## Phase 3 Follow-up: Validation Hardening
+
+**Status**: Complete
+**Branch**: `010-aptp-symbolic`
+**Date**: 2026-02-10
+
+### What Was Done
+
+Post-merge review of Phase 3 identified two pieces of from-scratch logic that needed
+deeper validation beyond the existing sanity checks.
+
+**Extracted function** (`src/aptp/symbolic.rs`):
+- `permute_symbolic_upper_triangle` — extracted the permutation remapping logic
+  (P^T A P upper-triangular CSC construction) from `compute_permuted_etree_and_col_counts`
+  into a standalone `pub(crate)` function. Pure refactor, no behavior change. Makes
+  permutation correctness independently testable and reusable for Phase 4 (MC64).
+
+**New tests** (10 total):
+- 4 permutation tests: identity, reverse-arrow, pair-swap-tridiag, diagonal-invariant
+- 1 cross-validation: `col_counts.sum() == predicted_nnz` for all helpers × both orderings
+- 1 regression test: arrow(5) with reverse ordering (exact etree, col_counts, predicted_nnz)
+- 3 supernode parent tests: etree consistency, child round-trip, block-diagonal roots
+
+**Documentation** (`CLAUDE.md`):
+- Added "Testing Discipline for Implementation Phases" section with 5 principles for
+  Phases 5-10: validation proportional to novelty, refactor for testability, regression
+  tests before refactoring, cross-validation with faer, property-based testing.
+
+### Key Findings
+
+- Arrow(5) under reverse ordering creates a star graph (hub at last column) with zero
+  fill-in: `col_counts = [2,2,2,2,1]`, `predicted_nnz = 9`. Contrasts with identity
+  ordering where the hub at column 0 causes complete fill-in (`predicted_nnz = 15`).
+
+---
+
+## Phase 3: APTP Symbolic Analysis
+
+**Status**: Complete
+**Branch**: `010-aptp-symbolic`
+**Date**: 2026-02-10
+
+### What Was Built
+
+Symbolic analysis module for the APTP solver pipeline — the "analyze" step of the
+three-phase analyze → factorize → solve API. Composes faer's `SymbolicCholesky<usize>`
+with APTP-specific metadata: elimination tree parent pointers, per-column nonzero counts,
+and heuristic delayed-pivot buffer estimates.
+
+**Symbolic module** (`src/aptp/symbolic.rs`):
+- `AptpSymbolic` — central analysis result struct wrapping `SymbolicCholesky<usize>`
+  (inner), `Vec<isize>` etree parent pointers, `Vec<usize>` column counts, and
+  `Vec<usize>` pivot buffer estimates. Immutable after creation, reusable across
+  multiple numeric factorizations with the same sparsity pattern.
+- `AptpSymbolic::analyze(matrix, ordering)` — constructor performing: input validation
+  (NotSquare, DimensionMismatch), `factorize_symbolic_cholesky` for full symbolic result,
+  permuted structure computation (P^T A P upper-triangular CSC),
+  `prefactorize_symbolic_cholesky` on permuted structure for etree + col_counts, and
+  10% buffer heuristic for pivot buffer estimates
+- `SymbolicStatistics` — diagnostic summary with `Display` impl (dimension, predicted_nnz,
+  average_col_count, is_supernodal, n_supernodes, total_pivot_buffer)
+- faer-delegating accessors: `perm()`, `predicted_nnz()`, `nrows()`, `ncols()`, `raw()`, `inner()`
+- APTP-specific accessors: `etree()`, `col_counts()`, `pivot_buffer_estimates()`,
+  `total_pivot_buffer()`, `is_supernodal()`, `n_supernodes()`
+- Supernodal accessors: `supernode_begin()`, `supernode_end()`, `supernode_pattern(s)`,
+  `supernode_parent(s)` (assembly tree parent derivation from column-level etree)
+- Dual-variant handling: all accessors handle both simplicial and supernodal results
+  transparently via pattern matching on `SymbolicCholeskyRaw`
+
+**Module wiring** (`src/aptp/mod.rs`):
+- Added `pub mod symbolic;` and re-exports for `AptpSymbolic`, `SymbolicStatistics`
+
+**Integration tests** (`tests/symbolic_analysis.rs`):
+- `test_analyze_all_hand_constructed` — all 15 hand-constructed matrices with AMD ordering
+- `test_analyze_suitesparse_ci_subset` — all 9 SuiteSparse CI-subset matrices with AMD
+- `test_custom_ordering_on_hand_constructed` — AMD vs identity custom ordering comparison
+- `test_supernodal_structure_suitesparse` — validates supernode ranges, assembly tree,
+  row patterns for supernodal SuiteSparse matrices
+
+**Benchmarks** (`benches/solver_benchmarks.rs`):
+- Added `bench_symbolic_analysis` benchmark group measuring `AptpSymbolic::analyze` on
+  CI-subset matrices with AMD ordering, establishing baseline for SC-006
+
+**Tests**: 20 new unit tests + 4 integration tests + 3 doc-tests, all passing.
+Zero clippy warnings, fmt clean, cargo doc clean.
+
+**Follow-up additions**:
+- 4 regression tests with exact expected values using `SymmetricOrdering::Identity`:
+  diagonal, tridiagonal, arrow, and block-diagonal matrices with analytically
+  predicted etree, col_counts, and predicted_nnz values
+- `make_tridiagonal(n)` helper for test matrix generation
+- Full SuiteSparse integration test file (`tests/symbolic_analysis_full.rs`):
+  4 `#[ignore]` tests validating all 67 matrices (analyze, supernodal structure,
+  AMD fill reduction property, pivot buffer sanity), run via `cargo test -- --ignored`
+- Optimization comments flagging future review points in
+  `compute_permuted_etree_and_col_counts` (Phase 10) and `supernode_parent` (Phase 6)
+- Moved inline imports (`SparseColMat`, `Triplet`) to top-level import block
+
+### Key Decisions
+
+1. **Two-call strategy**: `factorize_symbolic_cholesky` for the full symbolic result +
+   `prefactorize_symbolic_cholesky` on the permuted structure for etree/col_counts.
+   The prefactorize call is O(nnz · α(n)) — negligible compared to full symbolic
+   factorization. This avoids forking faer or relying on `pub(crate)` internals.
+
+2. **Permuted structure computation**: The elimination tree must correspond to the
+   **permuted** matrix (after ordering). We build P^T A P's upper-triangular CSC
+   structure explicitly (remapping row/column indices through the permutation) before
+   calling `prefactorize_symbolic_cholesky`. This matches what faer computes internally.
+
+3. **10% buffer heuristic**: `ceil(0.10 * column_count)` per supernode (supernodal) or
+   per column (simplicial). Conservative starting point from Hogg et al. (2016) Section
+   2.4 on delayed pivot propagation. Will be validated empirically in Phase 5-6.
+
+4. **Dual-variant handling**: `SymbolicCholeskyRaw` is an enum (Simplicial/Supernodal).
+   All accessors handle both variants — supernodal-specific methods return `Option<T>`
+   (None for simplicial). Small test matrices may be simplicial; production matrices
+   will typically be supernodal.
+
+5. **Assembly tree derivation**: Supernode parent pointers are derived from the column-level
+   etree: for supernode `s` with column range `[begin, end)`, look up `etree[end - 1]` and
+   binary search `supernode_begin` to find the containing supernode. Citing Liu (1992).
+
+### Issues Encountered
+
+- **faer `prefactorize_symbolic_cholesky` path**: Not re-exported at the `cholesky` module
+  level — lives inside `faer::sparse::linalg::cholesky::simplicial::`.
+
+- **faer `MemStack`/`StackReq` path**: Not at `faer::` root. `dyn_stack` is
+  `pub extern crate` → use `faer::dyn_stack::MemStack` and `faer::dyn_stack::MemBuffer`.
+
+- **faer `SymbolicSparseColMatRef` accessor names**: `col_ptr()` not `col_ptrs()`,
+  `row_idx()` not `row_indices()`.
+
+- **`SparseColMat<usize, ()>` not constructable**: `()` doesn't implement `ComplexField`.
+  Used `SparseColMat<usize, f64>` with dummy 1.0 values for the permuted symbolic structure.
+
+- **Pivot buffer ratio bound**: Initial test expected buffer/nnz ratio ≤ 50%, but the 10%
+  heuristic applied to col_counts (which include diagonal entries) can produce higher ratios
+  for small matrices. Widened bound to 100%.
+
+### Feature Spec
+
+Full specification in `specs/010-aptp-symbolic/` including spec.md, plan.md, research.md,
+data-model.md, contracts/aptp-symbolic-api.md, quickstart.md, checklists/requirements.md,
+and tasks.md.
+
+---
+
 ## Phase 2: APTP Data Structures
 
 **Status**: Complete

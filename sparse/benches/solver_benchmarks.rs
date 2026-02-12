@@ -191,7 +191,42 @@ fn bench_ci_subset(c: &mut Criterion) {
     run_component_benchmarks(c, &config, &solver, &cases);
 }
 
+fn bench_symbolic_analysis(c: &mut Criterion) {
+    use faer::sparse::linalg::cholesky::SymmetricOrdering;
+    use rivrs_sparse::aptp::AptpSymbolic;
+
+    let cases = match load_test_cases(&TestCaseFilter::ci_subset()) {
+        Ok(cases) => cases,
+        Err(e) => {
+            eprintln!("WARNING: Failed to load test cases: {}", e);
+            return;
+        }
+    };
+
+    if cases.is_empty() {
+        eprintln!("WARNING: No test cases matched the filter");
+        return;
+    }
+
+    let mut group = c.benchmark_group("ssids/symbolic_analysis");
+    group.sample_size(20);
+
+    for case in &cases {
+        let nnz = case.properties.nnz;
+        group.throughput(Throughput::Elements(nnz as u64));
+
+        group.bench_with_input(BenchmarkId::from_parameter(&case.name), &case, |b, case| {
+            b.iter(|| {
+                AptpSymbolic::analyze(case.matrix.symbolic(), SymmetricOrdering::Amd)
+                    .expect("symbolic analysis should succeed")
+            });
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(component_benches, bench_components);
 criterion_group!(e2e_benches, bench_e2e);
 criterion_group!(ci_benches, bench_ci_subset);
-criterion_main!(component_benches, e2e_benches, ci_benches);
+criterion_group!(symbolic_benches, bench_symbolic_analysis);
+criterion_main!(component_benches, e2e_benches, ci_benches, symbolic_benches);

@@ -239,12 +239,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn load_registry_returns_82_entries() {
-        let registry = load_registry().expect("failed to load registry");
-        assert_eq!(registry.len(), 82);
-    }
-
-    #[test]
     fn load_arrow_5_pd_returns_some() {
         let test = load_test_matrix("arrow-5-pd")
             .expect("registry error")

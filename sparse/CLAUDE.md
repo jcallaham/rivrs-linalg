@@ -8,7 +8,7 @@ This directory contains sparse linear algebra solver implementations for rivrs-l
 
 **Parent Project**: rivrs-linalg - Numerical Linear Algebra for Rivrs
 **Domain**: Sparse direct solvers (SSIDS, LDL^T factorization, APTP pivoting)
-**Current Status**: Phase 0.5 complete — test infrastructure built. Ready for Phase 1 (Symbolic Analysis).
+**Current Status**: Phase 3 complete — AptpSymbolic analysis (analyze step of analyze→factorize→solve pipeline). Ready for Phase 4 (MC64 matching & scaling).
 
 ### Development docs
 
@@ -133,7 +133,8 @@ When implementing a new component:
 - Sort imports by: std, external, workspace, crate, super
 - Limit scope to minimum necessary (private over `pub(crate)` over `pub`, etc.)
 - No `.unwrap()` in non-test code
-- Always use `cargo fmt --check`, `cargo clippy`, and `cargo test` before considering any implementation complete
+- Use `cargo fmt --check`, `cargo clippy`, and `cargo test` throughout development to check code quality and test status
+- Tests that run the full SuiteSparse test set use `#[ignore]` and should be run with `cargo test -- --ignored --test-threads=1` before considering an implementation complete
 - Pay special attention to Rust edition-specific reserved keywords (e.g., `gen` is reserved in Rust 2024)
 - When using faer or other Rust crates, always verify API types by reading the actual source/docs before using them. Do not assume tuple-based constructors — check for dedicated types like `Triplet`.
 
@@ -161,6 +162,38 @@ Preferences (can be violated if needed)
 - Comparison tests against SPRAL results
 - Benchmark suite for performance regression testing
 - Python integration tests (future)
+
+### Validation strategy
+
+Primary correctness validation (established in Phase 0.3 decision):
+
+1. **Reconstruction tests**: `||P^T A P - L D L^T|| / ||A|| < 10^-12` (primary oracle)
+2. **Backward error**: `||Ax - b|| / (||A|| ||x|| + ||b||) < 10^-10` (solve pipeline)
+3. **Hand-constructed matrices**: 15 matrices with analytically known factorizations
+4. **Property-based tests**: Inertia, symmetry preservation, permutation validity
+5. **SPRAL comparison**: Deferred to Phases 2-8 (performance benchmarking, large-matrix inertia)
+
+### Test infrastructure
+
+- `SolverTest` trait with `MockSolver` for pre-solver validation
+- `NumericalValidator` with configurable tolerances
+- `TestCaseFilter` for composable test case selection
+- Random matrix generators (PD and indefinite) behind `test-util` feature
+
+### Testing Discipline for Implementation Phases
+
+Five principles guiding test design for Phases 3+ (implementation-heavy):
+
+1. **Validation proportional to novelty**: Code that delegates to faer gets sanity checks and is included in integration tests. Code written from scratch (permutation remapping, assembly tree derivation, APTP kernel) gets mathematical proof-level tests with exact expected values.
+
+2. **Refactor for testability**: Extract non-trivial logic into standalone functions with minimal inputs. Example: `permute_symbolic_upper_triangle` was extracted from `compute_permuted_etree_and_col_counts` so permutation correctness can be tested independently of faer's symbolic Cholesky.
+
+3. **Regression tests before refactoring**: Before optimizing or restructuring code, encode its current correct behavior with exact expected values. These regression tests catch silent breakage during future changes.
+
+4. **Cross-validation with faer**: When both our code and faer compute overlapping quantities, assert consistency. Example: `col_counts.sum() == predicted_nnz` verifies our permuted structure matches faer's internal computation.
+
+5. **Property-based testing**: For implementation-dependent outputs (supernode boundaries, assembly tree shape), test structural properties rather than exact values. Example: assembly tree parent pointers must satisfy postorder (parent > child), total children + roots = total supernodes.
+
 
 ## Documentation Standards
 
@@ -194,23 +227,9 @@ Preferences (can be violated if needed)
 - Rust 1.87+ (edition 2024) + faer 0.22 (sparse matrix types), serde/serde_json (Chrome Trace JSON export), std only for timing/threading (no new external deps) (008-profiling-debug-tools)
 - Rust 1.87+ (edition 2024) + faer 0.22 (sparse/dense LA), serde + serde_json (serialization for Inertia) (009-aptp-data-structures)
 - N/A (in-memory data structures only) (009-aptp-data-structures)
-
-## Testing Strategy
-
-Primary correctness validation (established in Phase 0.3 decision):
-1. **Reconstruction tests**: `||P^T A P - L D L^T|| / ||A|| < 10^-12` (primary oracle)
-2. **Backward error**: `||Ax - b|| / (||A|| ||x|| + ||b||) < 10^-10` (solve pipeline)
-3. **Hand-constructed matrices**: 15 matrices with analytically known factorizations
-4. **Property-based tests**: Inertia, symmetry preservation, permutation validity
-5. **SPRAL comparison**: Deferred to Phases 2-8 (performance benchmarking, large-matrix inertia)
-
-Test infrastructure (Phase 0.5):
-- `SolverTest` trait with `MockSolver` for pre-solver validation
-- `NumericalValidator` with configurable tolerances
-- `TestCaseFilter` for composable test case selection
-- Random matrix generators (PD and indefinite) behind `test-util` feature
+- Rust 1.87+ (edition 2024) + faer 0.22 (symbolic Cholesky, AMD ordering, MemStack), serde/serde_json (existing, not new) (010-aptp-symbolic)
 
 ## Recent Changes
+- 010-aptp-symbolic: Added Rust 1.87+ (edition 2024) + faer 0.22 (symbolic Cholesky, AMD ordering, MemStack), serde/serde_json (existing, not new)
 - 009-aptp-data-structures: Added Rust 1.87+ (edition 2024) + faer 0.22 (sparse/dense LA), serde + serde_json (serialization for Inertia)
 - 009-aptp-data-structures: Added [if applicable, e.g., PostgreSQL, CoreData, files or N/A]
-- 008-profiling-debug-tools: Added Rust 1.87+ (edition 2024) + faer 0.22 (sparse matrix types), serde/serde_json (Chrome Trace JSON export), std only for timing/threading (no new external deps)
