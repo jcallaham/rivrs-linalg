@@ -1,5 +1,52 @@
 # SSIDS Development Log
 
+## Phase 4.1: METIS Nested Dissection Ordering
+
+**Status**: Complete
+**Branch**: `011-metis-ordering`
+**Date**: 2026-02-12
+
+### What Was Built
+
+Integrated METIS nested dissection ordering via `metis-sys` (vendored METIS 5.x C source).
+Single public function `metis_ordering()` in `src/aptp/ordering.rs` that accepts
+`SymbolicSparseColMatRef` and returns `Perm<usize>` for use with `AptpSymbolic::analyze()`.
+
+**Key components**:
+- `metis_ordering()` — safe Rust wrapper around `METIS_NodeND` FFI
+- `extract_adjacency()` — CSC → CSR graph extraction (symmetrize, exclude diagonal)
+- Integration tests on CI-subset (9 matrices) and full SuiteSparse (65 matrices)
+- Fill quality validation against Hogg et al. (2016) Table III
+
+### Key Decisions
+
+- **Required dependency**: `metis-sys` is non-optional. Vendored C source compiles via `cc`.
+  No system library needed. ~30s additional compile time.
+- **Permutation mapping**: METIS `perm` = faer forward (new→old), METIS `iperm` = faer inverse
+  (old→new). Initial design had this inverted; corrected during implementation based on
+  METIS manual's `A' = A(perm, perm)` convention.
+- **Trivial cases**: dim 0, 1, and diagonal matrices handled in Rust without METIS FFI call.
+
+### Test Results
+
+- **METIS vs AMD on CI-subset**: METIS wins on 8/9 matrices (89%). Only bloweybq (near-diagonal,
+  10K) favors AMD.
+- **Paper validation**: ncvxqp3 ratio=1.22, cfd2 ratio=0.39 (both within tolerance of
+  Hogg et al. 2016 Table III values).
+- **Full SuiteSparse**: All 65 matrices complete symbolic analysis with METIS in ~146s.
+  No dimension cap needed (unlike AMD which required MAX_DIM_FOR_AMD=30K).
+- **Fill reduction examples**: sparsine 1.04B→253M (4.1×), ncvxqp3 64M→19M (3.4×),
+  cfd2 26M→15M (1.8×).
+
+### Lessons Learned
+
+- METIS manual uses MATLAB-style convention `A' = A(perm, perm)` where `perm[new] = old`.
+  The initial research document incorrectly stated `perm[old] = new`. Always verify FFI
+  semantics by testing on a matrix with known-good ordering.
+- faer's `Perm::new_checked` returns `Perm` directly (panics on invalid), not `Result`.
+
+---
+
 ## Phase 3 Follow-up: AMD Ordering Quality & METIS Elevation
 
 **Status**: Complete

@@ -9,15 +9,12 @@
 //! The `--test-threads=1` flag is **required** to avoid OOM when multiple tests
 //! load large matrices concurrently.
 //!
-//! # Dimension cap (AMD ordering limitation)
+//! # Ordering strategies
 //!
-//! Matrices with dimension > MAX_DIM_FOR_AMD are skipped. AMD produces
-//! catastrophically poor orderings for many large matrices in this collection —
-//! e.g., sparsine (50K) gets 1 billion predicted nnz(L) with AMD vs ~50-100M
-//! with METIS. The APTP benchmark papers (Hogg et al. 2016, Duff et al. 2020)
-//! all use METIS, not AMD. This cap will be removed when METIS is integrated
-//! (Phase 4.1). See ssids-plan.md "Lessons Learned: AMD Ordering Quality" for
-//! full analysis.
+//! - **AMD tests**: Use `SymmetricOrdering::Amd` with a dimension cap
+//!   (`MAX_DIM_FOR_AMD`) because AMD produces poor orderings for large matrices.
+//! - **METIS tests**: Use `metis_ordering()` + `SymmetricOrdering::Custom` with
+//!   no dimension cap. METIS handles all matrix sizes well.
 //!
 //! # Extracting the full SuiteSparse collection
 //!
@@ -43,7 +40,7 @@
 
 use faer::sparse::linalg::cholesky::SymmetricOrdering;
 
-use rivrs_sparse::aptp::AptpSymbolic;
+use rivrs_sparse::aptp::{AptpSymbolic, metis_ordering};
 use rivrs_sparse::io::registry;
 
 /// Minimum number of SuiteSparse matrices to consider the full collection present.
@@ -56,7 +53,8 @@ const MIN_FULL_COLLECTION_SIZE: usize = 20;
 /// and allocate gigabytes. This matches the observation that SPRAL uses METIS
 /// by default, not AMD.
 ///
-/// Remove this cap when METIS ordering is integrated (Phase 4.1).
+/// This cap applies only to AMD tests. METIS tests have no dimension cap —
+/// use `test_analyze_full_suitesparse_metis` for the uncapped version.
 const MAX_DIM_FOR_AMD: usize = 30_000;
 
 /// Load the SuiteSparse metadata entries (lightweight, no matrix data).
@@ -408,4 +406,152 @@ fn test_pivot_buffer_sanity_full_suitesparse() {
             loaded, MIN_FULL_COLLECTION_SIZE,
         );
     }
+}
+
+/// Analyze all SuiteSparse matrices with METIS ordering (no dimension cap).
+///
+/// Unlike the AMD tests, METIS handles all matrix sizes well. This test verifies
+/// that every matrix in the full collection completes symbolic analysis successfully
+/// with METIS ordering, and reports fill comparison against AMD where applicable.
+#[test]
+#[ignore = "requires full SuiteSparse collection"]
+fn test_analyze_full_suitesparse_metis() {
+    let entries = suitesparse_metadata();
+    let start = std::time::Instant::now();
+
+    let mut loaded = 0usize;
+    let mut success_count = 0usize;
+    let mut fail_count = 0usize;
+    let mut skipped_parse = Vec::new();
+
+    eprintln!(
+        "\n{:<30} {:>8} {:>14} {:>14} {:>8}",
+        "Matrix", "Dim", "METIS NNZ", "AMD NNZ", "Winner"
+    );
+    eprintln!("{}", "-".repeat(80));
+
+    for meta in &entries {
+        let test_matrix = match registry::load_test_matrix_from_entry(meta) {
+            Ok(Some(tm)) => tm,
+            Ok(None) => continue,
+            Err(e) => {
+                skipped_parse.push(format!("{}: {}", meta.name, e));
+                continue;
+            }
+        };
+        loaded += 1;
+
+        // METIS ordering
+        let perm = match metis_ordering(test_matrix.matrix.symbolic()) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("  METIS FAIL: {}: {}", meta.name, e);
+                fail_count += 1;
+                continue;
+            }
+        };
+
+        match AptpSymbolic::analyze(
+            test_matrix.matrix.symbolic(),
+            SymmetricOrdering::Custom(perm.as_ref()),
+        ) {
+            Ok(sym) => {
+                assert_eq!(
+                    sym.nrows(),
+                    meta.size,
+                    "dimension mismatch for '{}'",
+                    meta.name
+                );
+                assert!(
+                    sym.predicted_nnz() > 0,
+                    "predicted_nnz should be > 0 for '{}'",
+                    meta.name
+                );
+                assert_eq!(
+                    sym.etree().len(),
+                    meta.size,
+                    "etree length mismatch for '{}'",
+                    meta.name
+                );
+
+                let metis_nnz = sym.predicted_nnz();
+
+                // Compare with AMD (only if within AMD dimension cap)
+                let (amd_str, winner) = if meta.size <= MAX_DIM_FOR_AMD {
+                    match AptpSymbolic::analyze(
+                        test_matrix.matrix.symbolic(),
+                        SymmetricOrdering::Amd,
+                    ) {
+                        Ok(amd_sym) => {
+                            let amd_nnz = amd_sym.predicted_nnz();
+                            let w = if metis_nnz <= amd_nnz { "METIS" } else { "AMD" };
+                            (format!("{}", amd_nnz), w.to_string())
+                        }
+                        Err(_) => ("(fail)".to_string(), "-".to_string()),
+                    }
+                } else {
+                    ("(too large)".to_string(), "METIS*".to_string())
+                };
+
+                eprintln!(
+                    "{:<30} {:>8} {:>14} {:>14} {:>8}",
+                    meta.name,
+                    sym.nrows(),
+                    metis_nnz,
+                    amd_str,
+                    winner,
+                );
+
+                success_count += 1;
+            }
+            Err(e) => {
+                eprintln!("  ANALYZE FAIL: {}: {}", meta.name, e);
+                fail_count += 1;
+            }
+        }
+    }
+
+    let elapsed = start.elapsed();
+
+    if !skipped_parse.is_empty() {
+        eprintln!(
+            "\nSkipped {} matrices due to parse errors:",
+            skipped_parse.len()
+        );
+        for s in &skipped_parse {
+            eprintln!("  {}", s);
+        }
+    }
+
+    if loaded < MIN_FULL_COLLECTION_SIZE {
+        eprintln!(
+            "\nSkipping assertions: only {} SuiteSparse matrices loaded (need >= {}). \
+             Extract the full collection to test-data/suitesparse/.",
+            loaded, MIN_FULL_COLLECTION_SIZE,
+        );
+        return;
+    }
+
+    eprintln!(
+        "\nSummary: {} passed, {} failed, {} parse-skipped out of {} loaded ({:.1}s)",
+        success_count,
+        fail_count,
+        skipped_parse.len(),
+        loaded,
+        elapsed.as_secs_f64(),
+    );
+
+    // Wall-clock timing: full collection with METIS should complete in reasonable time.
+    // Target: < 2 minutes on production hardware. Allow 5 minutes in test environments
+    // (Docker containers, CI) where CPUs may be slower or throttled.
+    assert!(
+        elapsed.as_secs() < 300,
+        "Full SuiteSparse METIS analysis took {:?}, expected < 300s",
+        elapsed
+    );
+
+    assert_eq!(
+        fail_count, 0,
+        "all loadable SuiteSparse matrices should analyze successfully with METIS"
+    );
 }

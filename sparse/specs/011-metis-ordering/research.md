@@ -43,15 +43,17 @@
 
 **Details**:
 - METIS `METIS_NodeND` returns two arrays:
-  - `perm[i]` = new position for old vertex `i` (old → new mapping)
-  - `iperm[j]` = old vertex at new position `j` (new → old mapping)
+  - `perm[i]` = old vertex at new position `i` (new → old mapping). METIS manual: `A' = A(perm, perm)`.
+  - `iperm[j]` = new position for old vertex `j` (old → new mapping). Inverse of perm.
 - faer's `Perm<usize>` convention:
   - Forward array: `fwd[new_pos]` = old index (new → old)
   - Inverse array: `inv[old_idx]` = new position (old → new)
-- **Mapping**: METIS `iperm` = faer forward; METIS `perm` = faer inverse
-- **Implementation**: `Perm::new_checked(iperm_box, perm_box, n)` — no recomputation needed, both arrays provided by METIS.
+- **Mapping**: METIS `perm` = faer forward; METIS `iperm` = faer inverse
+- **Implementation**: `Perm::new_checked(perm_box, iperm_box, n)` — no recomputation needed, both arrays provided by METIS.
 
 This avoids using `perm_from_forward()` (which recomputes the inverse), since METIS already provides both arrays.
+
+**Note**: The initial design (pre-implementation) had the mapping inverted. The METIS manual's MATLAB-style `A' = A(perm, perm)` convention clarifies that `perm[new] = old`, making it the forward permutation in faer's convention.
 
 ## Decision 6: CSC → adjacency structure extraction
 
