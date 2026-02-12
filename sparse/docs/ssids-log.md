@@ -1,5 +1,97 @@
 # SSIDS Development Log
 
+## Phase 3 Follow-up: AMD Ordering Quality & METIS Elevation
+
+**Status**: Complete
+**Branch**: `010-aptp-symbolic`
+**Date**: 2026-02-10
+
+### What Was Done
+
+Timing analysis of the full SuiteSparse test suite revealed that AMD ordering produces
+catastrophically poor fill predictions for many benchmark matrices. Investigation traced
+the issue to SPRAL using METIS (nested dissection) by default, not AMD.
+
+**Timing diagnostic** on full 65-matrix collection (sorted by size, AMD ordering):
+- Small matrices (< 10K): < 100ms symbolic analysis
+- Medium matrices (10K-30K): 100ms - 4s
+- Pathological cases: sparsine (50K) → 1.04B predicted nnz(L), 12s analysis;
+  nd6k (18K) → 73M predicted nnz(L), 13s analysis
+
+**Comparison against paper values** (Hogg et al. 2016, Table III, METIS ordering):
+nd3k: 1.8× more fill with AMD; Si10H16: 2.9×; Si5H12: 2.8×; sparsine: ~10-20×.
+
+**Plan changes** (`docs/ssids-plan.md`):
+- Added "Lessons Learned: AMD Ordering Quality" section to Phase 3
+- Elevated METIS from "consider for Phase 9" to Phase 4.1 (before MC64)
+- Expanded Phase 4 from "MC64 Matching & Scaling" to "Ordering & Preprocessing"
+  with 4.1 (METIS) and 4.2 (MC64) sub-deliverables
+- Updated Phase 9 note (METIS no longer deferred there)
+
+**Test changes** (`tests/symbolic_analysis_full.rs`):
+- Added `MAX_DIM_FOR_AMD = 30_000` guard to all full-collection tests (skips matrices
+  where AMD produces excessive fill; to be removed when METIS is integrated)
+- Removed `test_amd_reduces_fill_full_suitesparse` (was testing faer's AMD quality,
+  not our code; will be replaced by METIS vs AMD comparison in Phase 4.1)
+- Added documentation explaining the dimension cap and its relationship to METIS
+
+### Key Findings
+
+1. **SPRAL uses METIS by default** (`options%ordering = 1`), not AMD. All APTP
+   benchmark papers (Duff/Hogg/Lopez 2020, Hogg et al. 2016) report results with
+   METIS ordering.
+
+2. **AMD is adequate for small/well-structured matrices** but produces 2-20× more
+   fill than METIS on matrices with geometric structure (FEM, quantum chemistry,
+   optimization problems).
+
+3. **faer infrastructure is unchanged** — METIS produces a `Perm<usize>` that plugs
+   into `SymmetricOrdering::Custom`. This is purely an input quality improvement,
+   not an architectural change.
+
+4. **Full SuiteSparse tests are reusable for METIS** — structural property tests
+   (etree validity, supernode partitioning, assembly tree postorder) are
+   ordering-independent. Predicted nnz(L) can be compared against paper values
+   to validate METIS integration.
+
+---
+
+## Phase 3 Follow-up: Validation Hardening
+
+**Status**: Complete
+**Branch**: `010-aptp-symbolic`
+**Date**: 2026-02-10
+
+### What Was Done
+
+Post-merge review of Phase 3 identified two pieces of from-scratch logic that needed
+deeper validation beyond the existing sanity checks.
+
+**Extracted function** (`src/aptp/symbolic.rs`):
+- `permute_symbolic_upper_triangle` — extracted the permutation remapping logic
+  (P^T A P upper-triangular CSC construction) from `compute_permuted_etree_and_col_counts`
+  into a standalone `pub(crate)` function. Pure refactor, no behavior change. Makes
+  permutation correctness independently testable and reusable for Phase 4 (MC64).
+
+**New tests** (10 total):
+- 4 permutation tests: identity, reverse-arrow, pair-swap-tridiag, diagonal-invariant
+- 1 cross-validation: `col_counts.sum() == predicted_nnz` for all helpers × both orderings
+- 1 regression test: arrow(5) with reverse ordering (exact etree, col_counts, predicted_nnz)
+- 3 supernode parent tests: etree consistency, child round-trip, block-diagonal roots
+
+**Documentation** (`CLAUDE.md`):
+- Added "Testing Discipline for Implementation Phases" section with 5 principles for
+  Phases 5-10: validation proportional to novelty, refactor for testability, regression
+  tests before refactoring, cross-validation with faer, property-based testing.
+
+### Key Findings
+
+- Arrow(5) under reverse ordering creates a star graph (hub at last column) with zero
+  fill-in: `col_counts = [2,2,2,2,1]`, `predicted_nnz = 9`. Contrasts with identity
+  ordering where the hub at column 0 causes complete fill-in (`predicted_nnz = 15`).
+
+---
+
 ## Phase 3: APTP Symbolic Analysis
 
 **Status**: Complete
@@ -47,9 +139,20 @@ and heuristic delayed-pivot buffer estimates.
 - Added `bench_symbolic_analysis` benchmark group measuring `AptpSymbolic::analyze` on
   CI-subset matrices with AMD ordering, establishing baseline for SC-006
 
-**Tests**: 20 new unit tests + 4 integration tests + 3 doc-tests. Total suite: 226 tests
-(217 unit + 9 integration + 7 doc-tests), all passing. Zero clippy warnings, fmt clean,
-cargo doc clean.
+**Tests**: 20 new unit tests + 4 integration tests + 3 doc-tests, all passing.
+Zero clippy warnings, fmt clean, cargo doc clean.
+
+**Follow-up additions**:
+- 4 regression tests with exact expected values using `SymmetricOrdering::Identity`:
+  diagonal, tridiagonal, arrow, and block-diagonal matrices with analytically
+  predicted etree, col_counts, and predicted_nnz values
+- `make_tridiagonal(n)` helper for test matrix generation
+- Full SuiteSparse integration test file (`tests/symbolic_analysis_full.rs`):
+  4 `#[ignore]` tests validating all 67 matrices (analyze, supernodal structure,
+  AMD fill reduction property, pivot buffer sanity), run via `cargo test -- --ignored`
+- Optimization comments flagging future review points in
+  `compute_permuted_etree_and_col_counts` (Phase 10) and `supernode_parent` (Phase 6)
+- Moved inline imports (`SparseColMat`, `Triplet`) to top-level import block
 
 ### Key Decisions
 

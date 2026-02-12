@@ -917,14 +917,46 @@ predicted NNZ is reasonable. Demonstrate custom ordering passthrough.
 
 **Time Estimate:** 3–5 days
 
+#### Lessons Learned: AMD Ordering Quality on Full SuiteSparse Collection
+
+Post-completion testing on the full 65-matrix SuiteSparse collection revealed that
+AMD produces catastrophically poor orderings for several benchmark matrices. Comparing
+our AMD-based predicted nnz(L) against paper-reported values (which used METIS):
+
+| Matrix | Dim | AMD nnz(L) | METIS nnz(L) | Ratio |
+|--------|-----|-----------|-------------|-------|
+| nd3k | 9K | 22.8M | 12.9M | 1.8× |
+| Si10H16 | 17K | 87.8M | 30.6M | 2.9× |
+| nd6k | 18K | 72.8M | 39.8M | 1.8× |
+| Si5H12 | 20K | 125.2M | 44.1M | 2.8× |
+| sparsine | 50K | **1,037M** | ~50-100M (est.) | **~10-20×** |
+
+Paper-reported nnz(L) values from Hogg, Ovtchinnikov, Scott (2016) Table III. All
+papers use METIS (SPRAL's default ordering), not AMD.
+
+**Key finding**: SPRAL uses METIS by default (`options%ordering = 1`), not AMD.
+AMD is a simpler O(nnz) heuristic; METIS uses graph partitioning (nested dissection)
+which produces dramatically better orderings for matrices with geometric structure
+(FEM meshes, quantum chemistry). For sparsine, AMD produces 10-20× more fill than
+METIS, making even symbolic analysis take 12+ seconds and the eventual numeric
+factorization infeasible.
+
+**Impact on plan**: METIS integration elevated from "consider for Phase 9" to
+Phase 4.1 (before MC64). Without METIS, the solver cannot practically handle many
+of the benchmark matrices from the APTP papers. This does not change faer
+infrastructure reuse — METIS produces a `Perm<usize>` that plugs into
+`SymmetricOrdering::Custom` unchanged. It is purely an input quality improvement.
+
 ---
 
-## Phase 4: MC64 Matching & Scaling
+## Phase 4: Ordering & Preprocessing
 
 ### Objectives
-Implement MC64 matching-based ordering and scaling for indefinite systems. This is the
-only ordering work needed beyond what faer already provides — AMD, identity, and custom
-orderings are already handled by Phase 3's `SymmetricOrdering` API.
+Implement fill-reducing ordering (METIS) and matching-based scaling (MC64) for
+indefinite systems. Phase 3 testing revealed AMD produces catastrophically poor
+orderings on many benchmark matrices — METIS is essential for practical performance.
+MC64 provides complementary numerical preprocessing (diagonal dominance improvement)
+for the APTP factorization kernel.
 
 ### What was already completed / absorbed
 
@@ -949,19 +981,23 @@ The original plan defined a custom `Permutation` struct with forward/inverse arr
 handling uses faer's `Perm<usize>` directly. The custom struct is deleted. See Phase 2
 design decisions for details.
 
-#### METIS ordering: deferred
+#### METIS ordering: elevated to Phase 4.1
 
-METIS (nested dissection) is deferred. Rationale:
-- AMD (already available via faer) is adequate for initial development
-- METIS adds a C FFI dependency (libmetis)
-- METIS primarily benefits very large problems and is most valuable with supernodal
-  factorization (Phase 9), where nested dissection creates favorable separator structure
-- The solver works correctly without METIS — it's a fill-reduction optimization
+Originally deferred to Phase 9, METIS was elevated to Phase 4.1 after Phase 3
+testing showed AMD produces 2-20× more fill than METIS on benchmark matrices.
+SPRAL uses METIS by default — without it, the solver cannot practically handle
+many of the APTP paper benchmark matrices.
 
-**Where METIS plugs in:** A `metis_ordering(matrix) -> Perm<usize>` function that
-gets passed to `AptpSymbolic::analyze()` as `SymmetricOrdering::Custom(perm.as_ref())`.
-Same slot as any other ordering, no API changes needed. Consider adding alongside
-supernodal optimization (Phase 9) or as an independent enhancement at any later point.
+**Integration path:** METIS produces a fill-reducing permutation via nested
+dissection. The Rust `metis` crate provides FFI bindings. The output is a
+`Perm<usize>` passed to `AptpSymbolic::analyze()` as
+`SymmetricOrdering::Custom(perm.as_ref())`. No API changes needed — this is
+purely an input quality improvement.
+
+**Validation:** The existing full SuiteSparse test suite (`symbolic_analysis_full.rs`)
+can directly validate METIS by comparing predicted nnz(L) against paper-reported
+values. Structural property tests (etree, supernode structure, assembly tree) are
+ordering-independent and apply unchanged.
 
 #### Scaling flows to numeric phase, not symbolic (decided)
 
@@ -981,6 +1017,75 @@ MC64 returns `(Perm<usize>, Vec<f64>)` as a pure function. The exact API for thr
 scaling into numeric factorization is deferred to Phase 5 design.
 
 ### Deliverables
+
+#### 4.1: METIS Nested Dissection Ordering
+
+**Task:** Integrate METIS graph partitioning for fill-reducing ordering
+
+**Algorithm Reference:**
+- Karypis & Kumar (1998) — "A Fast and High Quality Multilevel Scheme for Partitioning
+  Irregular Graphs", SIAM J. Sci. Comput.
+- George (1973) — Nested dissection theory
+
+**Approach:**
+METIS computes a fill-reducing ordering via multilevel graph partitioning (nested
+dissection). For sparse symmetric matrices with geometric structure (FEM, quantum
+chemistry, optimization), METIS typically produces 2-10× less fill than AMD.
+
+The `metis` Rust crate provides safe FFI bindings to libmetis. The integration is
+thin: extract the adjacency structure from `SparseColMat`, call METIS, wrap the
+result as `Perm<usize>`.
+
+**Notional API** (to be refined during speccing):
+
+```rust
+use faer::perm::Perm;
+use faer::sparse::SparseColMat;
+
+/// Compute a METIS nested dissection ordering for a symmetric sparse matrix.
+///
+/// Returns a fill-reducing permutation suitable for use with
+/// `SymmetricOrdering::Custom(perm.as_ref())`.
+pub fn metis_ordering(
+    matrix: &SparseColMat<usize, f64>,
+) -> Result<Perm<usize>, SparseError>;
+```
+
+**Testing:**
+
+```rust
+#[test]
+fn test_metis_reduces_fill_vs_amd() {
+    // On SuiteSparse matrices, METIS should produce less fill than AMD
+    // for the majority of cases (>= 80%)
+    for case in suitesparse_ci_subset() {
+        let sym_amd = AptpSymbolic::analyze(case.symbolic(), SymmetricOrdering::Amd)?;
+        let metis_perm = metis_ordering(&case)?;
+        let sym_metis = AptpSymbolic::analyze(
+            case.symbolic(),
+            SymmetricOrdering::Custom(metis_perm.as_ref()),
+        )?;
+        // METIS should produce less or equal fill
+    }
+}
+
+#[test]
+fn test_metis_nnz_matches_paper_values() {
+    // Compare predicted nnz(L) against values reported in Hogg et al. (2016)
+    // Table III, which used METIS ordering
+}
+```
+
+**Success Criteria:**
+- [ ] METIS ordering produces valid permutations on all test matrices
+- [ ] Predicted nnz(L) within 20% of paper-reported values (Hogg et al. 2016 Table III)
+- [ ] METIS reduces fill vs AMD on >= 80% of SuiteSparse matrices
+- [ ] Full SuiteSparse symbolic analysis completes in < 2 minutes total with METIS
+- [ ] Integrates via `SymmetricOrdering::Custom` (no API changes)
+
+**Time Estimate:** 3-5 days
+
+#### 4.2: MC64 Matching & Scaling
 
 **Task:** Implement weighted bipartite matching for indefinite matrix preprocessing
 
@@ -1111,21 +1216,25 @@ fn test_mc64_perm_works_with_symbolic_analysis() {
 ### Phase 4 Exit Criteria
 
 **Required Outcomes:**
-1. MC64 matching produces valid matchings on all indefinite test matrices
-2. Scaling improves diagonal dominance measurably
-3. Permutation integrates with `AptpSymbolic::analyze()` via `SymmetricOrdering::Custom`
-4. Combined MC64 + AMD ordering demonstrated
-5. Scaling vector stored and documented for Phase 5 consumption
+1. METIS ordering produces fill predictions within 20% of paper-reported values
+2. Full SuiteSparse symbolic analysis completes in reasonable time with METIS
+3. MC64 matching produces valid matchings on all indefinite test matrices
+4. Scaling improves diagonal dominance measurably
+5. Both orderings integrate via `SymmetricOrdering::Custom`
+6. Combined METIS + MC64 ordering demonstrated
+7. Scaling vector stored and documented for Phase 5 consumption
 
 **Validation Questions:**
+- Does METIS ordering match the fill predictions reported in the APTP papers?
 - Does MC64 find full matching on hard indefinite problems?
 - Does scaling improve diagonal dominance (reduce off-diagonal/diagonal ratio)?
-- Does the MC64 permutation reduce delayed pivots compared to AMD alone? (May need Phase 5
+- Does the MC64 permutation reduce delayed pivots compared to METIS alone? (May need Phase 5
   to fully validate — can check indirectly via diagonal dominance metrics.)
 
-**Checkpoint:** Run MC64 on indefinite test matrices. Verify full matching, positive scaling
-factors, and improved diagonal dominance. Demonstrate integration with Phase 3 symbolic
-analysis.
+**Checkpoint:** Run METIS ordering on full SuiteSparse collection, verify fill predictions
+match paper values. Run MC64 on indefinite test matrices, verify full matching, positive
+scaling factors, and improved diagonal dominance. Demonstrate integration with Phase 3
+symbolic analysis.
 
 ---
 
@@ -1784,9 +1893,10 @@ blocking. This phase adds:
 - Shared-memory parallelism for independent subtree processing
 - Performance benchmarking and comparison
 
-**NOTE**: Consider evaluating METIS integration here. See notes on deferral from
-Phase 4 — METIS plugs in as `SymmetricOrdering::Custom(metis_perm)` and primarily
-benefits large problems where fill-reducing ordering quality is critical.
+**NOTE**: METIS integration was originally deferred to this phase but has been
+elevated to Phase 4.1 after Phase 3 testing revealed AMD produces catastrophically
+poor orderings on many benchmark matrices (2-20× more fill than METIS). See Phase 3
+"Lessons Learned" and Phase 4.1 for details.
 
 ### Design Decisions
 

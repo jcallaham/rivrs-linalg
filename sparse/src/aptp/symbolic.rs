@@ -25,7 +25,6 @@ use std::fmt;
 
 use faer::Side;
 use faer::dyn_stack::MemStack;
-use faer::sparse::SymbolicSparseColMatRef;
 use faer::sparse::linalg::cholesky::simplicial::{
     prefactorize_symbolic_cholesky, prefactorize_symbolic_cholesky_scratch,
 };
@@ -33,8 +32,92 @@ use faer::sparse::linalg::cholesky::{
     CholeskySymbolicParams, SymbolicCholesky, SymbolicCholeskyRaw, SymmetricOrdering,
     factorize_symbolic_cholesky,
 };
+use faer::sparse::{SparseColMat, SymbolicSparseColMatRef, Triplet};
 
 use crate::error::SparseError;
+
+/// Build the permuted upper-triangular symbolic structure P^T A P.
+///
+/// For each column `j_new` in the permuted matrix, the original column is `perm_fwd[j_new]`.
+/// Row `i` in the original becomes `perm_inv[i]` in the permuted matrix.
+/// Only entries where `permuted_row <= j_new` (upper triangle) are kept.
+///
+/// Returns a `SparseColMat<usize, f64>` with dummy 1.0 values — only the symbolic
+/// structure matters for downstream use in `prefactorize_symbolic_cholesky`.
+///
+/// # Arguments
+///
+/// * `matrix` — Symbolic CSC sparsity pattern of the original matrix.
+/// * `perm_fwd` — Forward permutation: `perm_fwd[new_index] = old_index`.
+/// * `perm_inv` — Inverse permutation: `perm_inv[old_index] = new_index`.
+///
+/// Reference: Gilbert et al. (1992), Section 3.3 for permuted structure computation.
+pub(crate) fn permute_symbolic_upper_triangle(
+    matrix: SymbolicSparseColMatRef<'_, usize>,
+    perm_fwd: &[usize],
+    perm_inv: &[usize],
+) -> Result<SparseColMat<usize, f64>, SparseError> {
+    let n = matrix.nrows();
+    let col_ptrs = matrix.col_ptr();
+    let row_indices = matrix.row_idx();
+
+    // Count nonzeros per column in the permuted upper triangle
+    let mut permuted_col_nnz = vec![0usize; n];
+    for j_new in 0..n {
+        let j_orig = perm_fwd[j_new];
+        let start = col_ptrs[j_orig];
+        let end = col_ptrs[j_orig + 1];
+        for &i_orig in &row_indices[start..end] {
+            let i_new = perm_inv[i_orig];
+            if i_new <= j_new {
+                // Upper triangle: row <= col
+                permuted_col_nnz[j_new] += 1;
+            }
+        }
+    }
+
+    // Build CSC column pointers
+    let mut permuted_col_ptrs = vec![0usize; n + 1];
+    for j in 0..n {
+        permuted_col_ptrs[j + 1] = permuted_col_ptrs[j] + permuted_col_nnz[j];
+    }
+    let total_nnz = permuted_col_ptrs[n];
+
+    // Fill row indices (sorted within each column)
+    let mut permuted_row_indices = vec![0usize; total_nnz];
+    let mut write_pos = permuted_col_ptrs.clone();
+    for j_new in 0..n {
+        let j_orig = perm_fwd[j_new];
+        let start = col_ptrs[j_orig];
+        let end = col_ptrs[j_orig + 1];
+        for &i_orig in &row_indices[start..end] {
+            let i_new = perm_inv[i_orig];
+            if i_new <= j_new {
+                permuted_row_indices[write_pos[j_new]] = i_new;
+                write_pos[j_new] += 1;
+            }
+        }
+        // Sort row indices within this column for CSC validity
+        let col_start = permuted_col_ptrs[j_new];
+        let col_end = permuted_col_ptrs[j_new + 1];
+        permuted_row_indices[col_start..col_end].sort_unstable();
+    }
+
+    // Build a SparseColMat from the permuted structure (using dummy f64 values).
+    let mut triplets = Vec::with_capacity(total_nnz);
+    for j in 0..n {
+        let start = permuted_col_ptrs[j];
+        let end = permuted_col_ptrs[j + 1];
+        for &row in &permuted_row_indices[start..end] {
+            triplets.push(Triplet::new(row, j, 1.0f64));
+        }
+    }
+    SparseColMat::<usize, f64>::try_new_from_triplets(n, n, &triplets).map_err(|e| {
+        SparseError::AnalysisFailure {
+            reason: format!("Failed to construct permuted symbolic structure: {}", e),
+        }
+    })
+}
 
 /// Symbolic analysis result for APTP factorization.
 ///
@@ -228,91 +311,35 @@ impl AptpSymbolic {
 
     /// Compute the elimination tree and column counts on the permuted matrix structure.
     ///
-    /// Uses the permutation from `factorize_symbolic_cholesky` to build the permuted
-    /// CSC symbolic structure, then calls `prefactorize_symbolic_cholesky` to obtain
-    /// the etree parent pointers and column counts.
+    /// Extracts the permutation from the inner `SymbolicCholesky`, delegates to
+    /// [`permute_symbolic_upper_triangle`] to build P^T A P, then calls
+    /// `prefactorize_symbolic_cholesky` to obtain the etree parent pointers and
+    /// column counts.
     ///
-    /// Reference: Gilbert et al. (1992), Section 3.3 for permuted structure computation.
+    /// # Optimization notes (Phase 10 review)
+    ///
+    /// The triplet round-trip (CSC → triplets → SparseColMat → internal CSC) allocates
+    /// the permuted structure data ~3 times. When the permutation is identity, we could
+    /// short-circuit and call `prefactorize_symbolic_cholesky` directly on the original
+    /// matrix. Currently acceptable: O(nnz · α(n)) `prefactorize` cost is negligible
+    /// compared to the full symbolic factorization.
     fn compute_permuted_etree_and_col_counts(
         matrix: SymbolicSparseColMatRef<'_, usize>,
         inner: &SymbolicCholesky<usize>,
     ) -> Result<(Vec<isize>, Vec<usize>), SparseError> {
         let n = matrix.nrows();
-        let col_ptrs = matrix.col_ptr();
-        let row_indices = matrix.row_idx();
 
-        // Build the permuted upper-triangular symbolic structure P^T A P.
-        // For each column j_new in the permuted matrix, the original column is fwd[j_new].
-        // Row i in the original becomes inv[i] in the permuted matrix.
-        // We keep only entries where permuted_row <= j_new (upper triangle).
+        // Extract permutation arrays (or identity if no permutation).
         let (perm_fwd, perm_inv) = if let Some(perm) = inner.perm() {
             let (fwd, inv) = perm.arrays();
             (fwd.to_vec(), inv.to_vec())
         } else {
-            // Identity permutation
             let id: Vec<usize> = (0..n).collect();
             (id.clone(), id)
         };
 
-        // Count nonzeros per column in the permuted upper triangle
-        let mut permuted_col_nnz = vec![0usize; n];
-        for j_new in 0..n {
-            let j_orig = perm_fwd[j_new];
-            let start = col_ptrs[j_orig];
-            let end = col_ptrs[j_orig + 1];
-            for &i_orig in &row_indices[start..end] {
-                let i_new = perm_inv[i_orig];
-                if i_new <= j_new {
-                    // Upper triangle: row <= col
-                    permuted_col_nnz[j_new] += 1;
-                }
-            }
-        }
-
-        // Build CSC column pointers
-        let mut permuted_col_ptrs = vec![0usize; n + 1];
-        for j in 0..n {
-            permuted_col_ptrs[j + 1] = permuted_col_ptrs[j] + permuted_col_nnz[j];
-        }
-        let total_nnz = permuted_col_ptrs[n];
-
-        // Fill row indices (sorted within each column)
-        let mut permuted_row_indices = vec![0usize; total_nnz];
-        let mut write_pos = permuted_col_ptrs.clone();
-        for j_new in 0..n {
-            let j_orig = perm_fwd[j_new];
-            let start = col_ptrs[j_orig];
-            let end = col_ptrs[j_orig + 1];
-            for &i_orig in &row_indices[start..end] {
-                let i_new = perm_inv[i_orig];
-                if i_new <= j_new {
-                    permuted_row_indices[write_pos[j_new]] = i_new;
-                    write_pos[j_new] += 1;
-                }
-            }
-            // Sort row indices within this column for CSC validity
-            let col_start = permuted_col_ptrs[j_new];
-            let col_end = permuted_col_ptrs[j_new + 1];
-            permuted_row_indices[col_start..col_end].sort_unstable();
-        }
-
-        // Build a SparseColMat from the permuted structure (using dummy f64 values).
-        // We only need the symbolic view for prefactorize_symbolic_cholesky.
-        use faer::sparse::SparseColMat;
-        use faer::sparse::Triplet;
-
-        let mut triplets = Vec::with_capacity(total_nnz);
-        for j in 0..n {
-            let start = permuted_col_ptrs[j];
-            let end = permuted_col_ptrs[j + 1];
-            for &row in &permuted_row_indices[start..end] {
-                triplets.push(Triplet::new(row, j, 1.0f64));
-            }
-        }
-        let permuted_symbolic = SparseColMat::<usize, f64>::try_new_from_triplets(n, n, &triplets)
-            .map_err(|e| SparseError::AnalysisFailure {
-                reason: format!("Failed to construct permuted symbolic structure: {}", e),
-            })?;
+        // Build the permuted upper-triangular symbolic structure P^T A P.
+        let permuted_symbolic = permute_symbolic_upper_triangle(matrix, &perm_fwd, &perm_inv)?;
 
         // Call prefactorize_symbolic_cholesky on the permuted structure
         let mut etree_buf = vec![0isize; n];
@@ -525,6 +552,9 @@ impl AptpSymbolic {
     /// # Panics
     ///
     /// Panics if `s >= n_supernodes()` for a supernodal factorization.
+    // Optimization note (Phase 6 review): The binary search per call is O(log ns).
+    // If Phase 6 traverses the assembly tree for all supernodes, consider precomputing
+    // a parent array in `analyze()` for O(1) per lookup.
     pub fn supernode_parent(&self, s: usize) -> Option<usize> {
         match self.inner.raw() {
             SymbolicCholeskyRaw::Supernodal(sn) => {
@@ -579,7 +609,6 @@ impl AptpSymbolic {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use faer::sparse::{SparseColMat, Triplet};
 
     /// Helper: create a 1×1 sparse matrix with a single diagonal entry.
     fn make_1x1() -> SparseColMat<usize, f64> {
@@ -590,6 +619,19 @@ mod tests {
     /// Helper: create an n×n diagonal sparse matrix.
     fn make_diagonal(n: usize) -> SparseColMat<usize, f64> {
         let triplets: Vec<_> = (0..n).map(|i| Triplet::new(i, i, (i + 1) as f64)).collect();
+        SparseColMat::try_new_from_triplets(n, n, &triplets).unwrap()
+    }
+
+    /// Helper: create an n×n symmetric tridiagonal sparse matrix.
+    fn make_tridiagonal(n: usize) -> SparseColMat<usize, f64> {
+        let mut triplets = Vec::new();
+        for i in 0..n {
+            triplets.push(Triplet::new(i, i, 4.0));
+        }
+        for i in 0..n - 1 {
+            triplets.push(Triplet::new(i, i + 1, 1.0));
+            triplets.push(Triplet::new(i + 1, i, 1.0));
+        }
         SparseColMat::try_new_from_triplets(n, n, &triplets).unwrap()
     }
 
@@ -1058,6 +1100,62 @@ mod tests {
         );
     }
 
+    // ---- Regression tests with exact expected values ----
+    //
+    // These tests use SymmetricOrdering::Identity (no AMD reordering) so results
+    // are fully deterministic and analytically predictable.
+
+    #[test]
+    fn test_regression_diagonal_5() {
+        let matrix = make_diagonal(5);
+        let sym = AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Identity)
+            .expect("analyze should succeed");
+
+        // Diagonal: no off-diagonal entries, every column is a root, one nnz per column.
+        assert_eq!(sym.etree(), &[-1, -1, -1, -1, -1]);
+        assert_eq!(sym.col_counts(), &[1, 1, 1, 1, 1]);
+        assert_eq!(sym.predicted_nnz(), 5);
+    }
+
+    #[test]
+    fn test_regression_tridiagonal_5() {
+        let matrix = make_tridiagonal(5);
+        let sym = AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Identity)
+            .expect("analyze should succeed");
+
+        // Tridiagonal: each column j has parent j+1, last is root.
+        // L has one sub-diagonal entry per column (except last), so col_counts = [2,2,2,2,1].
+        assert_eq!(sym.etree(), &[1, 2, 3, 4, -1]);
+        assert_eq!(sym.col_counts(), &[2, 2, 2, 2, 1]);
+        assert_eq!(sym.predicted_nnz(), 9);
+    }
+
+    #[test]
+    fn test_regression_arrow_5_identity() {
+        let matrix = make_arrow(5);
+        let sym = AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Identity)
+            .expect("analyze should succeed");
+
+        // Arrow (hub at row/col 0): dense first column causes complete fill-in in L.
+        // etree is a chain: 0→1→2→3→4(root).
+        // col_counts = [5,4,3,2,1] (dense lower triangle).
+        assert_eq!(sym.etree(), &[1, 2, 3, 4, -1]);
+        assert_eq!(sym.col_counts(), &[5, 4, 3, 2, 1]);
+        assert_eq!(sym.predicted_nnz(), 15);
+    }
+
+    #[test]
+    fn test_regression_block_diagonal_4() {
+        let matrix = make_block_diagonal();
+        let sym = AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Identity)
+            .expect("analyze should succeed");
+
+        // Two disconnected 2x2 blocks: two independent subtrees, each with one child→parent.
+        assert_eq!(sym.etree(), &[1, -1, 3, -1]);
+        assert_eq!(sym.col_counts(), &[2, 1, 2, 1]);
+        assert_eq!(sym.predicted_nnz(), 6);
+    }
+
     #[test]
     fn test_statistics_display() {
         let matrix = make_arrow(5);
@@ -1069,5 +1167,304 @@ mod tests {
         assert!(display.contains("Dimension:"));
         assert!(display.contains("Predicted NNZ:"));
         assert!(display.contains("Avg col count:"));
+    }
+
+    // ---- permute_symbolic_upper_triangle tests ----
+
+    /// Extract CSC col_ptrs and sorted row indices from a SparseColMat for assertion.
+    fn extract_csc_structure(mat: &SparseColMat<usize, f64>) -> (Vec<usize>, Vec<usize>) {
+        let sym = mat.symbolic();
+        let col_ptrs: Vec<usize> = sym.col_ptr().to_vec();
+        let row_indices: Vec<usize> = sym.row_idx().to_vec();
+        (col_ptrs, row_indices)
+    }
+
+    #[test]
+    fn test_permute_identity() {
+        let matrix = make_arrow(5);
+        let perm_fwd: Vec<usize> = (0..5).collect();
+        let perm_inv: Vec<usize> = (0..5).collect();
+
+        let permuted = permute_symbolic_upper_triangle(matrix.symbolic(), &perm_fwd, &perm_inv)
+            .expect("permute should succeed");
+
+        // Identity permutation: permuted upper triangle == original upper triangle.
+        // Arrow(5) upper triangle: diagonal (5 entries) + first row off-diagonal (4 entries) = 9
+        let (col_ptrs, row_indices) = extract_csc_structure(&permuted);
+        let total_nnz: usize = col_ptrs.last().copied().unwrap_or(0);
+        assert_eq!(total_nnz, 9, "arrow(5) upper triangle has 9 entries");
+
+        // Col 0: only diagonal (0)
+        assert_eq!(&row_indices[col_ptrs[0]..col_ptrs[1]], &[0]);
+        // Cols 1-4: diagonal + entry from row 0 (the hub)
+        for j in 1..5 {
+            let rows = &row_indices[col_ptrs[j]..col_ptrs[j + 1]];
+            assert_eq!(rows, &[0, j], "col {} should have rows [0, {}]", j, j);
+        }
+    }
+
+    #[test]
+    fn test_permute_reverse_arrow() {
+        let matrix = make_arrow(5);
+        // Reverse: perm_fwd = [4,3,2,1,0], perm_inv = [4,3,2,1,0]
+        let perm_fwd: Vec<usize> = (0..5).rev().collect();
+        let perm_inv: Vec<usize> = (0..5).rev().collect();
+
+        let permuted = permute_symbolic_upper_triangle(matrix.symbolic(), &perm_fwd, &perm_inv)
+            .expect("permute should succeed");
+
+        let (col_ptrs, row_indices) = extract_csc_structure(&permuted);
+        let total_nnz: usize = col_ptrs.last().copied().unwrap_or(0);
+        assert_eq!(total_nnz, 9, "same number of entries after permutation");
+
+        // Under reverse permutation, the hub (original col 0) moves to col 4.
+        // Cols 0-3 should have only diagonal entries.
+        for j in 0..4 {
+            let rows = &row_indices[col_ptrs[j]..col_ptrs[j + 1]];
+            assert_eq!(rows, &[j], "col {} should have only diagonal", j);
+        }
+        // Col 4 (the hub): rows {0,1,2,3,4}
+        let rows_4 = &row_indices[col_ptrs[4]..col_ptrs[5]];
+        assert_eq!(rows_4, &[0, 1, 2, 3, 4], "col 4 should be the dense hub");
+    }
+
+    #[test]
+    fn test_permute_swap_tridiag() {
+        let matrix = make_tridiagonal(4);
+        // Pair-swap: [1,0,3,2]
+        let perm_fwd: Vec<usize> = vec![1, 0, 3, 2];
+        let perm_inv: Vec<usize> = vec![1, 0, 3, 2]; // self-inverse
+
+        let permuted = permute_symbolic_upper_triangle(matrix.symbolic(), &perm_fwd, &perm_inv)
+            .expect("permute should succeed");
+
+        let (col_ptrs, row_indices) = extract_csc_structure(&permuted);
+        let total_nnz: usize = col_ptrs.last().copied().unwrap_or(0);
+
+        // Tridiagonal(4) has 4 diagonal + 3 off-diagonal = 7 upper-triangle entries.
+        // Permutation preserves total nnz in the upper triangle.
+        assert_eq!(total_nnz, 7, "tridiag(4) upper triangle has 7 entries");
+
+        // Verify every entry is in the upper triangle (row <= col)
+        for j in 0..4 {
+            for &row in &row_indices[col_ptrs[j]..col_ptrs[j + 1]] {
+                assert!(row <= j, "row {} > col {} violates upper triangle", row, j);
+            }
+        }
+
+        // The swapped tridiagonal should have edges 0-1, 1-2, 2-3 mapped to
+        // new edges. Verify the diagonal is present in every column.
+        for j in 0..4 {
+            let rows = &row_indices[col_ptrs[j]..col_ptrs[j + 1]];
+            assert!(
+                rows.contains(&j),
+                "col {} should contain its diagonal entry",
+                j
+            );
+        }
+    }
+
+    #[test]
+    fn test_permute_diagonal_invariant() {
+        let matrix = make_diagonal(5);
+        // Arbitrary permutation
+        let perm_fwd: Vec<usize> = vec![3, 1, 4, 0, 2];
+        // Compute inverse
+        let mut perm_inv = vec![0usize; 5];
+        for (new, &old) in perm_fwd.iter().enumerate() {
+            perm_inv[old] = new;
+        }
+
+        let permuted = permute_symbolic_upper_triangle(matrix.symbolic(), &perm_fwd, &perm_inv)
+            .expect("permute should succeed");
+
+        let (col_ptrs, row_indices) = extract_csc_structure(&permuted);
+        let total_nnz: usize = col_ptrs.last().copied().unwrap_or(0);
+
+        // Diagonal matrix is permutation-invariant: always n entries, all diagonal.
+        assert_eq!(total_nnz, 5, "diagonal(5) always has 5 entries");
+        for j in 0..5 {
+            let rows = &row_indices[col_ptrs[j]..col_ptrs[j + 1]];
+            assert_eq!(rows, &[j], "col {} should have only diagonal entry", j);
+        }
+    }
+
+    // ---- Cross-validation tests ----
+
+    #[test]
+    fn test_col_counts_sum_equals_predicted_nnz() {
+        // For each helper matrix, with both Identity and Amd ordering,
+        // verify that col_counts sum equals predicted_nnz.
+        let matrices: Vec<(&str, SparseColMat<usize, f64>)> = vec![
+            ("1x1", make_1x1()),
+            ("diagonal(5)", make_diagonal(5)),
+            ("tridiagonal(5)", make_tridiagonal(5)),
+            ("arrow(5)", make_arrow(5)),
+            ("block_diagonal", make_block_diagonal()),
+        ];
+
+        for (name, matrix) in &matrices {
+            for (ordering_name, ordering) in [
+                ("Identity", SymmetricOrdering::Identity),
+                ("Amd", SymmetricOrdering::Amd),
+            ] {
+                let sym = AptpSymbolic::analyze(matrix.symbolic(), ordering).unwrap_or_else(|e| {
+                    panic!("analyze failed for {} with {}: {}", name, ordering_name, e)
+                });
+
+                let col_counts_sum: usize = sym.col_counts().iter().sum();
+                assert_eq!(
+                    col_counts_sum,
+                    sym.predicted_nnz(),
+                    "col_counts sum ({}) != predicted_nnz ({}) for {} with {}",
+                    col_counts_sum,
+                    sym.predicted_nnz(),
+                    name,
+                    ordering_name,
+                );
+            }
+        }
+    }
+
+    // ---- Non-identity permutation regression test ----
+
+    #[test]
+    fn test_regression_arrow_5_reverse() {
+        let matrix = make_arrow(5);
+        let n = matrix.nrows();
+
+        // Reverse permutation: [4,3,2,1,0]
+        let fwd: Vec<usize> = (0..n).rev().collect();
+        let perm = crate::aptp::perm_from_forward(fwd).unwrap();
+
+        let sym =
+            AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Custom(perm.as_ref()))
+                .expect("analyze with reverse ordering should succeed");
+
+        // Under reverse permutation, the hub (original col 0) moves to col 4.
+        // This creates a star graph: columns 0-3 are leaves connected only to col 4.
+        // No fill-in occurs (leaves are independent — no shared off-diagonal entries).
+        // etree: all leaves parent to the hub.
+        // col_counts: each leaf has diagonal + one off-diagonal entry to hub (2),
+        //             hub has only diagonal (1).
+        assert_eq!(sym.etree(), &[4, 4, 4, 4, -1]);
+        assert_eq!(sym.col_counts(), &[2, 2, 2, 2, 1]);
+        assert_eq!(sym.predicted_nnz(), 9);
+    }
+
+    // ---- Supernode parent correctness tests ----
+
+    #[test]
+    fn test_supernode_parent_consistent_with_etree() {
+        let matrix = make_arrow(20);
+        let sym = AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Amd)
+            .expect("analyze should succeed");
+
+        if sym.is_supernodal() {
+            let begin = sym.supernode_begin().unwrap();
+            let end = sym.supernode_end().unwrap();
+            let ns = sym.n_supernodes().unwrap();
+            let etree = sym.etree();
+
+            for s in 0..ns {
+                let last_col = end[s] - 1;
+                let parent_col = etree[last_col];
+
+                match sym.supernode_parent(s) {
+                    None => {
+                        // Root supernode: etree[last_col] should be -1
+                        assert_eq!(
+                            parent_col, -1,
+                            "supernode {} is root but etree[{}] = {}",
+                            s, last_col, parent_col
+                        );
+                    }
+                    Some(parent_sn) => {
+                        // Non-root: parent_col should fall within the parent supernode's range
+                        let pc = parent_col as usize;
+                        assert!(
+                            pc >= begin[parent_sn] && pc < end[parent_sn],
+                            "supernode {} parent col {} not in supernode {} range [{}, {})",
+                            s,
+                            pc,
+                            parent_sn,
+                            begin[parent_sn],
+                            end[parent_sn]
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_supernode_parent_child_round_trip() {
+        let matrix = make_arrow(20);
+        let sym = AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Amd)
+            .expect("analyze should succeed");
+
+        if sym.is_supernodal() {
+            let ns = sym.n_supernodes().unwrap();
+
+            // Build children map from parent pointers
+            let mut children: Vec<Vec<usize>> = vec![Vec::new(); ns];
+            let mut root_count = 0;
+            for s in 0..ns {
+                match sym.supernode_parent(s) {
+                    None => root_count += 1,
+                    Some(parent) => children[parent].push(s),
+                }
+            }
+
+            // Every child's parent should point back correctly
+            for (parent, kids) in children.iter().enumerate() {
+                for &child in kids {
+                    assert_eq!(
+                        sym.supernode_parent(child),
+                        Some(parent),
+                        "child {} parent should be {}",
+                        child,
+                        parent
+                    );
+                }
+            }
+
+            // Total children + roots = total supernodes
+            let total_children: usize = children.iter().map(|c| c.len()).sum();
+            assert_eq!(
+                total_children + root_count,
+                ns,
+                "children ({}) + roots ({}) should equal total supernodes ({})",
+                total_children,
+                root_count,
+                ns
+            );
+        }
+    }
+
+    #[test]
+    fn test_supernode_parent_block_diagonal_roots() {
+        let matrix = make_block_diagonal();
+        let sym = AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Identity)
+            .expect("analyze should succeed");
+
+        // Block-diagonal: etree has ≥2 roots (verified in test_regression_block_diagonal_4).
+        let etree_roots = sym.etree().iter().filter(|&&p| p == -1).count();
+        assert!(
+            etree_roots >= 2,
+            "block_diagonal should have ≥2 etree roots"
+        );
+
+        if sym.is_supernodal() {
+            let ns = sym.n_supernodes().unwrap();
+            let sn_roots = (0..ns)
+                .filter(|&s| sym.supernode_parent(s).is_none())
+                .count();
+            assert!(
+                sn_roots >= 2,
+                "supernodal block-diagonal should have ≥2 root supernodes, got {}",
+                sn_roots
+            );
+        }
     }
 }
