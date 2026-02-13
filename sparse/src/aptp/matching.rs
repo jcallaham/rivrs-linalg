@@ -54,6 +54,7 @@ pub struct Mc64Result {
 }
 
 /// Optimization objective for the matching.
+#[non_exhaustive]
 pub enum Mc64Job {
     /// Maximize the product of diagonal entry magnitudes.
     /// Equivalent to minimizing sum of `-log|a_ij|` costs.
@@ -209,26 +210,16 @@ pub fn mc64_matching(
         }
     }
 
-    // Compute column duals via complementary slackness for matched columns
-    let mut v = vec![0.0_f64; n];
-    for (j, v_j) in v.iter_mut().enumerate() {
-        let i = state.col_match[j];
-        if i != UNMATCHED {
-            let col_start = graph.col_ptr[j];
-            let col_end = graph.col_ptr[j + 1];
-            for idx in col_start..col_end {
-                if graph.row_idx[idx] == i {
-                    *v_j = graph.cost[idx] - state.u[i];
-                    break;
-                }
-            }
-        }
-    }
-
-    // Compute symmetric scaling for ALL indices from duals
+    // Compute column duals via complementary slackness and symmetric scaling
+    let v = compute_column_duals(&graph, &state);
     let mut scaling = symmetrize_scaling(&state.u, &v, &graph.col_max_log);
 
-    // Apply Duff-Pralet correction for unmatched indices
+    // Apply Duff-Pralet correction for unmatched indices.
+    // is_matched[i] = true if index i participates in the matching in any role
+    // (as row OR column). For symmetric matrices, row i and column i are the same
+    // physical index, so we take the union. This drives both the Duff-Pralet
+    // correction (which needs to know unmatched indices) and the permutation
+    // builder (which needs to know which columns are "used").
     let is_row_matched: Vec<bool> = (0..n).map(|i| state.row_match[i] != UNMATCHED).collect();
     let is_col_matched: Vec<bool> = (0..n).map(|j| state.col_match[j] != UNMATCHED).collect();
     let is_matched: Vec<bool> = (0..n)
@@ -249,16 +240,13 @@ pub fn mc64_matching(
     })
 }
 
-/// Build scaling, forward and inverse permutation for a full matching result.
-fn build_full_match_result(
-    graph: &CostGraph,
-    state: &MatchingState,
-) -> (Vec<f64>, Vec<usize>, Vec<usize>) {
+/// Compute column dual variables via complementary slackness.
+///
+/// For each matched column j: `v[j] = c[matched_row, j] - u[matched_row]`.
+/// Unmatched columns get `v[j] = 0.0`.
+/// This is the standard post-matching dual computation (SPRAL lines 1159-1167).
+fn compute_column_duals(graph: &CostGraph, state: &MatchingState) -> Vec<f64> {
     let n = graph.n;
-
-    // Compute column dual variables via complementary slackness:
-    // v[j] = c[matched_row, j] - u[matched_row] for matched columns.
-    // This is the standard post-matching dual computation (SPRAL lines 1159-1167).
     let mut v = vec![0.0_f64; n];
     for (j, v_j) in v.iter_mut().enumerate() {
         let i = state.col_match[j];
@@ -273,7 +261,16 @@ fn build_full_match_result(
             }
         }
     }
+    v
+}
 
+/// Build scaling, forward and inverse permutation for a full matching result.
+fn build_full_match_result(
+    graph: &CostGraph,
+    state: &MatchingState,
+) -> (Vec<f64>, Vec<usize>, Vec<usize>) {
+    let n = graph.n;
+    let v = compute_column_duals(graph, state);
     let scaling = symmetrize_scaling(&state.u, &v, &graph.col_max_log);
 
     let mut fwd = vec![0usize; n];
@@ -664,6 +661,8 @@ fn dijkstra_augment(root_col: usize, graph: &CostGraph, state: &mut MatchingStat
         // Compute vj from the MATCHED edge (q0, j) in column j.
         // Note: out[j] points to the discovery edge (q0, scanning_col), not the
         // matched edge in column j. We must find the actual matched edge cost.
+        // O(degree) scan — could be avoided by maintaining v[j] during Dijkstra
+        // as SPRAL does, at the cost of an additional n-sized array.
         let col_start_j = graph.col_ptr[j];
         let col_end_j = graph.col_ptr[j + 1];
         let mut matched_cost = 0.0_f64;
@@ -890,15 +889,18 @@ fn duff_pralet_correction(
     }
 }
 
-/// Count singletons and 2-cycles in a matching permutation.
+/// Count singletons, 2-cycles, and longer cycles in a matching permutation.
 ///
-/// For symmetric matrices, the matching decomposes into singletons (σ(i)=i)
-/// and 2-cycles (σ(i)=j, σ(j)=i, i≠j). Panics if a longer cycle is found.
-pub fn count_cycles(matching: &[usize]) -> (usize, usize) {
+/// For symmetric matrices, the optimal matching decomposes into singletons
+/// (σ(i)=i) and 2-cycles (σ(i)=j, σ(j)=i, i≠j). However, the asymmetric
+/// cost graph can produce longer cycles that are genuinely optimal (see
+/// `docs/mc64-scaling-notes.md`). Returns `(singletons, two_cycles, longer_cycles)`.
+pub fn count_cycles(matching: &[usize]) -> (usize, usize, usize) {
     let n = matching.len();
     let mut visited = vec![false; n];
     let mut singletons = 0;
     let mut two_cycles = 0;
+    let mut longer_cycles = 0;
 
     for i in 0..n {
         if visited[i] {
@@ -908,23 +910,29 @@ pub fn count_cycles(matching: &[usize]) -> (usize, usize) {
         if j == i {
             singletons += 1;
             visited[i] = true;
-        } else {
-            assert_eq!(
-                matching[j], i,
-                "Expected 2-cycle: σ({})={} but σ({})={} (not a 2-cycle or singleton)",
-                i, j, j, matching[j]
-            );
+        } else if matching[j] == i {
             two_cycles += 1;
             visited[i] = true;
             visited[j] = true;
+        } else {
+            // Longer cycle — trace it
+            longer_cycles += 1;
+            let mut k = i;
+            loop {
+                visited[k] = true;
+                k = matching[k];
+                if k == i {
+                    break;
+                }
+            }
         }
     }
 
-    (singletons, two_cycles)
+    (singletons, two_cycles, longer_cycles)
 }
 
 /// Wrapper for f64 that provides total ordering for use in BinaryHeap.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 struct OrderedFloat(f64);
 
 impl Eq for OrderedFloat {}
@@ -1332,93 +1340,45 @@ mod tests {
     #[test]
     fn test_count_cycles_identity() {
         let matching = vec![0, 1, 2, 3];
-        let (s, c) = count_cycles(&matching);
+        let (s, c, l) = count_cycles(&matching);
         assert_eq!(s, 4);
         assert_eq!(c, 0);
+        assert_eq!(l, 0);
     }
 
     #[test]
     fn test_count_cycles_two_swaps() {
         let matching = vec![1, 0, 3, 2];
-        let (s, c) = count_cycles(&matching);
+        let (s, c, l) = count_cycles(&matching);
         assert_eq!(s, 0);
         assert_eq!(c, 2);
+        assert_eq!(l, 0);
     }
 
     #[test]
     fn test_count_cycles_mixed() {
         let matching = vec![0, 2, 1, 3, 4];
-        let (s, c) = count_cycles(&matching);
+        let (s, c, l) = count_cycles(&matching);
         assert_eq!(s, 3); // 0, 3, 4 are singletons
         assert_eq!(c, 1); // (1,2) is a 2-cycle
+        assert_eq!(l, 0);
+    }
+
+    #[test]
+    fn test_count_cycles_longer_cycle() {
+        // 3-cycle: 0→1→2→0, plus singleton 3
+        let matching = vec![1, 2, 0, 3];
+        let (s, c, l) = count_cycles(&matching);
+        assert_eq!(s, 1); // 3 is singleton
+        assert_eq!(c, 0);
+        assert_eq!(l, 1); // one 3-cycle
     }
 
     /// Verify SPRAL scaling properties for a matching result.
+    /// Delegates to the shared helper in testing::mc64_validation.
     fn verify_scaling_properties(matrix: &SparseColMat<usize, f64>, result: &Mc64Result) {
-        let n = matrix.nrows();
-        let symbolic = matrix.symbolic();
-        let values = matrix.val();
-        let col_ptrs = symbolic.col_ptr();
-        let row_indices = symbolic.row_idx();
-        let (fwd, _) = result.matching.as_ref().arrays();
-
-        // Property 1: |s_i * a_ij * s_j| <= 1.0 for all stored entries
-        // Check both upper and implied lower triangle
-        let mut row_max = vec![0.0_f64; n];
-
-        for j in 0..n {
-            let start = col_ptrs[j];
-            let end = col_ptrs[j + 1];
-            for k in start..end {
-                let i = row_indices[k];
-                let scaled = (result.scaling[i] * values[k] * result.scaling[j]).abs();
-                assert!(
-                    scaled <= 1.0 + 1e-10,
-                    "|s[{}]*a[{},{}]*s[{}]| = {} > 1.0",
-                    i,
-                    i,
-                    j,
-                    j,
-                    scaled
-                );
-                // Track row max (from upper triangle)
-                if scaled > row_max[i] {
-                    row_max[i] = scaled;
-                }
-                if i != j && scaled > row_max[j] {
-                    row_max[j] = scaled;
-                }
-            }
-        }
-
-        // Property 2: row max ≈ 1.0 (SPRAL tolerance: 5e-14, we use 1e-12)
-        for (i, &rm) in row_max.iter().enumerate() {
-            if rm > 0.0 {
-                assert!(
-                    rm >= 1.0 - 1e-12,
-                    "row_max[{}] = {} < 1.0 - 1e-12 (SPRAL expects ~1.0)",
-                    i,
-                    rm
-                );
-            }
-        }
-
-        // Property 3: matching is valid permutation
-        let mut seen = vec![false; n];
-        for i in 0..n {
-            assert!(fwd[i] < n, "matching[{}] = {} out of range", i, fwd[i]);
-            assert!(!seen[fwd[i]], "duplicate in matching at {}", fwd[i]);
-            seen[fwd[i]] = true;
-        }
-
-        // Property 4: all scaling factors positive and finite
-        for (i, &s) in result.scaling.iter().enumerate() {
-            assert!(s > 0.0, "scaling[{}] = {} should be positive", i, s);
-            assert!(s.is_finite(), "scaling[{}] = {} should be finite", i, s);
-        }
-
-        // Property 5: matching decomposes into singletons + 2-cycles only
-        let _ = count_cycles(fwd); // panics if longer cycles found
+        use crate::testing::verify_spral_scaling_properties;
+        verify_spral_scaling_properties("unit_test", matrix, result);
     }
 
     // ---- T018: duff_pralet_correction tests ----
@@ -1537,6 +1497,166 @@ mod tests {
         for &f in fwd {
             assert!(!seen[f], "duplicate in matching");
             seen[f] = true;
+        }
+    }
+
+    // ---- Issue #8: NaN/Inf input rejection ----
+
+    #[test]
+    fn test_mc64_nan_entry_error() {
+        let triplets = vec![
+            Triplet::new(0, 0, 4.0),
+            Triplet::new(0, 1, f64::NAN),
+            Triplet::new(1, 1, 5.0),
+        ];
+        let matrix = SparseColMat::try_new_from_triplets(2, 2, &triplets).unwrap();
+        let result = mc64_matching(&matrix, Mc64Job::MaximumProduct);
+        assert!(
+            matches!(result, Err(SparseError::InvalidInput { .. })),
+            "NaN entry should produce InvalidInput error"
+        );
+    }
+
+    #[test]
+    fn test_mc64_inf_entry_error() {
+        let triplets = vec![
+            Triplet::new(0, 0, 4.0),
+            Triplet::new(0, 1, f64::INFINITY),
+            Triplet::new(1, 1, 5.0),
+        ];
+        let matrix = SparseColMat::try_new_from_triplets(2, 2, &triplets).unwrap();
+        let result = mc64_matching(&matrix, Mc64Job::MaximumProduct);
+        assert!(
+            matches!(result, Err(SparseError::InvalidInput { .. })),
+            "Inf entry should produce InvalidInput error"
+        );
+    }
+
+    // ---- Issue #9: enforce_scaling_bound in isolation ----
+
+    #[test]
+    fn test_enforce_scaling_bound_corrects_violation() {
+        // Hand-craft scaling factors that violate |s_i * a_ij * s_j| <= 1
+        // Matrix: [4 2; 2 5] (upper triangle)
+        let matrix = make_upper_tri(2, &[(0, 0, 4.0), (0, 1, 2.0), (1, 1, 5.0)]);
+
+        // These scaling factors are too large: s[0]*4*s[0] = 2*4*2 = 16 >> 1
+        let mut scaling = vec![2.0, 2.0];
+        enforce_scaling_bound(&matrix, &mut scaling);
+
+        // After enforcement, all scaled entries should be <= 1
+        let symbolic = matrix.symbolic();
+        let values = matrix.val();
+        let row_idx = symbolic.row_idx();
+        for j in 0..2 {
+            let start = symbolic.col_ptr()[j];
+            let end = symbolic.col_ptr()[j + 1];
+            for (k, (&i, &val)) in row_idx[start..end]
+                .iter()
+                .zip(&values[start..end])
+                .enumerate()
+            {
+                let scaled = (scaling[i] * val * scaling[j]).abs();
+                assert!(
+                    scaled <= 1.0 + 1e-10,
+                    "|s[{}]*a[{},{}]*s[{}]| = {:.6e} > 1.0 after enforcement (k={})",
+                    i,
+                    i,
+                    j,
+                    j,
+                    scaled,
+                    k
+                );
+            }
+        }
+
+        // Scaling factors should have been reduced from the original 2.0
+        assert!(scaling[0] < 2.0, "scaling[0] should be reduced");
+        assert!(scaling[1] < 2.0, "scaling[1] should be reduced");
+        assert!(scaling[0] > 0.0, "scaling[0] should remain positive");
+        assert!(scaling[1] > 0.0, "scaling[1] should remain positive");
+    }
+
+    #[test]
+    fn test_enforce_scaling_bound_noop_on_valid() {
+        // Scaling factors already satisfying the bound should not change
+        let matrix = make_upper_tri(2, &[(0, 0, 4.0), (0, 1, 2.0), (1, 1, 5.0)]);
+
+        // Very small scaling: s[i]*a*s[j] << 1 for all entries
+        let mut scaling = vec![0.1, 0.1];
+        let original = scaling.clone();
+        enforce_scaling_bound(&matrix, &mut scaling);
+
+        assert_eq!(scaling, original, "valid scaling should not be modified");
+    }
+
+    // ---- Issue #10: greedy matching quality on diagonal matrix ----
+
+    #[test]
+    fn test_greedy_matching_diagonal_perfect() {
+        // Diagonal matrix: greedy should achieve perfect matching without Dijkstra
+        let matrix = make_upper_tri(4, &[(0, 0, 10.0), (1, 1, 20.0), (2, 2, 5.0), (3, 3, 15.0)]);
+        let graph = build_cost_graph(&matrix);
+        let state = greedy_initial_matching(&graph);
+
+        let matched_count = state.row_match.iter().filter(|&&m| m != UNMATCHED).count();
+        assert_eq!(
+            matched_count, 4,
+            "greedy should perfectly match a diagonal matrix"
+        );
+
+        // All should be identity matching (row i matched to col i)
+        for (i, &j) in state.row_match.iter().enumerate() {
+            assert_eq!(
+                j, i,
+                "diagonal greedy: row {} should match col {}, got {}",
+                i, i, j
+            );
+        }
+    }
+
+    // ---- Issue #11: negative diagonal matrix ----
+
+    #[test]
+    fn test_mc64_negative_diagonal() {
+        // All-negative diagonal: tests abs() path in cost computation
+        let matrix = make_upper_tri(3, &[(0, 0, -10.0), (1, 1, -20.0), (2, 2, -5.0)]);
+        let result = mc64_matching(&matrix, Mc64Job::MaximumProduct).unwrap();
+        assert_eq!(result.matched, 3);
+
+        // Should produce identity matching (diagonals are the only entries)
+        let (fwd, _) = result.matching.as_ref().arrays();
+        for (i, &f) in fwd.iter().enumerate() {
+            assert_eq!(f, i, "negative diagonal should give identity matching");
+        }
+
+        verify_scaling_properties(&matrix, &result);
+    }
+
+    // ---- Issue #12: unmatched index placement in singular permutation ----
+
+    #[test]
+    fn test_singular_unmatched_permutation_valid() {
+        // 3x3 matrix where only rows 0,1 can match (via off-diagonal)
+        // Row 2 has no connections except diagonal (which doesn't help with bipartite matching
+        // when all entries are off-diagonal for the matched pairs)
+        // [0  5  0]
+        // [5  0  0]
+        // [0  0  0]  <- isolated, can only be "placed" in remaining slot
+        let matrix = make_upper_tri(3, &[(0, 1, 5.0)]);
+        let result = mc64_matching(&matrix, Mc64Job::MaximumProduct).unwrap();
+
+        // Matching must be a valid permutation regardless of match count
+        let (fwd, inv) = result.matching.as_ref().arrays();
+        let mut seen = [false; 3];
+        for &f in fwd {
+            assert!(f < 3, "fwd index out of range");
+            assert!(!seen[f], "duplicate in fwd");
+            seen[f] = true;
+        }
+        // fwd and inv should be consistent
+        for i in 0..3 {
+            assert_eq!(fwd[inv[i]], i, "fwd[inv[{}]] != {}", i, i);
         }
     }
 }

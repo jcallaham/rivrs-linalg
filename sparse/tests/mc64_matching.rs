@@ -16,7 +16,7 @@ use faer::sparse::{SparseColMat, Triplet};
 use rivrs_sparse::aptp::matching::count_cycles;
 use rivrs_sparse::aptp::{Mc64Job, Mc64Result, mc64_matching};
 use rivrs_sparse::io::registry;
-use rivrs_sparse::testing::{TestCaseFilter, load_test_cases};
+use rivrs_sparse::testing::{TestCaseFilter, load_test_cases, verify_spral_scaling_properties};
 
 /// Helper: create a symmetric upper-triangular matrix from entries.
 fn make_upper_tri(n: usize, entries: &[(usize, usize, f64)]) -> SparseColMat<usize, f64> {
@@ -28,92 +28,9 @@ fn make_upper_tri(n: usize, entries: &[(usize, usize, f64)]) -> SparseColMat<usi
 }
 
 /// Verify all SPRAL scaling properties for a matching result.
+/// Delegates to the shared helper in testing::mc64_validation.
 fn verify_spral_properties(name: &str, matrix: &SparseColMat<usize, f64>, result: &Mc64Result) {
-    let n = matrix.nrows();
-    let symbolic = matrix.symbolic();
-    let values = matrix.val();
-    let col_ptrs = symbolic.col_ptr();
-    let row_indices = symbolic.row_idx();
-    let (fwd, _) = result.matching.as_ref().arrays();
-
-    // Property 1: |s_i * a_ij * s_j| <= 1.0 for all stored entries
-    let mut row_max = vec![0.0_f64; n];
-
-    for j in 0..n {
-        let start = col_ptrs[j];
-        let end = col_ptrs[j + 1];
-        for k in start..end {
-            let i = row_indices[k];
-            let scaled = (result.scaling[i] * values[k] * result.scaling[j]).abs();
-            assert!(
-                scaled <= 1.0 + 1e-10,
-                "{}: |s[{}]*a[{},{}]*s[{}]| = {:.6e} > 1.0",
-                name,
-                i,
-                i,
-                j,
-                j,
-                scaled
-            );
-            if scaled > row_max[i] {
-                row_max[i] = scaled;
-            }
-            if i != j && scaled > row_max[j] {
-                row_max[j] = scaled;
-            }
-        }
-    }
-
-    // Property 2: row max ≈ 1.0 for nonsingular matrices (SPRAL tolerance: 5e-14)
-    // For full-rank matrices with a perfect matching, every row has a matched entry
-    // that scales to exactly 1.0, so row_max = 1.0 for all rows.
-    for (i, &rm) in row_max.iter().enumerate() {
-        if rm > 0.0 {
-            assert!(
-                rm >= 1.0 - 1e-12,
-                "{}: row_max[{}] = {:.6e} < 1.0 - 1e-12 (SPRAL expects ~1.0)",
-                name,
-                i,
-                rm
-            );
-        }
-    }
-
-    // Property 3: matching is valid permutation
-    let mut seen = vec![false; n];
-    for i in 0..n {
-        assert!(
-            fwd[i] < n,
-            "{}: matching[{}] = {} out of range",
-            name,
-            i,
-            fwd[i]
-        );
-        assert!(
-            !seen[fwd[i]],
-            "{}: duplicate in matching at {}",
-            name, fwd[i]
-        );
-        seen[fwd[i]] = true;
-    }
-
-    // Property 4: scaling factors positive and finite
-    for (i, &s) in result.scaling.iter().enumerate() {
-        assert!(s > 0.0, "{}: scaling[{}] = {} not positive", name, i, s);
-        assert!(s.is_finite(), "{}: scaling[{}] = {} not finite", name, i, s);
-    }
-
-    // Property 5: singletons + 2-cycles only
-    let (singletons, two_cycles) = count_cycles(fwd);
-    assert_eq!(
-        singletons + 2 * two_cycles,
-        n,
-        "{}: cycle decomposition doesn't cover all indices: {} singletons + {} 2-cycles != {}",
-        name,
-        singletons,
-        two_cycles,
-        n
-    );
+    verify_spral_scaling_properties(name, matrix, result);
 }
 
 // ---- T009: End-to-end hand-constructed tests ----
@@ -389,12 +306,12 @@ fn test_mc64_metis_independent_composition() {
         // (e) Verify MC64 scaling is still valid (structure-independent)
         verify_spral_properties(name, matrix, &mc64);
 
-        // Verify 2-cycle count is available and non-negative
+        // Verify cycle structure is consistent
         let (fwd, _) = mc64.matching.as_ref().arrays();
-        let (singletons, two_cycles) = count_cycles(fwd);
+        let (singletons, two_cycles, _longer_cycles) = count_cycles(fwd);
         assert!(
-            singletons + 2 * two_cycles == matrix.nrows(),
-            "{}: cycle count doesn't match dimension",
+            singletons + 2 * two_cycles <= matrix.nrows(),
+            "{}: cycle counts exceed dimension",
             name
         );
 
