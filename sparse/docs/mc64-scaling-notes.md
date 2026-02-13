@@ -315,12 +315,19 @@ construction. **TODO**: Investigate in a future optimization pass.
 
 Some nonsingular matchings contain cycles longer than singletons + 2-cycles.
 For example, blockqp1 has 20,000 longer cycles (n=60K), d_pretok has 1,534,
-and stokes128 has 185. For a symmetric cost graph, the optimal matching should
-decompose into only singletons and 2-cycles. Longer cycles indicate suboptimal
-matching, likely due to tie-breaking in the greedy heuristic or Dijkstra heap
-ordering. This doesn't affect scaling correctness but contributes to the
-row_max quality degradation described above (longer cycles = more averaging
-error in the MC64SYM formula).
+and stokes128 has 185.
+
+**Important**: the cost graph `c[i,j] = col_max_log[j] - log|A[i,j]|` is
+NOT symmetric even for a symmetric matrix A, because it depends on the column
+maximum of j. The asymmetry is `c[i,j] - c[j,i] = col_max_log[j] - col_max_log[i]`.
+Therefore longer cycles may be **genuinely optimal** for the asymmetric cost
+graph — they are not necessarily a sign of a suboptimal matching algorithm.
+
+Longer cycles directly contribute to the row_max quality degradation described
+above (more averaging error in the MC64SYM formula). Singletons are the only
+cycle structure guaranteed to give row_max = 1.0 exactly. Whether column dual
+maintenance during Dijkstra (as SPRAL does) would produce more balanced
+matchings with fewer/shorter cycles is an open question worth investigating.
 
 ### 2. Partial matching anomalies (cfd2, ship_003, nd12k)
 
@@ -365,6 +372,27 @@ degradation on 3/41 fully-matched matrices is an inherent limitation of the
 MC64SYM symmetric scaling formula that also affects SPRAL — it is not a
 correctness issue. The partial matching anomalies (Type B) on 3 PD matrices
 warrant future investigation but do not affect the bound property.
+
+---
+
+## Future Investigation
+
+Two open issues warrant future work, in priority order:
+
+1. **Type B: Incomplete matching on nonsingular matrices** (cfd2, ship_003,
+   nd12k). This is a genuine algorithmic issue — PD matrices should achieve
+   full matching cardinality. Most likely cause: interaction between
+   upper-triangular CSC storage and the bipartite cost graph construction
+   (entries in the lower triangle may be invisible to the augmenting path
+   search). Fix may involve symmetrizing the cost graph or iterating over
+   both triangles.
+
+2. **Longer cycles and quality degradation**. The asymmetric cost graph
+   naturally produces longer cycles. Whether SPRAL's approach of maintaining
+   column duals during Dijkstra (rather than computing them post-hoc) would
+   produce more singleton-dominated matchings is unknown. This could improve
+   row_max quality on the 3 degraded matrices (TSOPF_FS_b39_c7, d_pretok,
+   thread) but is a quality improvement, not a correctness fix.
 
 ---
 
