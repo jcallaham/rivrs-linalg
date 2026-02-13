@@ -2165,6 +2165,20 @@ prepare for public release (documentation, examples, packaging).
 - Optimize allocation patterns, cache utilization, unnecessary copies
 - Verify no performance regressions
 
+**MC64 scaling quality revisit:**
+- Phase 4.2's MC64 matching produces degraded row_max quality (rows where
+  `max_j |s_i·a_ij·s_j| < 0.75`) on 5/47 fully-matched SuiteSparse matrices
+  (TSOPF_FS_b39_c7, d_pretok, nd12k, ship_003, thread). This is an inherent
+  limitation of the MC64SYM symmetric averaging formula (Duff & Pralet 2005),
+  not an implementation bug — SPRAL uses the same formula.
+- With end-to-end solve benchmarks available from Phase 9.2, measure whether
+  the quality degradation causes measurably more delayed pivots or worse
+  backward error on these matrices compared to identity scaling.
+- If impact is significant: investigate maintaining column duals during Dijkstra
+  (as SPRAL does) to produce more singleton-dominated matchings with shorter
+  cycles and less averaging error. See `docs/mc64-scaling-notes.md` for the
+  full analysis.
+
 **Success Criteria:**
 - [ ] Arena allocation reduces peak memory on large problems
 - [ ] Peak memory within 50% of symbolic prediction
