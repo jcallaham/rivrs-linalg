@@ -230,6 +230,7 @@ Five principles guiding test design for Phases 3+ (implementation-heavy):
 - Rust 1.87+ (edition 2024) + faer 0.22 (symbolic Cholesky, AMD ordering, MemStack), serde/serde_json (existing, not new) (010-aptp-symbolic)
 - Rust 1.87+ (edition 2024) + faer 0.22 (existing), metis-sys 0.3.x (new — vendored METIS 5.x C source) (011-metis-ordering)
 - N/A (in-memory graph algorithms) (011-metis-ordering)
+- Rust 1.87+ (edition 2024) + faer 0.22 (sparse matrix types, permutations), std::collections::BinaryHeap (Dijkstra priority queue) (012-mc64-matching-scaling)
 
 ## Recent Changes
 - 010-aptp-symbolic: Added Rust 1.87+ (edition 2024) + faer 0.22 (symbolic Cholesky, AMD ordering, MemStack), serde/serde_json (existing, not new)
