@@ -86,8 +86,6 @@ struct MatchingState {
     col_match: Vec<usize>,
     /// Row dual variables (log domain).
     u: Vec<f64>,
-    /// Column dual variables (log domain).
-    v: Vec<f64>,
 }
 
 const UNMATCHED: usize = usize::MAX;
@@ -186,51 +184,132 @@ pub fn mc64_matching(
     // Count matched
     let matched = state.col_match.iter().filter(|&&m| m != UNMATCHED).count();
 
-    // Compute column dual variables: v[j] = c[i,j] - u[i] for matched edge (i,j)
+    if matched == n {
+        // Full matching — compute scaling directly from dual variables
+        let (mut scaling, fwd, inv) = build_full_match_result(&graph, &state);
+        // Enforce |s_i * a_ij * s_j| <= 1 (corrects any dual feasibility gaps)
+        enforce_scaling_bound(matrix, &mut scaling);
+        return Ok(Mc64Result {
+            matching: Perm::new_checked(fwd.into_boxed_slice(), inv.into_boxed_slice(), n),
+            scaling,
+            matched,
+        });
+    }
+
+    // Structural singularity: matched < n
+    // For structurally singular matrices, the dual variables from the partial
+    // matching may not produce perfect quality scaling for all rows. We use
+    // the standard approach (complementary slackness + Duff-Pralet correction)
+    // then enforce the scaling bound to guarantee correctness.
+
+    // Zero u for unmatched rows (SPRAL: where(iperm==0) dualu=0)
+    for i in 0..n {
+        if state.row_match[i] == UNMATCHED {
+            state.u[i] = 0.0;
+        }
+    }
+
+    // Compute column duals via complementary slackness for matched columns
     let mut v = vec![0.0_f64; n];
-    for j in 0..n {
+    for (j, v_j) in v.iter_mut().enumerate() {
         let i = state.col_match[j];
         if i != UNMATCHED {
-            // Find cost of matched edge (i,j) in the cost graph
             let col_start = graph.col_ptr[j];
             let col_end = graph.col_ptr[j + 1];
-            let mut found = false;
             for idx in col_start..col_end {
                 if graph.row_idx[idx] == i {
-                    v[j] = graph.cost[idx] - state.u[i];
-                    found = true;
+                    *v_j = graph.cost[idx] - state.u[i];
                     break;
                 }
-            }
-            if !found {
-                v[j] = 0.0;
             }
         }
     }
 
-    // Symmetrize scaling
+    // Compute symmetric scaling for ALL indices from duals
+    let mut scaling = symmetrize_scaling(&state.u, &v, &graph.col_max_log);
+
+    // Apply Duff-Pralet correction for unmatched indices
+    let is_row_matched: Vec<bool> = (0..n).map(|i| state.row_match[i] != UNMATCHED).collect();
+    let is_col_matched: Vec<bool> = (0..n).map(|j| state.col_match[j] != UNMATCHED).collect();
+    let is_matched: Vec<bool> = (0..n)
+        .map(|i| is_row_matched[i] || is_col_matched[i])
+        .collect();
+    duff_pralet_correction(matrix, &mut scaling, &is_matched);
+
+    // Enforce |s_i * a_ij * s_j| <= 1 (corrects any dual feasibility gaps)
+    enforce_scaling_bound(matrix, &mut scaling);
+
+    // Build permutation: matched rows keep their matched column, unmatched get remaining
+    let (fwd, inv) = build_singular_permutation(n, &state, &is_row_matched);
+
+    Ok(Mc64Result {
+        matching: Perm::new_checked(fwd.into_boxed_slice(), inv.into_boxed_slice(), n),
+        scaling,
+        matched,
+    })
+}
+
+/// Build scaling, forward and inverse permutation for a full matching result.
+fn build_full_match_result(
+    graph: &CostGraph,
+    state: &MatchingState,
+) -> (Vec<f64>, Vec<usize>, Vec<usize>) {
+    let n = graph.n;
+
+    // Compute column dual variables via complementary slackness:
+    // v[j] = c[matched_row, j] - u[matched_row] for matched columns.
+    // This is the standard post-matching dual computation (SPRAL lines 1159-1167).
+    let mut v = vec![0.0_f64; n];
+    for (j, v_j) in v.iter_mut().enumerate() {
+        let i = state.col_match[j];
+        if i != UNMATCHED {
+            let col_start = graph.col_ptr[j];
+            let col_end = graph.col_ptr[j + 1];
+            for idx in col_start..col_end {
+                if graph.row_idx[idx] == i {
+                    *v_j = graph.cost[idx] - state.u[i];
+                    break;
+                }
+            }
+        }
+    }
+
     let scaling = symmetrize_scaling(&state.u, &v, &graph.col_max_log);
 
-    // Build matching permutation
-    // For matched rows, matching[i] = col_match[row_match[i]] is a permutation
-    // For unmatched rows, place at end
     let mut fwd = vec![0usize; n];
-    let mut matched_rows: Vec<usize> = Vec::new();
+    for (i, fwd_i) in fwd.iter_mut().enumerate() {
+        *fwd_i = state.row_match[i];
+    }
+
+    let mut inv = vec![0usize; n];
+    for (i, &f) in fwd.iter().enumerate() {
+        inv[f] = i;
+    }
+
+    (scaling, fwd, inv)
+}
+
+/// Build permutation arrays for structurally singular case.
+/// Matched rows keep their matched column; unmatched rows get remaining columns.
+fn build_singular_permutation(
+    n: usize,
+    state: &MatchingState,
+    is_matched: &[bool],
+) -> (Vec<usize>, Vec<usize>) {
+    let mut fwd = vec![0usize; n];
     let mut unmatched_rows: Vec<usize> = Vec::new();
 
-    for i in 0..n {
+    for (i, fwd_i) in fwd.iter_mut().enumerate() {
         if state.row_match[i] != UNMATCHED {
-            fwd[i] = state.row_match[i];
-            matched_rows.push(i);
+            *fwd_i = state.row_match[i];
         } else {
             unmatched_rows.push(i);
         }
     }
 
-    // For unmatched rows, assign remaining columns
     let mut used_cols = vec![false; n];
-    for i in 0..n {
-        if state.row_match[i] != UNMATCHED {
+    for (i, &matched) in is_matched.iter().enumerate() {
+        if matched {
             used_cols[state.row_match[i]] = true;
         }
     }
@@ -239,17 +318,12 @@ pub fn mc64_matching(
         fwd[i] = free_cols[idx];
     }
 
-    // Build inverse
     let mut inv = vec![0usize; n];
-    for i in 0..n {
-        inv[fwd[i]] = i;
+    for (i, &f) in fwd.iter().enumerate() {
+        inv[f] = i;
     }
 
-    Ok(Mc64Result {
-        matching: Perm::new_checked(fwd.into_boxed_slice(), inv.into_boxed_slice(), n),
-        scaling,
-        matched,
-    })
+    (fwd, inv)
 }
 
 /// Build the bipartite cost graph from a symmetric sparse matrix.
@@ -357,9 +431,9 @@ fn greedy_initial_matching(graph: &CostGraph) -> MatchingState {
     }
 
     // For rows with no entries, set u[i] = 0
-    for i in 0..n {
-        if u[i] == f64::INFINITY {
-            u[i] = 0.0;
+    for u_i in &mut u {
+        if *u_i == f64::INFINITY {
+            *u_i = 0.0;
         }
     }
 
@@ -388,10 +462,7 @@ fn greedy_initial_matching(graph: &CostGraph) -> MatchingState {
     // If cheapest row is matched to column jj, try length-2 augmentation
     let mut d_col = vec![0.0_f64; n]; // current min reduced cost for column j
     let mut search_from = vec![0usize; n]; // track search position per column
-
-    for j in 0..n {
-        search_from[j] = graph.col_ptr[j];
-    }
+    search_from[..n].copy_from_slice(&graph.col_ptr[..n]);
 
     'col_loop: for j in 0..n {
         if col_match[j] != UNMATCHED {
@@ -411,7 +482,9 @@ fn greedy_initial_matching(graph: &CostGraph) -> MatchingState {
         for idx in (col_start + 1)..col_end {
             let i = graph.row_idx[idx];
             let rc = graph.cost[idx] - u[i];
-            if rc < best_rc || (rc == best_rc && row_match[i] == UNMATCHED && row_match[best_i] != UNMATCHED) {
+            if rc < best_rc
+                || (rc == best_rc && row_match[i] == UNMATCHED && row_match[best_i] != UNMATCHED)
+            {
                 best_rc = rc;
                 best_i = i;
                 best_k = idx;
@@ -468,7 +541,6 @@ fn greedy_initial_matching(graph: &CostGraph) -> MatchingState {
         row_match,
         col_match,
         u,
-        v: vec![0.0; n], // v will be computed later from matched edges
     }
 }
 
@@ -484,6 +556,7 @@ fn dijkstra_augment(root_col: usize, graph: &CostGraph, state: &mut MatchingStat
     // pr[j] = parent column along shortest path tree
     let mut pr = vec![UNMATCHED; n];
     // out[j] = index in graph arrays of the edge entering column j's matched row
+    //          (used for augmenting path traceback — NOT the matched edge in col j)
     let mut out = vec![0usize; n];
     // visited[i] = true if row i has been finalized (in set B)
     let mut visited = vec![false; n];
@@ -588,11 +661,19 @@ fn dijkstra_augment(root_col: usize, graph: &CostGraph, state: &mut MatchingStat
             continue;
         }
 
-        // Compute v[j] for this column from the matched edge
-        let vj = dq0 - graph.cost[out[j]] + state.u[q0];
-
+        // Compute vj from the MATCHED edge (q0, j) in column j.
+        // Note: out[j] points to the discovery edge (q0, scanning_col), not the
+        // matched edge in column j. We must find the actual matched edge cost.
         let col_start_j = graph.col_ptr[j];
         let col_end_j = graph.col_ptr[j + 1];
+        let mut matched_cost = 0.0_f64;
+        for idx in col_start_j..col_end_j {
+            if graph.row_idx[idx] == q0 {
+                matched_cost = graph.cost[idx];
+                break;
+            }
+        }
+        let vj = dq0 - matched_cost + state.u[q0];
 
         for idx in col_start_j..col_end_j {
             let i = graph.row_idx[idx];
@@ -681,6 +762,69 @@ fn symmetrize_scaling(u: &[f64], v: &[f64], col_max_log: &[f64]) -> Vec<f64> {
     }
 
     scaling
+}
+
+/// Enforce the scaling bound |s_i * a_ij * s_j| <= 1 for all stored entries.
+///
+/// When the dual variables from the matching algorithm don't perfectly satisfy
+/// feasibility (e.g., due to greedy initialization without column dual tracking),
+/// complementary slackness can produce scaling factors that violate the bound.
+/// This function iteratively reduces scaling factors to enforce the constraint.
+///
+/// Works on the upper-triangular input matrix, handling symmetry.
+/// Convergence is guaranteed since scaling factors only decrease.
+fn enforce_scaling_bound(matrix: &SparseColMat<usize, f64>, scaling: &mut [f64]) {
+    let n = matrix.nrows();
+    let symbolic = matrix.symbolic();
+    let values = matrix.val();
+    let col_ptrs = symbolic.col_ptr();
+    let row_indices = symbolic.row_idx();
+
+    // Iterate until convergence (typically 1-2 passes)
+    for _iter in 0..10 {
+        let mut changed = false;
+
+        // For each row i, compute max_j |a_ij * s_j| over all entries
+        // Then enforce s_i <= 1 / max_j(|a_ij| * s_j)
+        let mut row_max = vec![0.0_f64; n];
+
+        for j in 0..n {
+            let start = col_ptrs[j];
+            let end = col_ptrs[j + 1];
+            for k in start..end {
+                let i = row_indices[k];
+                let abs_val = values[k].abs();
+                if abs_val == 0.0 {
+                    continue;
+                }
+                let sj_contrib = abs_val * scaling[j];
+                if sj_contrib > row_max[i] {
+                    row_max[i] = sj_contrib;
+                }
+                if i != j {
+                    let si_contrib = abs_val * scaling[i];
+                    if si_contrib > row_max[j] {
+                        row_max[j] = si_contrib;
+                    }
+                }
+            }
+        }
+
+        // Cap scaling factors where needed
+        for i in 0..n {
+            if row_max[i] > 0.0 {
+                let s_max = 1.0 / row_max[i];
+                if scaling[i] > s_max * (1.0 + 1e-12) {
+                    scaling[i] = s_max;
+                    changed = true;
+                }
+            }
+        }
+
+        if !changed {
+            break;
+        }
+    }
 }
 
 /// Apply Duff-Pralet correction for unmatched indices in structurally singular matrices.
@@ -817,11 +961,16 @@ mod tests {
     /// [2  5  1]
     /// [0  1  3]
     fn make_3x3_test() -> SparseColMat<usize, f64> {
-        make_upper_tri(3, &[
-            (0, 0, 4.0), (0, 1, 2.0),
-            (1, 1, 5.0), (1, 2, 1.0),
-            (2, 2, 3.0),
-        ])
+        make_upper_tri(
+            3,
+            &[
+                (0, 0, 4.0),
+                (0, 1, 2.0),
+                (1, 1, 5.0),
+                (1, 2, 1.0),
+                (2, 2, 3.0),
+            ],
+        )
     }
 
     // ---- T004: build_cost_graph tests ----
@@ -869,7 +1018,9 @@ mod tests {
                     assert!(
                         graph.cost[idx].abs() < 1e-12,
                         "diagonal ({},{}) cost should be ~0, got {}",
-                        j, j, graph.cost[idx]
+                        j,
+                        j,
+                        graph.cost[idx]
                     );
                 }
             }
@@ -883,12 +1034,12 @@ mod tests {
 
         // Both diagonals should be present
         let mut has_diag = [false; 2];
-        for j in 0..2 {
+        for (j, diag) in has_diag.iter_mut().enumerate() {
             let col_start = graph.col_ptr[j];
             let col_end = graph.col_ptr[j + 1];
             for idx in col_start..col_end {
                 if graph.row_idx[idx] == j {
-                    has_diag[j] = true;
+                    *diag = true;
                 }
             }
         }
@@ -899,11 +1050,16 @@ mod tests {
     #[test]
     fn test_build_cost_graph_symmetric_expansion() {
         // Upper triangle only: entries (0,1) and (1,2)
-        let matrix = make_upper_tri(3, &[
-            (0, 0, 1.0), (0, 1, 2.0),
-            (1, 1, 3.0), (1, 2, 4.0),
-            (2, 2, 5.0),
-        ]);
+        let matrix = make_upper_tri(
+            3,
+            &[
+                (0, 0, 1.0),
+                (0, 1, 2.0),
+                (1, 1, 3.0),
+                (1, 2, 4.0),
+                (2, 2, 5.0),
+            ],
+        );
         let graph = build_cost_graph(&matrix);
 
         // Check that (1,0) and (2,1) appear in the expanded graph
@@ -915,7 +1071,10 @@ mod tests {
 
         assert!(has_entry(0, 1), "symmetric entry (1,0) should exist");
         assert!(has_entry(1, 0), "entry (0,1) should exist");
-        assert!(has_entry(2, 1), "symmetric entry (1,2) should exist in col 2");
+        assert!(
+            has_entry(2, 1),
+            "symmetric entry (1,2) should exist in col 2"
+        );
         assert!(has_entry(1, 2), "entry (2,1) should exist in col 1");
     }
 
@@ -924,18 +1083,28 @@ mod tests {
     #[test]
     fn test_greedy_matching_4x4() {
         // 4x4 matrix where greedy can find at least 3 matches
-        let matrix = make_upper_tri(4, &[
-            (0, 0, 10.0), (0, 1, 1.0),
-            (1, 1, 8.0), (1, 2, 2.0),
-            (2, 2, 6.0), (2, 3, 3.0),
-            (3, 3, 5.0),
-        ]);
+        let matrix = make_upper_tri(
+            4,
+            &[
+                (0, 0, 10.0),
+                (0, 1, 1.0),
+                (1, 1, 8.0),
+                (1, 2, 2.0),
+                (2, 2, 6.0),
+                (2, 3, 3.0),
+                (3, 3, 5.0),
+            ],
+        );
         let graph = build_cost_graph(&matrix);
         let state = greedy_initial_matching(&graph);
 
         // Count matched
         let matched_count = state.row_match.iter().filter(|&&m| m != UNMATCHED).count();
-        assert!(matched_count >= 3, "greedy should match at least 3 of 4, got {}", matched_count);
+        assert!(
+            matched_count >= 3,
+            "greedy should match at least 3 of 4, got {}",
+            matched_count
+        );
 
         // Verify dual feasibility: u[i] + v[j] <= c[i,j] for all edges
         // Note: v is not yet computed in greedy, but u should be valid
@@ -968,11 +1137,17 @@ mod tests {
     #[test]
     fn test_dijkstra_augment_3x3() {
         // 3x3 with one unmatched column; verify augmenting path
-        let matrix = make_upper_tri(3, &[
-            (0, 0, 5.0), (0, 1, 3.0), (0, 2, 1.0),
-            (1, 1, 4.0), (1, 2, 2.0),
-            (2, 2, 6.0),
-        ]);
+        let matrix = make_upper_tri(
+            3,
+            &[
+                (0, 0, 5.0),
+                (0, 1, 3.0),
+                (0, 2, 1.0),
+                (1, 1, 4.0),
+                (1, 2, 2.0),
+                (2, 2, 6.0),
+            ],
+        );
         let graph = build_cost_graph(&matrix);
         let mut state = greedy_initial_matching(&graph);
 
@@ -981,10 +1156,8 @@ mod tests {
         // Try to augment each unmatched column
         let mut augmented = false;
         for j in 0..3 {
-            if state.col_match[j] == UNMATCHED {
-                if dijkstra_augment(j, &graph, &mut state) {
-                    augmented = true;
-                }
+            if state.col_match[j] == UNMATCHED && dijkstra_augment(j, &graph, &mut state) {
+                augmented = true;
             }
         }
 
@@ -993,7 +1166,10 @@ mod tests {
         // Should have found augmenting path if initial matching wasn't perfect
         if initial_matched < 3 {
             assert!(augmented, "should find augmenting path");
-            assert!(final_matched > initial_matched, "matching size should increase");
+            assert!(
+                final_matched > initial_matched,
+                "matching size should increase"
+            );
         }
 
         // Dual feasibility: u[i] should remain finite
@@ -1018,7 +1194,9 @@ mod tests {
             assert!(
                 (scaling[i] - expected).abs() < 1e-12,
                 "scaling[{}] = {}, expected {}",
-                i, scaling[i], expected
+                i,
+                scaling[i],
+                expected
             );
         }
     }
@@ -1042,19 +1220,15 @@ mod tests {
     #[test]
     fn test_mc64_diagonal_identity() {
         // Diagonal matrix: identity matching, scaling = 1/sqrt(diag)
-        let matrix = make_upper_tri(3, &[
-            (0, 0, 4.0),
-            (1, 1, 9.0),
-            (2, 2, 1.0),
-        ]);
+        let matrix = make_upper_tri(3, &[(0, 0, 4.0), (1, 1, 9.0), (2, 2, 1.0)]);
 
         let result = mc64_matching(&matrix, Mc64Job::MaximumProduct).unwrap();
         assert_eq!(result.matched, 3);
 
         // Matching should be identity
         let (fwd, _) = result.matching.as_ref().arrays();
-        for i in 0..3 {
-            assert_eq!(fwd[i], i, "diagonal matrix matching should be identity");
+        for (i, &f) in fwd.iter().enumerate() {
+            assert_eq!(f, i, "diagonal matrix matching should be identity");
         }
 
         // All scaling factors positive and finite
@@ -1071,12 +1245,18 @@ mod tests {
         // [-1  -3   2   0]
         // [ 0   2   1  -1]
         // [ 0   0  -1  -4]
-        let matrix = make_upper_tri(4, &[
-            (0, 0, 2.0), (0, 1, -1.0),
-            (1, 1, -3.0), (1, 2, 2.0),
-            (2, 2, 1.0), (2, 3, -1.0),
-            (3, 3, -4.0),
-        ]);
+        let matrix = make_upper_tri(
+            4,
+            &[
+                (0, 0, 2.0),
+                (0, 1, -1.0),
+                (1, 1, -3.0),
+                (1, 2, 2.0),
+                (2, 2, 1.0),
+                (2, 3, -1.0),
+                (3, 3, -4.0),
+            ],
+        );
 
         let result = mc64_matching(&matrix, Mc64Job::MaximumProduct).unwrap();
         assert_eq!(result.matched, 4);
@@ -1093,13 +1273,20 @@ mod tests {
         // [ 1  0  5  0  0]
         // [ 1  0  0 -2  0]
         // [ 1  0  0  0  4]
-        let matrix = make_upper_tri(5, &[
-            (0, 0, 10.0), (0, 1, 1.0), (0, 2, 1.0), (0, 3, 1.0), (0, 4, 1.0),
-            (1, 1, -3.0),
-            (2, 2, 5.0),
-            (3, 3, -2.0),
-            (4, 4, 4.0),
-        ]);
+        let matrix = make_upper_tri(
+            5,
+            &[
+                (0, 0, 10.0),
+                (0, 1, 1.0),
+                (0, 2, 1.0),
+                (0, 3, 1.0),
+                (0, 4, 1.0),
+                (1, 1, -3.0),
+                (2, 2, 5.0),
+                (3, 3, -2.0),
+                (4, 4, 4.0),
+            ],
+        );
 
         let result = mc64_matching(&matrix, Mc64Job::MaximumProduct).unwrap();
         assert_eq!(result.matched, 5);
@@ -1118,10 +1305,7 @@ mod tests {
 
     #[test]
     fn test_mc64_trivial_2x2() {
-        let matrix = make_upper_tri(2, &[
-            (0, 0, 3.0), (0, 1, 1.0),
-            (1, 1, 5.0),
-        ]);
+        let matrix = make_upper_tri(2, &[(0, 0, 3.0), (0, 1, 1.0), (1, 1, 5.0)]);
         let result = mc64_matching(&matrix, Mc64Job::MaximumProduct).unwrap();
         assert_eq!(result.matched, 2);
 
@@ -1191,7 +1375,11 @@ mod tests {
                 assert!(
                     scaled <= 1.0 + 1e-10,
                     "|s[{}]*a[{},{}]*s[{}]| = {} > 1.0",
-                    i, i, j, j, scaled
+                    i,
+                    i,
+                    j,
+                    j,
+                    scaled
                 );
                 // Track row max (from upper triangle)
                 if scaled > row_max[i] {
@@ -1204,13 +1392,9 @@ mod tests {
         }
 
         // Property 2: row max >= 0.75 (SPRAL relaxed criterion)
-        for i in 0..n {
-            if row_max[i] > 0.0 {
-                assert!(
-                    row_max[i] >= 0.75 - 1e-10,
-                    "row_max[{}] = {} < 0.75",
-                    i, row_max[i]
-                );
+        for (i, &rm) in row_max.iter().enumerate() {
+            if rm > 0.0 {
+                assert!(rm >= 0.75 - 1e-10, "row_max[{}] = {} < 0.75", i, rm);
             }
         }
 
@@ -1230,5 +1414,124 @@ mod tests {
 
         // Property 5: matching decomposes into singletons + 2-cycles only
         let _ = count_cycles(fwd); // panics if longer cycles found
+    }
+
+    // ---- T018: duff_pralet_correction tests ----
+
+    #[test]
+    fn test_duff_pralet_4x4_singular() {
+        // 4x4 structurally singular: row/col 3 has no matching
+        // [4  2  0  1]
+        // [2  5  1  0]
+        // [0  1  3  0]
+        // [1  0  0  0]  <- no diagonal, sparse connections
+        let matrix = make_upper_tri(
+            4,
+            &[
+                (0, 0, 4.0),
+                (0, 1, 2.0),
+                (0, 3, 1.0),
+                (1, 1, 5.0),
+                (1, 2, 1.0),
+                (2, 2, 3.0),
+            ],
+        );
+
+        let mut scaling = vec![0.5, 0.4, 0.6, 0.0]; // pre-set for matched
+        let is_matched = vec![true, true, true, false]; // row 3 unmatched
+
+        duff_pralet_correction(&matrix, &mut scaling, &is_matched);
+
+        // Row 3 connects to row 0 via entry (0,3)=1.0
+        // scaling[3] = 1.0 / max_k |a[3,k] * scaling[k]| over matched k
+        // Only connection is (0,3)=1.0, scaling[0]=0.5
+        // So scaling[3] = 1.0 / |1.0 * 0.5| = 2.0
+        assert!(scaling[3] > 0.0, "unmatched scaling should be positive");
+        assert!(scaling[3].is_finite(), "unmatched scaling should be finite");
+
+        // Matched scaling should be unchanged
+        assert!((scaling[0] - 0.5).abs() < 1e-12);
+        assert!((scaling[1] - 0.4).abs() < 1e-12);
+        assert!((scaling[2] - 0.6).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_duff_pralet_isolated_row() {
+        // Row with no connections to matched set → scaling = 1.0
+        let matrix = make_upper_tri(
+            3,
+            &[
+                (0, 0, 4.0),
+                (1, 1, 5.0),
+                // No entries connecting row 2 to rows 0 or 1
+                (2, 2, 3.0),
+            ],
+        );
+
+        let mut scaling = vec![0.5, 0.4, 0.0];
+        // Only diagonal entries; if row 2 is unmatched but its only entry is (2,2),
+        // and column 2 is unmatched too, then no matched connections
+        let is_matched = vec![true, true, false];
+
+        duff_pralet_correction(&matrix, &mut scaling, &is_matched);
+
+        // Row 2 has no connections to matched indices (only diagonal which is unmatched)
+        assert_eq!(
+            scaling[2], 1.0,
+            "isolated unmatched row should get scaling 1.0"
+        );
+    }
+
+    #[test]
+    fn test_duff_pralet_all_positive() {
+        let matrix = make_upper_tri(
+            4,
+            &[
+                (0, 0, 4.0),
+                (0, 1, 2.0),
+                (0, 3, 1.0),
+                (1, 1, 5.0),
+                (1, 2, 1.0),
+                (2, 2, 3.0),
+            ],
+        );
+
+        let mut scaling = vec![0.5, 0.4, 0.6, 0.0];
+        let is_matched = vec![true, true, true, false];
+
+        duff_pralet_correction(&matrix, &mut scaling, &is_matched);
+
+        for (i, &s) in scaling.iter().enumerate() {
+            assert!(s > 0.0, "scaling[{}] = {} should be positive", i, s);
+            assert!(s.is_finite(), "scaling[{}] = {} should be finite", i, s);
+        }
+    }
+
+    // ---- T019 (unit part): structurally singular mc64_matching ----
+
+    #[test]
+    fn test_mc64_singular_zero_diagonal() {
+        // Structurally singular: no diagonal entries, forcing partial matching
+        // [0  5  0  0]
+        // [5  0  0  0]
+        // [0  0  0  3]
+        // [0  0  3  0]
+        let matrix = make_upper_tri(4, &[(0, 1, 5.0), (2, 3, 3.0)]);
+
+        let result = mc64_matching(&matrix, Mc64Job::MaximumProduct).unwrap();
+
+        // Should find matching (even if not perfect)
+        for (i, &s) in result.scaling.iter().enumerate() {
+            assert!(s > 0.0, "scaling[{}] should be positive", i);
+            assert!(s.is_finite(), "scaling[{}] should be finite", i);
+        }
+
+        // Matching should be valid permutation
+        let (fwd, _) = result.matching.as_ref().arrays();
+        let mut seen = [false; 4];
+        for &f in fwd {
+            assert!(!seen[f], "duplicate in matching");
+            seen[f] = true;
+        }
     }
 }

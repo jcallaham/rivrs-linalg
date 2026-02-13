@@ -156,11 +156,7 @@ pub fn metis_ordering(
 /// Construct an identity permutation of dimension `n`.
 fn identity_perm(n: usize) -> Perm<usize> {
     let id: Vec<usize> = (0..n).collect();
-    Perm::new_checked(
-        id.clone().into_boxed_slice(),
-        id.into_boxed_slice(),
-        n,
-    )
+    Perm::new_checked(id.clone().into_boxed_slice(), id.into_boxed_slice(), n)
 }
 
 /// Extract CSR adjacency arrays (xadj, adjncy) from a symmetric sparse matrix.
