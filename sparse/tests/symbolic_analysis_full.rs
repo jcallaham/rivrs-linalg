@@ -9,12 +9,8 @@
 //! The `--test-threads=1` flag is **required** to avoid OOM when multiple tests
 //! load large matrices concurrently.
 //!
-//! # Ordering strategies
-//!
-//! - **AMD tests**: Use `SymmetricOrdering::Amd` with a dimension cap
-//!   (`MAX_DIM_FOR_AMD`) because AMD produces poor orderings for large matrices.
-//! - **METIS tests**: Use `metis_ordering()` + `SymmetricOrdering::Custom` with
-//!   no dimension cap. METIS handles all matrix sizes well.
+//! All tests use METIS ordering via `metis_ordering()` + `SymmetricOrdering::Custom`.
+//! METIS handles all matrix sizes well with no dimension cap needed.
 //!
 //! # Extracting the full SuiteSparse collection
 //!
@@ -46,17 +42,6 @@ use rivrs_sparse::io::registry;
 /// Minimum number of SuiteSparse matrices to consider the full collection present.
 const MIN_FULL_COLLECTION_SIZE: usize = 20;
 
-/// Maximum matrix dimension for AMD-based tests.
-///
-/// AMD produces catastrophically poor orderings (10-20× more fill than METIS)
-/// for many matrices above this size, causing symbolic analysis to take minutes
-/// and allocate gigabytes. This matches the observation that SPRAL uses METIS
-/// by default, not AMD.
-///
-/// This cap applies only to AMD tests. METIS tests have no dimension cap —
-/// use `test_analyze_full_suitesparse_metis` for the uncapped version.
-const MAX_DIM_FOR_AMD: usize = 30_000;
-
 /// Load the SuiteSparse metadata entries (lightweight, no matrix data).
 fn suitesparse_metadata() -> Vec<registry::MatrixMetadata> {
     let all_meta = registry::load_registry().expect("failed to load metadata.json");
@@ -64,133 +49,6 @@ fn suitesparse_metadata() -> Vec<registry::MatrixMetadata> {
         .into_iter()
         .filter(|m| m.source == "suitesparse")
         .collect()
-}
-
-/// Analyze all SuiteSparse matrices (within dimension cap) with AMD ordering.
-///
-/// Validates valid dimension, positive predicted_nnz, valid etree length, and
-/// prints a diagnostic summary table.
-#[test]
-#[ignore = "requires full SuiteSparse collection"]
-fn test_analyze_full_suitesparse_collection() {
-    let entries = suitesparse_metadata();
-
-    let mut loaded = 0usize;
-    let mut success_count = 0usize;
-    let mut fail_count = 0usize;
-    let mut skipped_parse = Vec::new();
-    let mut skipped_large = 0usize;
-
-    eprintln!(
-        "\n{:<30} {:>8} {:>12} {:>10} {:>12}",
-        "Matrix", "Dim", "Pred NNZ", "Mode", "Supernodes"
-    );
-    eprintln!("{}", "-".repeat(76));
-
-    for meta in &entries {
-        if meta.size > MAX_DIM_FOR_AMD {
-            skipped_large += 1;
-            continue;
-        }
-
-        let test_matrix = match registry::load_test_matrix_from_entry(meta) {
-            Ok(Some(tm)) => tm,
-            Ok(None) => continue, // .mtx not on disk
-            Err(e) => {
-                skipped_parse.push(format!("{}: {}", meta.name, e));
-                continue;
-            }
-        };
-        loaded += 1;
-
-        match AptpSymbolic::analyze(test_matrix.matrix.symbolic(), SymmetricOrdering::Amd) {
-            Ok(sym) => {
-                assert_eq!(
-                    sym.nrows(),
-                    meta.size,
-                    "dimension mismatch for '{}'",
-                    meta.name
-                );
-                assert!(
-                    sym.predicted_nnz() > 0,
-                    "predicted_nnz should be > 0 for '{}'",
-                    meta.name
-                );
-                assert_eq!(
-                    sym.etree().len(),
-                    meta.size,
-                    "etree length mismatch for '{}'",
-                    meta.name
-                );
-
-                let mode = if sym.is_supernodal() {
-                    "supernodal"
-                } else {
-                    "simplicial"
-                };
-                let sn = sym
-                    .n_supernodes()
-                    .map(|n| n.to_string())
-                    .unwrap_or_else(|| "-".to_string());
-
-                eprintln!(
-                    "{:<30} {:>8} {:>12} {:>10} {:>12}",
-                    meta.name,
-                    sym.nrows(),
-                    sym.predicted_nnz(),
-                    mode,
-                    sn,
-                );
-
-                success_count += 1;
-            }
-            Err(e) => {
-                eprintln!("  FAIL: {}: {}", meta.name, e);
-                fail_count += 1;
-            }
-        }
-        // Matrix data is dropped here, freeing memory before the next iteration
-    }
-
-    if skipped_large > 0 {
-        eprintln!(
-            "\nSkipped {} matrices with dim > {} (AMD ordering produces excessive fill; \
-             waiting for METIS in Phase 4.1)",
-            skipped_large, MAX_DIM_FOR_AMD,
-        );
-    }
-
-    if !skipped_parse.is_empty() {
-        eprintln!(
-            "\nSkipped {} matrices due to parse errors:",
-            skipped_parse.len()
-        );
-        for s in &skipped_parse {
-            eprintln!("  {}", s);
-        }
-    }
-
-    if loaded < MIN_FULL_COLLECTION_SIZE {
-        eprintln!(
-            "\nSkipping assertions: only {} SuiteSparse matrices loaded (need >= {}). \
-             Extract the full collection to test-data/suitesparse/.",
-            loaded, MIN_FULL_COLLECTION_SIZE,
-        );
-        return;
-    }
-
-    eprintln!(
-        "\nSummary: {} passed, {} failed, {} parse-skipped, {} too-large-for-AMD out of {} loaded",
-        success_count,
-        fail_count,
-        skipped_parse.len(),
-        skipped_large,
-        loaded
-    );
-    assert_eq!(
-        fail_count, 0,
-        "all loadable SuiteSparse matrices should analyze successfully"
-    );
 }
 
 /// Validate supernode column range partitioning and assembly tree validity.
@@ -205,22 +63,21 @@ fn test_supernodal_structure_full_suitesparse() {
 
     let mut loaded = 0usize;
     let mut supernodal_count = 0usize;
-    let mut skipped_large = 0usize;
 
     for meta in &entries {
-        if meta.size > MAX_DIM_FOR_AMD {
-            skipped_large += 1;
-            continue;
-        }
-
         let test_matrix = match registry::load_test_matrix_from_entry(meta) {
             Ok(Some(tm)) => tm,
             Ok(None) | Err(_) => continue,
         };
         loaded += 1;
 
-        let sym = AptpSymbolic::analyze(test_matrix.matrix.symbolic(), SymmetricOrdering::Amd)
-            .unwrap_or_else(|e| panic!("analysis should succeed for '{}': {}", meta.name, e));
+        let perm = metis_ordering(test_matrix.matrix.symbolic())
+            .unwrap_or_else(|e| panic!("METIS ordering failed for '{}': {}", meta.name, e));
+        let sym = AptpSymbolic::analyze(
+            test_matrix.matrix.symbolic(),
+            SymmetricOrdering::Custom(perm.as_ref()),
+        )
+        .unwrap_or_else(|e| panic!("analysis should succeed for '{}': {}", meta.name, e));
         drop(test_matrix); // Free matrix memory before validation
 
         if !sym.is_supernodal() {
@@ -304,13 +161,6 @@ fn test_supernodal_structure_full_suitesparse() {
         }
     }
 
-    if skipped_large > 0 {
-        eprintln!(
-            "Skipped {} matrices with dim > {} (waiting for METIS in Phase 4.1)",
-            skipped_large, MAX_DIM_FOR_AMD,
-        );
-    }
-
     if loaded < MIN_FULL_COLLECTION_SIZE {
         eprintln!(
             "Skipping: only {} SuiteSparse matrices loaded (need >= {}).",
@@ -337,22 +187,21 @@ fn test_pivot_buffer_sanity_full_suitesparse() {
     let entries = suitesparse_metadata();
 
     let mut loaded = 0usize;
-    let mut skipped_large = 0usize;
 
     for meta in &entries {
-        if meta.size > MAX_DIM_FOR_AMD {
-            skipped_large += 1;
-            continue;
-        }
-
         let test_matrix = match registry::load_test_matrix_from_entry(meta) {
             Ok(Some(tm)) => tm,
             Ok(None) | Err(_) => continue,
         };
         loaded += 1;
 
-        let sym = AptpSymbolic::analyze(test_matrix.matrix.symbolic(), SymmetricOrdering::Amd)
-            .unwrap_or_else(|e| panic!("analysis failed for '{}': {}", meta.name, e));
+        let perm = metis_ordering(test_matrix.matrix.symbolic())
+            .unwrap_or_else(|e| panic!("METIS ordering failed for '{}': {}", meta.name, e));
+        let sym = AptpSymbolic::analyze(
+            test_matrix.matrix.symbolic(),
+            SymmetricOrdering::Custom(perm.as_ref()),
+        )
+        .unwrap_or_else(|e| panic!("analysis failed for '{}': {}", meta.name, e));
         drop(test_matrix); // Free matrix memory
 
         // Non-negative buffer values (usize is always >= 0, but check non-empty)
@@ -393,13 +242,6 @@ fn test_pivot_buffer_sanity_full_suitesparse() {
         }
     }
 
-    if skipped_large > 0 {
-        eprintln!(
-            "Skipped {} matrices with dim > {} (waiting for METIS in Phase 4.1)",
-            skipped_large, MAX_DIM_FOR_AMD,
-        );
-    }
-
     if loaded < MIN_FULL_COLLECTION_SIZE {
         eprintln!(
             "Skipping: only {} SuiteSparse matrices loaded (need >= {}).",
@@ -408,11 +250,10 @@ fn test_pivot_buffer_sanity_full_suitesparse() {
     }
 }
 
-/// Analyze all SuiteSparse matrices with METIS ordering (no dimension cap).
+/// Analyze all SuiteSparse matrices with METIS ordering.
 ///
-/// Unlike the AMD tests, METIS handles all matrix sizes well. This test verifies
-/// that every matrix in the full collection completes symbolic analysis successfully
-/// with METIS ordering, and reports fill comparison against AMD where applicable.
+/// Verifies that every matrix in the full collection completes symbolic analysis
+/// successfully with METIS ordering. No dimension cap needed.
 #[test]
 #[ignore = "requires full SuiteSparse collection"]
 fn test_analyze_full_suitesparse_metis() {
@@ -425,8 +266,8 @@ fn test_analyze_full_suitesparse_metis() {
     let mut skipped_parse = Vec::new();
 
     eprintln!(
-        "\n{:<30} {:>8} {:>14} {:>14} {:>8}",
-        "Matrix", "Dim", "METIS NNZ", "AMD NNZ", "Winner"
+        "\n{:<30} {:>8} {:>14} {:>10} {:>12}",
+        "Matrix", "Dim", "Pred NNZ", "Mode", "Supernodes"
     );
     eprintln!("{}", "-".repeat(80));
 
@@ -474,32 +315,23 @@ fn test_analyze_full_suitesparse_metis() {
                     meta.name
                 );
 
-                let metis_nnz = sym.predicted_nnz();
-
-                // Compare with AMD (only if within AMD dimension cap)
-                let (amd_str, winner) = if meta.size <= MAX_DIM_FOR_AMD {
-                    match AptpSymbolic::analyze(
-                        test_matrix.matrix.symbolic(),
-                        SymmetricOrdering::Amd,
-                    ) {
-                        Ok(amd_sym) => {
-                            let amd_nnz = amd_sym.predicted_nnz();
-                            let w = if metis_nnz <= amd_nnz { "METIS" } else { "AMD" };
-                            (format!("{}", amd_nnz), w.to_string())
-                        }
-                        Err(_) => ("(fail)".to_string(), "-".to_string()),
-                    }
+                let mode = if sym.is_supernodal() {
+                    "supernodal"
                 } else {
-                    ("(too large)".to_string(), "METIS*".to_string())
+                    "simplicial"
                 };
+                let sn = sym
+                    .n_supernodes()
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|| "-".to_string());
 
                 eprintln!(
-                    "{:<30} {:>8} {:>14} {:>14} {:>8}",
+                    "{:<30} {:>8} {:>14} {:>10} {:>12}",
                     meta.name,
                     sym.nrows(),
-                    metis_nnz,
-                    amd_str,
-                    winner,
+                    sym.predicted_nnz(),
+                    mode,
+                    sn,
                 );
 
                 success_count += 1;

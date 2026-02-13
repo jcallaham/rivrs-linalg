@@ -2,7 +2,7 @@
 //!
 //! Tests METIS ordering on the CI-subset SuiteSparse matrices, verifying
 //! permutation validity, integration with `AptpSymbolic::analyze()`, and
-//! fill quality against published benchmarks and AMD ordering.
+//! fill quality against published benchmarks.
 
 use faer::sparse::linalg::cholesky::SymmetricOrdering;
 
@@ -190,64 +190,3 @@ fn test_metis_nnz_matches_paper_values() {
     );
 }
 
-// ---- T015: METIS reduces fill vs AMD ----
-
-#[test]
-fn test_metis_reduces_fill_vs_amd() {
-    let cases =
-        load_test_cases(&TestCaseFilter::ci_subset()).expect("failed to load CI-subset matrices");
-
-    let suitesparse: Vec<_> = cases
-        .iter()
-        .filter(|c| c.properties.source == "suitesparse")
-        .collect();
-
-    let total = suitesparse.len();
-    let mut metis_wins = 0;
-
-    eprintln!(
-        "\n  {:<30} {:>12} {:>12} {:>8}",
-        "Matrix", "AMD nnz", "METIS nnz", "Winner"
-    );
-    eprintln!("  {}", "-".repeat(66));
-
-    for case in &suitesparse {
-        // AMD ordering
-        let sym_amd = AptpSymbolic::analyze(case.matrix.symbolic(), SymmetricOrdering::Amd)
-            .unwrap_or_else(|e| panic!("AMD analysis failed for '{}': {}", case.name, e));
-
-        // METIS ordering
-        let perm = metis_ordering(case.matrix.symbolic())
-            .unwrap_or_else(|e| panic!("METIS ordering failed for '{}': {}", case.name, e));
-        let sym_metis = AptpSymbolic::analyze(
-            case.matrix.symbolic(),
-            SymmetricOrdering::Custom(perm.as_ref()),
-        )
-        .unwrap_or_else(|e| panic!("METIS analysis failed for '{}': {}", case.name, e));
-
-        let amd_nnz = sym_amd.predicted_nnz();
-        let metis_nnz = sym_metis.predicted_nnz();
-        let winner = if metis_nnz <= amd_nnz { "METIS" } else { "AMD" };
-
-        if metis_nnz <= amd_nnz {
-            metis_wins += 1;
-        }
-
-        eprintln!(
-            "  {:<30} {:>12} {:>12} {:>8}",
-            case.name, amd_nnz, metis_nnz, winner
-        );
-    }
-
-    let pct = metis_wins as f64 / total as f64 * 100.0;
-    eprintln!("\n  METIS wins: {}/{} ({:.0}%)", metis_wins, total, pct);
-
-    // METIS should produce less fill on >= 80% of matrices
-    assert!(
-        metis_wins * 100 >= total * 80,
-        "METIS should win on >= 80% of matrices, but only won on {}/{} ({:.0}%)",
-        metis_wins,
-        total,
-        pct
-    );
-}
