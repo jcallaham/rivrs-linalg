@@ -1391,10 +1391,15 @@ mod tests {
             }
         }
 
-        // Property 2: row max >= 0.75 (SPRAL relaxed criterion)
+        // Property 2: row max ≈ 1.0 (SPRAL tolerance: 5e-14, we use 1e-12)
         for (i, &rm) in row_max.iter().enumerate() {
             if rm > 0.0 {
-                assert!(rm >= 0.75 - 1e-10, "row_max[{}] = {} < 0.75", i, rm);
+                assert!(
+                    rm >= 1.0 - 1e-12,
+                    "row_max[{}] = {} < 1.0 - 1e-12 (SPRAL expects ~1.0)",
+                    i,
+                    rm
+                );
             }
         }
 

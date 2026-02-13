@@ -6,7 +6,7 @@
 //! # SPRAL Scaling Properties
 //!
 //! 1. All entries: `|s_i * a_ij * s_j| <= 1.0`
-//! 2. Row maxima: `max_j |s_i * a_ij * s_j| >= 0.75`
+//! 2. Row maxima: `max_j |s_i * a_ij * s_j| ≈ 1.0` (nonsingular), `median >= 0.5` (singular)
 //! 3. Matched diagonal: `|s_i * a_{i,σ(i)} * s_{σ(i)}| ≈ 1.0`
 //! 4. Scaling factors: positive and finite
 //! 5. Matching: singletons + 2-cycles only
@@ -63,12 +63,14 @@ fn verify_spral_properties(name: &str, matrix: &SparseColMat<usize, f64>, result
         }
     }
 
-    // Property 2: row max >= 0.75 for rows with nonzero entries
+    // Property 2: row max ≈ 1.0 for nonsingular matrices (SPRAL tolerance: 5e-14)
+    // For full-rank matrices with a perfect matching, every row has a matched entry
+    // that scales to exactly 1.0, so row_max = 1.0 for all rows.
     for (i, &rm) in row_max.iter().enumerate() {
         if rm > 0.0 {
             assert!(
-                rm >= 0.75 - 1e-10,
-                "{}: row_max[{}] = {:.6e} < 0.75",
+                rm >= 1.0 - 1e-12,
+                "{}: row_max[{}] = {:.6e} < 1.0 - 1e-12 (SPRAL expects ~1.0)",
                 name,
                 i,
                 rm
@@ -515,16 +517,18 @@ fn test_mc64_suitesparse_ci_subset() {
         );
 
         // (d) Row max quality check
-        // For full-rank matrices, matched entries scale close to 1.0, so row_max >= 0.75.
+        // For full-rank matrices, the optimal matching ensures each matched entry
+        // scales to exactly 1.0. Since every row has a matched entry and all scaled
+        // entries are bounded by 1.0, row_max = 1.0 for all rows. We use SPRAL's
+        // strict tolerance (5e-14) as primary check with 1e-12 for floating-point margin.
         // For structurally singular matrices (matched < n), some rows may have weaker
-        // scaling due to the partial matching. We check matched entries specifically
-        // and use a relaxed threshold for the overall row_max.
+        // scaling due to the partial matching — relaxed threshold applies.
         if result.matched == n {
             for (i, &rm) in row_max.iter().enumerate() {
                 if rm > 0.0 {
                     assert!(
-                        rm >= 0.75 - 1e-10,
-                        "'{}': row_max[{}] = {:.6e} < 0.75",
+                        rm >= 1.0 - 1e-12,
+                        "'{}': row_max[{}] = {:.6e} < 1.0 - 1e-12 (SPRAL expects ~1.0)",
                         case.name,
                         i,
                         rm
@@ -695,13 +699,13 @@ fn test_mc64_suitesparse_full() {
             max_violation
         );
 
-        // Row max >= 0.75 (for full-rank); relaxed for singular
+        // Row max ≈ 1.0 (for full-rank); relaxed for singular
         if result.matched == n {
             for (i, &rm) in row_max.iter().enumerate() {
                 if rm > 0.0 {
                     assert!(
-                        rm >= 0.75 - 1e-10,
-                        "'{}': row_max[{}] = {:.6e} < 0.75",
+                        rm >= 1.0 - 1e-12,
+                        "'{}': row_max[{}] = {:.6e} < 1.0 - 1e-12 (SPRAL expects ~1.0)",
                         case.name,
                         i,
                         rm
