@@ -160,13 +160,16 @@ fn test_metis_nnz_matches_paper_values() {
             case.name, reference_nnz, our_nnz, ratio
         );
 
-        // Within 20% tolerance (0.80 to 1.20) — accounts for METIS v4→v5
+        // Within 5x tolerance (0.2 to 5.0) — accounts for METIS v4→v5
         // differences and faer's symbolic prediction vs actual factorization nnz.
-        // Note: Our predicted_nnz can be much larger because Table III reports
-        // nnz from actual factorization while we report symbolic prediction which
-        // includes fill-in from the Cholesky sparsity pattern (which may overestimate
-        // for indefinite matrices that would use delayed pivoting).
-        // We use a wider tolerance: within 5x of the paper value.
+        // Our predicted_nnz can be much larger because Table III reports nnz from
+        // actual factorization while we report the symbolic Cholesky sparsity
+        // pattern (which overestimates for indefinite matrices with delayed pivoting).
+        // Conversely, METIS v5 sometimes finds substantially better orderings than
+        // v4 on PD matrices (e.g., cfd2, ship_003, nd12k), producing lower fill.
+        // NOTE: the SuiteSparse test set contains 31 of the 35 matrices in Table III
+        // and the predicted nnz vs paper values for this set is in the range
+        // (1.0, 1.4) clustered around 1.1, so 5x is generous here.
         assert!(
             (0.2..=5.0).contains(&ratio),
             "'{}' nnz ratio {:.3} outside [0.2, 5.0]: paper={}, ours={}",
@@ -189,4 +192,3 @@ fn test_metis_nnz_matches_paper_values() {
         tested
     );
 }
-

@@ -92,25 +92,15 @@ pub fn metis_ordering(
 
     // Trivial cases: dim 0 or 1 — return identity permutation without calling METIS.
     if n <= 1 {
-        let id: Vec<usize> = (0..n).collect();
-        return Ok(Perm::new_checked(
-            id.clone().into_boxed_slice(),
-            id.into_boxed_slice(),
-            n,
-        ));
+        return Ok(identity_perm(n));
     }
 
     // Extract adjacency structure.
-    let (mut xadj, mut adjncy) = extract_adjacency(matrix);
+    let (mut xadj, mut adjncy) = extract_adjacency(matrix)?;
 
     // If no edges (diagonal matrix), return identity permutation.
     if adjncy.is_empty() {
-        let id: Vec<usize> = (0..n).collect();
-        return Ok(Perm::new_checked(
-            id.clone().into_boxed_slice(),
-            id.into_boxed_slice(),
-            n,
-        ));
+        return Ok(identity_perm(n));
     }
 
     // Set up METIS options: 0-based numbering, defaults for everything else.
@@ -163,6 +153,16 @@ pub fn metis_ordering(
     Ok(Perm::new_checked(fwd, inv, n))
 }
 
+/// Construct an identity permutation of dimension `n`.
+fn identity_perm(n: usize) -> Perm<usize> {
+    let id: Vec<usize> = (0..n).collect();
+    Perm::new_checked(
+        id.clone().into_boxed_slice(),
+        id.into_boxed_slice(),
+        n,
+    )
+}
+
 /// Extract CSR adjacency arrays (xadj, adjncy) from a symmetric sparse matrix.
 ///
 /// Converts the CSC symbolic sparsity pattern into METIS's CSR graph format.
@@ -180,13 +180,20 @@ pub fn metis_ordering(
 /// - `adjncy` has length `xadj[n]` (column indices of neighbors)
 ///
 /// Both arrays use `i32` indices as required by METIS (`idx_t`).
-fn extract_adjacency(matrix: SymbolicSparseColMatRef<'_, usize>) -> (Vec<i32>, Vec<i32>) {
+///
+/// # Errors
+///
+/// Returns [`SparseError::InvalidInput`] if the total number of adjacency entries
+/// exceeds `i32::MAX`.
+fn extract_adjacency(
+    matrix: SymbolicSparseColMatRef<'_, usize>,
+) -> Result<(Vec<i32>, Vec<i32>), SparseError> {
     let n = matrix.nrows();
     let col_ptrs = matrix.col_ptr();
     let row_indices = matrix.row_idx();
 
     // Step 1: Build a symmetric neighbor set for each vertex, excluding diagonal.
-    // Use Vec<Vec<usize>> rather than HashSet to maintain sorted order.
+    // Use Vec<Vec<usize>> rather than HashSet; sorted and deduped in step 2.
     let mut neighbors: Vec<Vec<usize>> = vec![Vec::new(); n];
 
     // The CSC structure gives us column j's row indices.
@@ -208,11 +215,22 @@ fn extract_adjacency(matrix: SymbolicSparseColMatRef<'_, usize>) -> (Vec<i32>, V
         nbrs.dedup();
     }
 
-    // Step 3: Build CSR arrays (xadj, adjncy) with i32 indices.
+    // Step 3: Validate total edge count fits in i32.
+    let total_edges: usize = neighbors.iter().map(|v| v.len()).sum();
+    if total_edges > i32::MAX as usize {
+        return Err(SparseError::InvalidInput {
+            reason: format!(
+                "Total adjacency entries {} exceeds i32::MAX ({}); METIS requires 32-bit indices",
+                total_edges,
+                i32::MAX
+            ),
+        });
+    }
+
+    // Step 4: Build CSR arrays (xadj, adjncy) with i32 indices.
     let mut xadj = Vec::with_capacity(n + 1);
     xadj.push(0i32);
 
-    let total_edges: usize = neighbors.iter().map(|v| v.len()).sum();
     let mut adjncy = Vec::with_capacity(total_edges);
 
     for nbrs in &neighbors {
@@ -222,7 +240,7 @@ fn extract_adjacency(matrix: SymbolicSparseColMatRef<'_, usize>) -> (Vec<i32>, V
         xadj.push(adjncy.len() as i32);
     }
 
-    (xadj, adjncy)
+    Ok((xadj, adjncy))
 }
 
 #[cfg(test)]
@@ -363,7 +381,7 @@ mod tests {
     fn test_adjacency_tridiagonal_3x3() {
         // 3x3 tridiagonal: edges 0-1, 1-2
         let matrix = make_tridiagonal(3);
-        let (xadj, adjncy) = extract_adjacency(matrix.symbolic());
+        let (xadj, adjncy) = extract_adjacency(matrix.symbolic()).unwrap();
 
         // Expected CSR adjacency (no diagonal):
         // vertex 0: neighbors [1]
@@ -385,7 +403,7 @@ mod tests {
     fn test_adjacency_arrow_5x5() {
         // 5x5 arrow: vertex 0 connected to all others (star graph)
         let matrix = make_arrow(5);
-        let (xadj, adjncy) = extract_adjacency(matrix.symbolic());
+        let (xadj, adjncy) = extract_adjacency(matrix.symbolic()).unwrap();
 
         // vertex 0: neighbors [1, 2, 3, 4]
         // vertex 1: neighbors [0]
@@ -413,7 +431,7 @@ mod tests {
     fn test_adjacency_diagonal_only() {
         // Diagonal matrix: no off-diagonal entries, empty adjacency
         let matrix = make_diagonal(4);
-        let (xadj, adjncy) = extract_adjacency(matrix.symbolic());
+        let (xadj, adjncy) = extract_adjacency(matrix.symbolic()).unwrap();
 
         assert_eq!(xadj, vec![0, 0, 0, 0, 0]);
         assert!(adjncy.is_empty());
@@ -423,7 +441,7 @@ mod tests {
     fn test_adjacency_upper_triangle_only() {
         // Upper-triangle-only input should produce symmetric adjacency output
         let matrix = make_upper_triangle_only(4);
-        let (xadj, adjncy) = extract_adjacency(matrix.symbolic());
+        let (xadj, adjncy) = extract_adjacency(matrix.symbolic()).unwrap();
 
         // Tridiag structure (edges 0-1, 1-2, 2-3) stored as upper-only
         // Result should still be symmetric:
@@ -464,7 +482,7 @@ mod tests {
             ("upper4", make_upper_triangle_only(4)),
         ] {
             let n = matrix.nrows();
-            let (xadj, adjncy) = extract_adjacency(matrix.symbolic());
+            let (xadj, adjncy) = extract_adjacency(matrix.symbolic()).unwrap();
 
             // xadj[0] == 0
             assert_eq!(xadj[0], 0, "{}: xadj[0] should be 0", name);
