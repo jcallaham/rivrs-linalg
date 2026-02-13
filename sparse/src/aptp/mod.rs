@@ -18,6 +18,7 @@
 
 pub mod diagonal;
 pub mod inertia;
+pub mod matching;
 pub mod ordering;
 pub mod perm;
 pub mod pivot;
@@ -25,6 +26,7 @@ pub mod symbolic;
 
 pub use diagonal::MixedDiagonal;
 pub use inertia::Inertia;
+pub use matching::{mc64_matching, Mc64Job, Mc64Result};
 pub use ordering::metis_ordering;
 pub use perm::perm_from_forward;
 pub use pivot::{Block2x2, PivotType};
