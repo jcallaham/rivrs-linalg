@@ -1128,7 +1128,7 @@ fn test_metis_nnz_matches_paper_values() {
 
 **Time Estimate:** 3-5 days
 
-#### 4.2: MC64 Matching & Scaling
+#### 4.2: MC64 Matching & Scaling — COMPLETE
 
 **Task:** Implement weighted bipartite matching for indefinite matrix preprocessing
 

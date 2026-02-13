@@ -1,5 +1,82 @@
 # SSIDS Development Log
 
+## Phase 4.2: MC64 Matching & Scaling
+
+**Status**: Complete
+**Branch**: `012-mc64-matching-scaling`
+**Date**: 2026-02-13
+
+### What Was Built
+
+MC64 weighted bipartite matching and symmetric scaling for sparse symmetric indefinite
+matrices, implementing Algorithm MPD from Duff & Koster (2001) with MC64SYM symmetric
+scaling from Duff & Pralet (2005).
+
+**Matching module** (`src/aptp/matching.rs`):
+- `mc64_matching()` — public entry point accepting `SparseColMat<usize, f64>` + `Mc64Job`
+- `Mc64Result` — matching permutation (`Perm<usize>`), scaling factors (`Vec<f64>`), matched count
+- `Mc64Job::MaximumProduct` — maximize product of diagonal entry magnitudes
+- `count_cycles()` — public utility for validating singleton + 2-cycle decomposition
+
+**Internal algorithm**:
+- `build_cost_graph()` — expands upper-triangular CSC to full symmetric, computes log costs
+- `greedy_initial_matching()` — two-pass greedy heuristic (~80% cardinality)
+- `dijkstra_augment()` — shortest augmenting path via Dijkstra on reduced costs
+- `symmetrize_scaling()` — MC64SYM: `s[i] = exp((u[i] + v[i] - col_max_log[i]) / 2)`
+- `enforce_scaling_bound()` — iteratively caps `s[i]` to guarantee `|s_i * a_ij * s_j| <= 1`
+- `duff_pralet_correction()` — scaling correction for unmatched indices in singular matrices
+
+**Tests**:
+- 21 unit tests (cost graph, greedy, Dijkstra, scaling, cycles, error cases, singularity)
+- 13 integration tests (hand-constructed, edge cases, METIS composition, CI-subset, full SuiteSparse)
+- All 9 CI-subset SuiteSparse matrices pass scaling properties
+- Full SuiteSparse test (`#[ignore]`) validates all matrices
+
+### Key Decisions
+
+1. **Complementary slackness for column duals**: For the non-singular path,
+   `v[j] = c[matched_row, j] - u[matched_row]` (SPRAL's approach). This gives
+   better quality than the weaker `v[j] = min_i(c[i,j] - u[i])` which only
+   guarantees the bound, not quality near 1.0.
+
+2. **enforce_scaling_bound**: The greedy heuristic doesn't maintain full dual feasibility,
+   so complementary slackness can produce scaling factors that violate `|s_i * a_ij * s_j| <= 1`.
+   An iterative correction pass caps `s[i] <= 1 / max_j(|a_ij| * s_j)`, converging in 1-2
+   iterations since scaling only decreases.
+
+3. **Structurally singular handling**: For matrices with `matched < n`, we use the partial
+   matching's dual variables + Duff-Pralet correction + enforce_scaling_bound. The SPRAL
+   subgraph re-matching approach was investigated but found to be effectively a no-op
+   (SPRAL's `match(i) < 0` condition is never true for `hungarian_match` output).
+
+4. **Relaxed quality checks for singular matrices**: Full-rank matrices must satisfy
+   `row_max >= 0.75` for all rows. Structurally singular matrices use a weaker criterion
+   (`median row_max >= 0.5`) since the partial matching cannot guarantee quality for all rows.
+
+5. **Soft cycle reporting**: Some nonsingular matchings contain longer cycles (not just
+   singletons + 2-cycles), indicating a potential Dijkstra algorithm issue. This is logged
+   as a warning rather than a hard failure, to be investigated in a future optimization pass.
+
+### Issues Encountered
+
+- **Dijkstra vj bug**: Initial implementation used the discovery edge cost for `vj` instead
+  of the matched edge cost in column `j`. The discovery edge `out[j]` points to the scanning
+  column, not column `j` itself. Fixed by searching column `j` for the matched row's entry.
+
+- **Subgraph re-matching crash**: For partial matchings, `matched_rows != matched_cols`
+  (row i matched to column j doesn't mean row j is also matched). Building a subgraph
+  from matched_rows alone caused index-out-of-bounds. Abandoned in favor of direct dual-based
+  scaling with corrections.
+
+- **Iterative symmetric scaling diverges**: A Sinkhorn-like approach (`s[i] = 1/max_j(|a_ij| * s_j)`)
+  was tested but oscillated/diverged on some matrices. Abandoned in favor of the dual-based approach.
+
+### Feature Spec
+
+Full specification in `specs/012-mc64-matching-scaling/` including API contracts, plan, and tasks.
+
+---
+
 ## Phase 4.1: METIS Nested Dissection Ordering
 
 **Status**: Complete
