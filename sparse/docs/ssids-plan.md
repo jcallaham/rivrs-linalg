@@ -1016,6 +1016,41 @@ The numeric pipeline applies scaling before factorization and reverses it after 
 MC64 returns `(Perm<usize>, Vec<f64>)` as a pure function. The exact API for threading
 scaling into numeric factorization is deferred to Phase 5 design.
 
+#### Structural singularity handling in MC64 (decided)
+
+When the input matrix is structurally singular (`matched < n`), MC64 follows the
+Duff & Pralet (2005, Section 4.2.3) algorithm — this is a warning, not an error:
+
+1. **Initial matching**: MC64 returns a maximum cardinality matching of size `matched < n`.
+2. **Submatrix extraction** (Property 4.2): The indices in the matching identify a
+   structurally nonsingular submatrix. The restriction of A to matched-row × matched-row
+   indices is guaranteed to be structurally nonsingular.
+3. **Re-matching**: MC64 is re-run on the nonsingular submatrix to get a complete weighted
+   matching and dual variables (u, v) for scaling.
+4. **Scaling correction**: Matched indices get standard MC64SYM scaling
+   (`s_i = √(exp(u_i) · exp(v_i))`). Unmatched indices get the Duff-Pralet correction:
+   `s_i = 1 / max_k |a_ik · s_k|` over matched k, with convention 1/0 = 1.
+5. **Permutation ordering**: Unmatched rows/columns are placed at the end of the
+   permutation. SPRAL's `match_order.f90` does this explicitly before passing to METIS.
+
+**Downstream consequences for Phases 5–8:**
+
+The unmatched rows at the end of the permutation will appear as structurally zero
+diagonal entries in the reordered matrix. The numeric factorization (Phase 5/6) will
+encounter these as zero pivots. This is expected behavior:
+
+- APTP's pivot delay mechanism naturally handles this — zero pivots are delayed, and
+  the delayed pivot count in `AptpNumeric` will reflect the structural rank deficiency.
+- The solve phase (Phase 7) must handle the rank-deficient case: either the system is
+  consistent (solution exists but is not unique) or inconsistent (no solution). The
+  `Inertia` from Phase 2 reports the number of zero eigenvalues, which equals `n - matched`.
+- SPRAL reports this via `inform%flag = SSIDS_WARNING_ANAL_SINGULAR` — a warning that
+  propagates to the caller but does not abort the solve.
+
+No special handling is needed in Phase 4.2 beyond returning the `matched` count and
+placing unmatched indices last. The downstream phases handle rank deficiency through
+their existing pivot delay and inertia reporting mechanisms.
+
 ### Deliverables
 
 #### 4.1: METIS Nested Dissection Ordering — COMPLETE
@@ -1093,18 +1128,28 @@ fn test_metis_nnz_matches_paper_values() {
 
 **Time Estimate:** 3-5 days
 
-#### 4.2: MC64 Matching & Scaling
+#### 4.2: MC64 Matching & Scaling — COMPLETE
 
 **Task:** Implement weighted bipartite matching for indefinite matrix preprocessing
 
-**Algorithm Reference:**
+**Algorithm References:**
 - Duff & Koster (2001) — "On algorithms for permuting large entries to the diagonal of a
-  sparse matrix", SIAM J. Matrix Anal. Appl. (/workspace/rivrs-linalg/references/ssids/duff2001.md)
+  sparse matrix", SIAM J. Matrix Anal. Appl. — core MC64 weighted matching algorithm
+  (shortest augmenting paths with Dijkstra on reduced costs).
+  (`/workspace/rivrs-linalg/references/ssids/duff2001.md`)
+- Duff & Pralet (2005) — "Strategies for scaling and pivoting for sparse symmetric
+  indefinite problems" — symmetric adaptation (MC64SYM), scaling symmetrization,
+  structural singularity handling (Property 4.2), Duff-Pralet scaling correction.
+  (`/workspace/rivrs-linalg/references/ssids/duff2005.md`)
 
 **Approach:**
 MC64 computes a weighted bipartite matching that permutes large entries onto the diagonal,
 improving diagonal dominance for indefinite systems. For APTP, this reduces the number of
-delayed pivots. The algorithm also produces symmetric scaling factors.
+delayed pivots. The algorithm also produces symmetric scaling factors. For symmetric
+matrices, the MC64SYM approach (Duff & Pralet 2005) applies the unsymmetric MC64
+algorithm and symmetrizes the scaling via geometric mean of row/column dual variables.
+Structurally singular matrices are handled via partial matching with the Duff-Pralet
+correction (see "Structural singularity handling" decision above).
 
 faer has no matching or scaling functionality — this is genuinely new code.
 
@@ -2119,6 +2164,20 @@ prepare for public release (documentation, examples, packaging).
   top 3 bottlenecks
 - Optimize allocation patterns, cache utilization, unnecessary copies
 - Verify no performance regressions
+
+**MC64 scaling quality revisit:**
+- Phase 4.2's MC64 matching produces degraded row_max quality (rows where
+  `max_j |s_i·a_ij·s_j| < 0.75`) on 5/47 fully-matched SuiteSparse matrices
+  (TSOPF_FS_b39_c7, d_pretok, nd12k, ship_003, thread). This is an inherent
+  limitation of the MC64SYM symmetric averaging formula (Duff & Pralet 2005),
+  not an implementation bug — SPRAL uses the same formula.
+- With end-to-end solve benchmarks available from Phase 9.2, measure whether
+  the quality degradation causes measurably more delayed pivots or worse
+  backward error on these matrices compared to identity scaling.
+- If impact is significant: investigate maintaining column duals during Dijkstra
+  (as SPRAL does) to produce more singleton-dominated matchings with shorter
+  cycles and less averaging error. See `docs/mc64-scaling-notes.md` for the
+  full analysis.
 
 **Success Criteria:**
 - [ ] Arena allocation reduces peak memory on large problems

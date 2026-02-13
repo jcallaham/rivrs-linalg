@@ -7,6 +7,7 @@
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
 use rivrs_sparse::SolverPhase;
+use rivrs_sparse::aptp::{Mc64Job, mc64_matching};
 use rivrs_sparse::benchmarking::traits::Benchmarkable;
 use rivrs_sparse::benchmarking::{
     BenchmarkConfig, MockBenchmarkable, SkippedBenchmark, read_peak_rss_kb,
@@ -225,8 +226,66 @@ fn bench_symbolic_analysis(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_mc64_matching(c: &mut Criterion) {
+    let rss_before = read_peak_rss_kb();
+
+    let cases = match load_test_cases(&TestCaseFilter::ci_subset()) {
+        Ok(cases) => cases,
+        Err(e) => {
+            eprintln!("WARNING: Failed to load test cases: {}", e);
+            return;
+        }
+    };
+
+    // Filter to SuiteSparse-source only (hand-constructed matrices are too small)
+    let suitesparse: Vec<_> = cases
+        .into_iter()
+        .filter(|c| c.properties.source == "suitesparse")
+        .collect();
+
+    if suitesparse.is_empty() {
+        eprintln!("WARNING: No SuiteSparse test cases matched the filter");
+        return;
+    }
+
+    let mut group = c.benchmark_group("ssids/mc64_matching");
+    group.sample_size(20);
+
+    for case in &suitesparse {
+        let nnz = case.properties.nnz;
+        group.throughput(Throughput::Elements(nnz as u64));
+
+        group.bench_with_input(BenchmarkId::from_parameter(&case.name), &case, |b, case| {
+            b.iter(|| {
+                mc64_matching(&case.matrix, Mc64Job::MaximumProduct)
+                    .expect("MC64 matching should succeed")
+            });
+        });
+    }
+    group.finish();
+
+    let rss_after = read_peak_rss_kb();
+    if let (Some(before), Some(after)) = (rss_before, rss_after) {
+        eprintln!(
+            "\nMC64 Peak RSS: {} KB -> {} KB (delta: {} KB)",
+            before,
+            after,
+            after.saturating_sub(before)
+        );
+    } else if let Some(after) = rss_after {
+        eprintln!("\nMC64 Peak RSS: {} KB", after);
+    }
+}
+
 criterion_group!(component_benches, bench_components);
 criterion_group!(e2e_benches, bench_e2e);
 criterion_group!(ci_benches, bench_ci_subset);
 criterion_group!(symbolic_benches, bench_symbolic_analysis);
-criterion_main!(component_benches, e2e_benches, ci_benches, symbolic_benches);
+criterion_group!(mc64_benches, bench_mc64_matching);
+criterion_main!(
+    component_benches,
+    e2e_benches,
+    ci_benches,
+    symbolic_benches,
+    mc64_benches
+);
