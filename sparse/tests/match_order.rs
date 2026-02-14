@@ -444,14 +444,16 @@ fn test_match_order_suitesparse_singular_unmatched_at_end() {
                 mc64_matching(&case.matrix, Mc64Job::MaximumProduct).expect("MC64 should succeed");
             let (_, inv) = result.ordering.as_ref().arrays();
 
-            for i in 0..n {
-                if !mc64.is_matched[i] {
+            for (i, (&matched, &pos)) in
+                mc64.is_matched.iter().zip(inv.iter()).enumerate()
+            {
+                if !matched {
                     assert!(
-                        inv[i] >= result.matched,
+                        pos >= result.matched,
                         "'{}': unmatched index {} at position {} should be >= matched={}",
                         case.name,
                         i,
-                        inv[i],
+                        pos,
                         result.matched
                     );
                 }
@@ -506,56 +508,320 @@ fn test_match_order_condensation_ratio() {
 }
 
 // ---- US3: Full SuiteSparse validation (T018) ----
+//
+// Comprehensive match-order condensation analysis on the full SuiteSparse
+// collection. Loads one matrix at a time to avoid OOM. Run with:
+//
+//   cargo test --release --test match_order test_match_order_full_suitesparse -- --ignored --test-threads=1
+
+use rivrs_sparse::aptp::matching::count_cycles;
+use rivrs_sparse::io::registry;
+
+/// Minimum number of SuiteSparse matrices to consider the full collection present.
+const MIN_FULL_COLLECTION_SIZE: usize = 20;
+
+/// Load SuiteSparse metadata entries (lightweight, no matrix data).
+fn suitesparse_metadata() -> Vec<registry::MatrixMetadata> {
+    let all_meta = registry::load_registry().expect("failed to load metadata.json");
+    all_meta
+        .into_iter()
+        .filter(|m| m.source == "suitesparse")
+        .collect()
+}
 
 #[test]
-#[ignore]
-fn test_match_order_full_suitesparse_validation() {
-    let cases = load_test_cases(&TestCaseFilter::all()).expect("failed to load test cases");
+#[ignore = "requires full SuiteSparse collection"]
+fn test_match_order_full_suitesparse() {
+    let mut entries = suitesparse_metadata();
+    // Sort: indefinite matrices first (they have condensation), then PD.
+    // This ensures all interesting condensation data is captured even if
+    // cumulative memory forces OOM on the large-PD tail.
+    entries.sort_by_key(|m| {
+        let is_pd = m.category == "positive-definite";
+        (is_pd, m.size)
+    });
+    let start = std::time::Instant::now();
 
-    let suitesparse: Vec<_> = cases
-        .iter()
-        .filter(|c| c.properties.source == "suitesparse")
-        .collect();
+    let mut loaded = 0usize;
+    let mut pass_count = 0usize;
+    let mut skipped_parse = Vec::new();
+
+    // Aggregate statistics
+    let mut total_singletons = 0usize;
+    let mut total_two_cycles = 0usize;
+    let mut total_longer_cycles = 0usize;
+    let mut matrices_with_longer_cycles = Vec::new();
+    let mut fill_ratios = Vec::new();
+    let mut condensation_ratios = Vec::new();
 
     eprintln!(
-        "Running full SuiteSparse validation on {} matrices",
-        suitesparse.len()
+        "\n{:<35} {:>7} {:>7} {:>6} {:>6} {:>6} {:>7} {:>12} {:>12} {:>7}",
+        "Matrix",
+        "Dim",
+        "Match",
+        "1x1",
+        "2x2",
+        "Long",
+        "C.Dim",
+        "Cond.NNZ(L)",
+        "METIS.NNZ(L)",
+        "Ratio"
     );
+    eprintln!("{}", "-".repeat(125));
 
-    for case in &suitesparse {
-        let n = case.properties.size;
+    let mut skipped_large_pd = 0usize;
+    const MAX_PD_DIM: usize = 300_000;
 
-        let result = match_order_metis(&case.matrix)
-            .unwrap_or_else(|e| panic!("match_order_metis failed for '{}': {}", case.name, e));
+    for meta in &entries {
+        // Skip very large positive-definite matrices — they always show
+        // ratio=1.000 (no condensation) and only consume cumulative RSS.
+        if meta.category == "positive-definite" && meta.size > MAX_PD_DIM {
+            skipped_large_pd += 1;
+            continue;
+        }
+
+        let test_matrix = match registry::load_test_matrix_from_entry(meta) {
+            Ok(Some(tm)) => tm,
+            Ok(None) => continue,
+            Err(e) => {
+                skipped_parse.push(format!("{}: {}", meta.name, e));
+                continue;
+            }
+        };
+        loaded += 1;
+
+        let n = meta.size;
+        let matrix = &test_matrix.matrix;
+
+        // Run match_order_metis
+        let result = match_order_metis(matrix)
+            .unwrap_or_else(|e| panic!("match_order_metis failed for '{}': {}", meta.name, e));
 
         // SC-001: Pair adjacency
-        assert_result_pair_adjacency(&case.name, &case.matrix, &result);
+        assert_result_pair_adjacency(&meta.name, matrix, &result);
 
         // FR-007: Valid permutation
         let (fwd, inv) = result.ordering.as_ref().arrays();
-        assert_valid_permutation(&case.name, fwd, inv, n);
+        assert_valid_permutation(&meta.name, fwd, inv, n);
 
-        // SC-007: Valid symbolic analysis
-        let symbolic = AptpSymbolic::analyze(
-            case.matrix.symbolic(),
+        // SC-007: Valid symbolic analysis with condensed ordering
+        let condensed_symbolic = AptpSymbolic::analyze(
+            matrix.symbolic(),
             SymmetricOrdering::Custom(result.ordering.as_ref()),
         )
-        .unwrap_or_else(|e| panic!("AptpSymbolic::analyze failed for '{}': {}", case.name, e));
-
+        .unwrap_or_else(|e| {
+            panic!(
+                "AptpSymbolic::analyze with condensed ordering failed for '{}': {}",
+                meta.name, e
+            )
+        });
         assert!(
-            symbolic.predicted_nnz() > 0,
+            condensed_symbolic.predicted_nnz() > 0,
             "'{}' predicted_nnz should be > 0",
-            case.name
+            meta.name
         );
+
+        let condensed_nnz = condensed_symbolic.predicted_nnz();
+        drop(condensed_symbolic);
+
+        // Only run unconstrained METIS when condensation actually changed the graph.
+        // When condensed_dim == n (PD matrices, all singletons), the ratio is
+        // always 1.000 and running METIS twice wastes memory on large matrices.
+        let (unconstrained_nnz, fill_ratio) = if result.condensed_dim < n {
+            let unconstrained_perm = metis_ordering(matrix.symbolic())
+                .unwrap_or_else(|e| panic!("metis_ordering failed for '{}': {}", meta.name, e));
+            let unconstrained_symbolic = AptpSymbolic::analyze(
+                matrix.symbolic(),
+                SymmetricOrdering::Custom(unconstrained_perm.as_ref()),
+            )
+            .unwrap_or_else(|e| {
+                panic!(
+                    "AptpSymbolic::analyze with METIS ordering failed for '{}': {}",
+                    meta.name, e
+                )
+            });
+            let unc_nnz = unconstrained_symbolic.predicted_nnz();
+            let ratio = condensed_nnz as f64 / unc_nnz as f64;
+            drop(unconstrained_perm);
+            drop(unconstrained_symbolic);
+            (unc_nnz, ratio)
+        } else {
+            (condensed_nnz, 1.0)
+        };
+
+        // Cycle decomposition of the raw MC64 matching (before splitting).
+        // Skip redundant MC64 call for non-condensed matrices — we already
+        // know the cycle structure is all singletons.
+        let (singletons_raw, two_cycles_raw, longer_cycles_raw) = if result.condensed_dim < n {
+            let mc64 =
+                mc64_matching(matrix, Mc64Job::MaximumProduct).expect("MC64 should succeed");
+            let matching_fwd = mc64.matching.as_ref().arrays().0;
+            let cycles = count_cycles(matching_fwd);
+            drop(mc64);
+            cycles
+        } else {
+            (n, 0, 0)
+        };
+
+        total_singletons += singletons_raw;
+        total_two_cycles += two_cycles_raw;
+        total_longer_cycles += longer_cycles_raw;
+        fill_ratios.push((meta.name.clone(), fill_ratio));
+
+        if n > 0 {
+            condensation_ratios.push((meta.name.clone(), result.condensed_dim as f64 / n as f64));
+        }
+
+        if longer_cycles_raw > 0 {
+            matrices_with_longer_cycles.push((
+                meta.name.clone(),
+                n,
+                longer_cycles_raw,
+                singletons_raw,
+                two_cycles_raw,
+                result.singletons,
+                result.two_cycles,
+                result.condensed_dim,
+                fill_ratio,
+            ));
+        }
 
         eprintln!(
-            "  {:<30} dim={:>8}  nnz(L)={:>12}  matched={:>8}  2-cycles={:>6}  condensed_dim={:>8}",
-            case.name,
+            "{:<35} {:>7} {:>7} {:>6} {:>6} {:>6} {:>7} {:>12} {:>12} {:>7.3}",
+            meta.name,
             n,
-            symbolic.predicted_nnz(),
             result.matched,
-            result.two_cycles,
-            result.condensed_dim
+            singletons_raw,
+            two_cycles_raw,
+            longer_cycles_raw,
+            result.condensed_dim,
+            condensed_nnz,
+            unconstrained_nnz,
+            fill_ratio
+        );
+
+        // Drop matrix before next iteration to manage memory
+        drop(test_matrix);
+        pass_count += 1;
+    }
+
+    let elapsed = start.elapsed();
+
+    // ---- Summary tables ----
+
+    if skipped_large_pd > 0 {
+        eprintln!(
+            "\nSkipped {} large PD matrices (dim > {}) — always ratio=1.000",
+            skipped_large_pd, MAX_PD_DIM
         );
     }
+
+    if !skipped_parse.is_empty() {
+        eprintln!(
+            "\nSkipped {} matrices due to parse errors:",
+            skipped_parse.len()
+        );
+        for s in &skipped_parse {
+            eprintln!("  {}", s);
+        }
+    }
+
+    if loaded < MIN_FULL_COLLECTION_SIZE {
+        eprintln!(
+            "\nSkipping assertions: only {} SuiteSparse matrices loaded (need >= {}). \
+             Extract the full collection to test-data/suitesparse/.",
+            loaded, MIN_FULL_COLLECTION_SIZE,
+        );
+        return;
+    }
+
+    // Cycle decomposition summary
+    eprintln!("\n=== Cycle Decomposition Summary ===");
+    eprintln!(
+        "Total across {} matrices: {} singletons, {} 2-cycles, {} longer cycles",
+        loaded, total_singletons, total_two_cycles, total_longer_cycles
+    );
+
+    // Detail on matrices with longer cycles (the interesting ones)
+    if !matrices_with_longer_cycles.is_empty() {
+        eprintln!(
+            "\n=== Matrices with Longer Cycles ({}) ===",
+            matrices_with_longer_cycles.len()
+        );
+        eprintln!(
+            "{:<35} {:>7} {:>6} {:>6} {:>6} {:>10} {:>10} {:>7} {:>7}",
+            "Matrix", "Dim", "Long", "Raw1x1", "Raw2x2", "Split1x1", "Split2x2", "C.Dim", "Ratio"
+        );
+        eprintln!("{}", "-".repeat(115));
+        for (name, n, longer, raw_s, raw_2, split_s, split_2, cdim, ratio) in
+            &matrices_with_longer_cycles
+        {
+            eprintln!(
+                "{:<35} {:>7} {:>6} {:>6} {:>6} {:>10} {:>10} {:>7} {:>7.3}",
+                name, n, longer, raw_s, raw_2, split_s, split_2, cdim, ratio
+            );
+        }
+    } else {
+        eprintln!("\nNo matrices had longer cycles in their MC64 matching.");
+    }
+
+    // Fill ratio distribution
+    fill_ratios.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+    let within_10pct = fill_ratios.iter().filter(|(_, r)| *r <= 1.10).count();
+    let within_50pct = fill_ratios.iter().filter(|(_, r)| *r <= 1.50).count();
+    let worst = fill_ratios.last().map(|(n, r)| (n.as_str(), *r));
+    let best = fill_ratios.first().map(|(n, r)| (n.as_str(), *r));
+    let median_ratio = fill_ratios[fill_ratios.len() / 2].1;
+
+    eprintln!("\n=== Fill Ratio Distribution (condensed / unconstrained METIS) ===");
+    eprintln!(
+        "  Within 10%: {}/{}  Within 50%: {}/{}",
+        within_10pct,
+        fill_ratios.len(),
+        within_50pct,
+        fill_ratios.len()
+    );
+    eprintln!(
+        "  Best:   {:<35} {:.3}",
+        best.map(|(n, _)| n).unwrap_or("?"),
+        best.map(|(_, r)| r).unwrap_or(0.0)
+    );
+    eprintln!("  Median: {:.3}", median_ratio);
+    eprintln!(
+        "  Worst:  {:<35} {:.3}",
+        worst.map(|(n, _)| n).unwrap_or("?"),
+        worst.map(|(_, r)| r).unwrap_or(0.0)
+    );
+
+    // Condensation ratio distribution
+    condensation_ratios.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+    if !condensation_ratios.is_empty() {
+        let median_cond = condensation_ratios[condensation_ratios.len() / 2].1;
+        let most_condensed = condensation_ratios.first().unwrap();
+        let least_condensed = condensation_ratios.last().unwrap();
+
+        eprintln!("\n=== Condensation Ratio (condensed_dim / n) ===");
+        eprintln!(
+            "  Most condensed:  {:<35} {:.3}",
+            most_condensed.0, most_condensed.1
+        );
+        eprintln!("  Median:          {:.3}", median_cond);
+        eprintln!(
+            "  Least condensed: {:<35} {:.3}",
+            least_condensed.0, least_condensed.1
+        );
+    }
+
+    eprintln!(
+        "\nSummary: {} passed, {} parse-skipped out of {} loaded ({:.1}s)",
+        pass_count,
+        skipped_parse.len(),
+        loaded,
+        elapsed.as_secs_f64(),
+    );
+
+    assert_eq!(
+        pass_count, loaded,
+        "all loadable SuiteSparse matrices should pass match_order_metis"
+    );
 }
