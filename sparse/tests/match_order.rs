@@ -425,9 +425,8 @@ fn test_match_order_singular_scaling_well_defined() {
 // ---- US2: SuiteSparse singular matrix tests (T015) ----
 
 #[test]
-#[ignore]
-fn test_match_order_suitesparse_singular_unmatched_at_end() {
-    let cases = load_test_cases(&TestCaseFilter::all()).expect("failed to load test cases");
+fn test_match_order_singular_unmatched_at_end() {
+    let cases = load_test_cases(&TestCaseFilter::ci_subset()).expect("failed to load test cases");
 
     for case in &cases {
         if case.properties.source != "suitesparse" {
@@ -444,9 +443,7 @@ fn test_match_order_suitesparse_singular_unmatched_at_end() {
                 mc64_matching(&case.matrix, Mc64Job::MaximumProduct).expect("MC64 should succeed");
             let (_, inv) = result.ordering.as_ref().arrays();
 
-            for (i, (&matched, &pos)) in
-                mc64.is_matched.iter().zip(inv.iter()).enumerate()
-            {
+            for (i, (&matched, &pos)) in mc64.is_matched.iter().zip(inv.iter()).enumerate() {
                 if !matched {
                     assert!(
                         pos >= result.matched,
@@ -653,8 +650,7 @@ fn test_match_order_full_suitesparse() {
         // Skip redundant MC64 call for non-condensed matrices — we already
         // know the cycle structure is all singletons.
         let (singletons_raw, two_cycles_raw, longer_cycles_raw) = if result.condensed_dim < n {
-            let mc64 =
-                mc64_matching(matrix, Mc64Job::MaximumProduct).expect("MC64 should succeed");
+            let mc64 = mc64_matching(matrix, Mc64Job::MaximumProduct).expect("MC64 should succeed");
             let matching_fwd = mc64.matching.as_ref().arrays().0;
             let cycles = count_cycles(matching_fwd);
             drop(mc64);

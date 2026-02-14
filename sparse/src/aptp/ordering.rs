@@ -381,6 +381,13 @@ fn split_matching_cycles(
                 break;
             }
             j = next;
+            // If j was already visited (e.g. an unmatched node from the first pass),
+            // the permutation cycle passes through a "hole" — stop walking here.
+            // The remaining matched indices beyond the hole will be picked up when
+            // the outer loop reaches them.
+            if visited[j] {
+                break;
+            }
         }
     }
 
