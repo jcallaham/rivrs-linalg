@@ -51,6 +51,13 @@ pub struct Mc64Result {
     /// Number of matched entries. Equals n for structurally nonsingular
     /// matrices. Less than n indicates structural singularity.
     pub matched: usize,
+
+    /// Per-index matched status: `is_matched[i]` is true if index i
+    /// participates in the matching (as row OR column for symmetric matrices).
+    /// For structurally nonsingular matrices, all entries are true.
+    /// Used by downstream cycle decomposition to distinguish singletons
+    /// (matched to self) from unmatched indices.
+    pub is_matched: Vec<bool>,
 }
 
 /// Optimization objective for the matching.
@@ -165,6 +172,7 @@ pub fn mc64_matching(
             matching: Perm::new_checked(fwd, inv, 1),
             scaling: vec![scale],
             matched: if has_entry { 1 } else { 0 },
+            is_matched: vec![has_entry],
         });
     }
 
@@ -194,6 +202,7 @@ pub fn mc64_matching(
             matching: Perm::new_checked(fwd.into_boxed_slice(), inv.into_boxed_slice(), n),
             scaling,
             matched,
+            is_matched: vec![true; n],
         });
     }
 
@@ -237,6 +246,7 @@ pub fn mc64_matching(
         matching: Perm::new_checked(fwd.into_boxed_slice(), inv.into_boxed_slice(), n),
         scaling,
         matched,
+        is_matched,
     })
 }
 

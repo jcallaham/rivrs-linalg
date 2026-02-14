@@ -8,7 +8,7 @@ This directory contains sparse linear algebra solver implementations for rivrs-l
 
 **Parent Project**: rivrs-linalg - Numerical Linear Algebra for Rivrs
 **Domain**: Sparse direct solvers (SSIDS, LDL^T factorization, APTP pivoting)
-**Current Status**: Phase 4 complete — METIS ordering + MC64 matching & scaling. Ready for Phase 5 (Dense APTP Kernel).
+**Current Status**: Phase 4 complete — METIS ordering + MC64 matching & scaling + match-order condensation. Ready for Phase 5 (Dense APTP Kernel).
 
 ### Development docs
 
@@ -231,6 +231,7 @@ Five principles guiding test design for Phases 3+ (implementation-heavy):
 - Rust 1.87+ (edition 2024) + faer 0.22 (existing), metis-sys 0.3.x (new — vendored METIS 5.x C source) (011-metis-ordering)
 - N/A (in-memory graph algorithms) (011-metis-ordering)
 - Rust 1.87+ (edition 2024) + faer 0.22 (sparse matrix types, permutations), std::collections::BinaryHeap (Dijkstra priority queue) (012-mc64-matching-scaling)
+- Rust 1.87+ (edition 2024) + faer 0.22 (sparse matrix types, permutations), metis-sys 0.3.x (vendored METIS 5.x) (013-match-order-condensation)
 
 ## Recent Changes
 - 010-aptp-symbolic: Added Rust 1.87+ (edition 2024) + faer 0.22 (symbolic Cholesky, AMD ordering, MemStack), serde/serde_json (existing, not new)

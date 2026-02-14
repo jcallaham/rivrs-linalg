@@ -1266,6 +1266,51 @@ fn test_mc64_perm_works_with_symbolic_analysis() {
 
 **Time Estimate:** 5–7 days
 
+#### 4.3: Match-Order Condensation Pipeline — COMPLETE
+
+**Task:** Combine MC64 matching with METIS ordering via cycle condensation
+**Branch:** `013-match-order-condensation`
+
+**Algorithm References:**
+- Hogg & Scott (2013), HSL_MC80 — cycle condensation approach
+- SPRAL `match_order.f90` (BSD-3) — reference implementation (`mo_split`, `mo_order`)
+
+**Approach:**
+SPRAL's `ordering=2` mode combines MC64 matching with METIS ordering, guaranteeing
+that matched 2-cycle pairs are adjacent in the elimination order. This is critical
+for APTP's 2x2 pivot detection efficiency. The pipeline:
+1. MC64 matching → singletons + 2-cycles + longer cycles
+2. Cycle splitting → decompose longer cycles into 2-cycles + singletons (SPRAL `mo_split`)
+3. Condensed graph → fuse 2-cycle pairs into super-nodes (~n/2 dimension)
+4. METIS ordering on condensed graph
+5. Expand → map back to original indices, 2-cycle pairs get consecutive positions
+
+**Implementation:**
+- `match_order_metis()` in `src/aptp/ordering.rs` — public orchestrator
+- `CycleDecomposition` — internal struct with partner/old_to_new/new_to_old mappings
+- `split_matching_cycles()` — cycle decomposition using SPRAL's `mo_split` algorithm
+- `build_condensed_adjacency()` — marker-array deduplication for condensed graph
+- `expand_ordering()` — maps condensed METIS output back to full-size Perm<usize>
+- `MatchOrderResult` — public result struct with ordering, scaling, and diagnostics
+
+**Results:**
+- 9/9 CI-subset matrices: valid pair adjacency (SC-001) and symbolic analysis (SC-007)
+- Condensation ratios: 0.56-1.0 depending on 2-cycle count
+- Fill quality: most matrices within 3% of unconstrained METIS; some matrices with heavy
+  condensation (40%+ reduction) show 2-2.5x fill regression — expected trade-off for
+  pair adjacency guarantee. SPRAL uses this mode by default for indefinite systems.
+- Existing MC64 and METIS tests unaffected (SC-006)
+
+**Lessons Learned:**
+- Matrices with many 2-cycles (e.g., cvxqp3: 7475 pairs in 17500 nodes) show significant
+  fill regression because condensation fundamentally changes the graph's separator structure.
+  This is the inherent trade-off of the match-order approach. SPRAL accepts this because
+  pair adjacency improves factorization quality (fewer delayed pivots) even if symbolic
+  fill is higher.
+- The `is_matched` field on `Mc64Result` is essential — `build_singular_permutation()`
+  assigns unmatched rows to free columns, making `fwd[i]==i` unreliable for distinguishing
+  singletons from unmatched indices.
+
 ### Phase 4 Exit Criteria
 
 **Required Outcomes:**
