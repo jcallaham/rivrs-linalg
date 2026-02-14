@@ -584,9 +584,7 @@ fn call_metis_node_nd(
 
     if ret != metis_sys::rstatus_et_METIS_OK {
         let msg = match ret {
-            x if x == metis_sys::rstatus_et_METIS_ERROR_INPUT => {
-                "METIS_ERROR_INPUT: invalid input"
-            }
+            x if x == metis_sys::rstatus_et_METIS_ERROR_INPUT => "METIS_ERROR_INPUT: invalid input",
             x if x == metis_sys::rstatus_et_METIS_ERROR_MEMORY => {
                 "METIS_ERROR_MEMORY: allocation failure"
             }

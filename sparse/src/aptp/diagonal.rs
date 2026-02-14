@@ -34,6 +34,7 @@ use super::pivot::{Block2x2, PivotType};
 ///
 /// - Hogg, Duff & Lopez (2020), Section 3: mixed diagonal D storage in APTP
 /// - Bunch & Kaufman (1977): 2x2 pivot block structure
+#[derive(Debug)]
 pub struct MixedDiagonal {
     pivot_map: Vec<PivotType>,
     diag: Vec<f64>,

@@ -1,5 +1,70 @@
 # SSIDS Development Log
 
+## Phase 5: Dense APTP Factorization Kernel
+
+**Status**: Complete
+**Branch**: `014-dense-aptp-kernel`
+**Date**: 2026-02-14
+
+### What Was Built
+
+Dense A Posteriori Threshold Pivoting (APTP) factorization kernel — the core numerical
+engine for the SSIDS multifrontal solver. Factors dense symmetric indefinite matrices
+in-place using optimistic 1x1 pivots with a posteriori stability checking, falling back
+to 2x2 Bunch-Kaufman pivots or column delay when stability bounds are violated.
+
+**New file** (`src/aptp/factor.rs`, ~740 lines + ~840 lines tests):
+
+**Public API**:
+- `aptp_factor_in_place()` — core in-place algorithm for Phase 6 multifrontal integration
+- `aptp_factor()` — convenience wrapper extracting L factor (for standalone testing)
+- `AptpOptions` — configuration (threshold=0.01, small=1e-20, fallback strategy)
+- `AptpFallback` — BunchKaufman or Delay fallback strategy
+- `AptpFactorResult` — in-place result (D, permutation, delayed columns, stats)
+- `AptpFactorization` — convenience result with extracted L and faer Perm
+- `AptpStatistics` — pivot counts, max L entry
+- `AptpPivotRecord` — per-column diagnostic log
+
+**Internal functions**:
+- `swap_symmetric()` — physical row/column swap in lower-triangle symmetric matrix
+- `try_1x1_pivot()` — optimistic 1x1 pivot with stability check and backup/restore
+- `select_2x2_partner_range()` — find best 2x2 partner in range
+- `try_2x2_pivot()` — 2x2 Bunch-Kaufman pivot with determinant condition
+- `update_schur_1x1()` / `update_schur_2x2()` — Schur complement updates
+- `extract_l()` — extract L factor handling 2x2 D off-diagonal entries
+
+### Key Design Decisions
+
+1. **Swap-delayed-to-end**: Delayed columns are physically swapped to the end of the
+   fully-summed region, keeping eliminated columns contiguous at positions 0..k. This
+   simplifies L extraction and permutation tracking compared to the initial "eliminated
+   flag" approach.
+
+2. **Physical partner swap**: For 2x2 pivots, the partner is physically swapped to
+   position k+1 (adjacent to k) before the attempt, matching SPRAL's approach.
+
+3. **Column-by-column (single-level)**: No blocking optimization. Two-level blocked
+   APTP deferred to Phase 9.1.
+
+4. **Dual API**: In-place (for Phase 6 multifrontal) + convenience wrapper (for testing).
+
+### Test Coverage (27 tests total)
+
+- 23 unit tests: 1x1 pivots, 2x2 pivots, delays, statistics, inertia, edge cases
+- 2 random stress tests (behind `test-util` feature): 100+ PD, 100+ indefinite matrices
+- 2 integration tests (behind `#[ignore]`): 15 hand-constructed, SuiteSparse CI-subset
+- All reconstruction errors < 1e-12
+
+### Bug Fix: 2x2 Pivot Reconstruction
+
+Initial implementation had two bugs causing reconstruction error ~13 for 2x2 pivots:
+1. `extract_l` read `A[k+1, k]` (D off-diagonal) as an L entry
+2. Non-contiguous eliminated columns broke permutation tracking
+
+Fixed by switching to swap-delayed-to-end architecture with physical column/row swaps.
+
+---
+
 ## Phase 4.3: Match-Order Condensation Pipeline
 
 **Status**: Complete

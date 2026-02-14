@@ -17,6 +17,7 @@
 //!   Solving Symmetric Linear Systems", Math. Comp.
 
 pub mod diagonal;
+pub mod factor;
 pub mod inertia;
 pub mod matching;
 pub mod ordering;
@@ -31,3 +32,8 @@ pub use ordering::{MatchOrderResult, match_order_metis, metis_ordering};
 pub use perm::perm_from_forward;
 pub use pivot::{Block2x2, PivotType};
 pub use symbolic::{AptpSymbolic, SymbolicStatistics};
+
+pub use factor::{
+    AptpFactorResult, AptpFactorization, AptpFallback, AptpOptions, AptpPivotRecord,
+    AptpStatistics, aptp_factor, aptp_factor_in_place,
+};
