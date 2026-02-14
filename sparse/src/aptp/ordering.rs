@@ -145,7 +145,6 @@ pub fn match_order_metis(
         // Trivial condensed graph — identity ordering
         (0..cdim as i32).collect::<Vec<_>>()
     } else {
-        // Validate condensed dimension fits in i32
         if cdim > i32::MAX as usize {
             return Err(SparseError::InvalidInput {
                 reason: format!(
@@ -155,46 +154,9 @@ pub fn match_order_metis(
             });
         }
 
-        let mut options = [0i32; metis_sys::METIS_NOPTIONS as usize];
-        unsafe {
-            metis_sys::METIS_SetDefaultOptions(options.as_mut_ptr());
-        }
-        options[metis_sys::moptions_et_METIS_OPTION_NUMBERING as usize] = 0;
-
-        let mut nvtxs = cdim as i32;
-        let mut perm_i32 = vec![0i32; cdim];
-        let mut iperm_i32 = vec![0i32; cdim];
-
-        let ret = unsafe {
-            metis_sys::METIS_NodeND(
-                &mut nvtxs,
-                xadj.as_mut_ptr(),
-                adjncy.as_mut_ptr(),
-                std::ptr::null_mut(),
-                options.as_mut_ptr(),
-                perm_i32.as_mut_ptr(),
-                iperm_i32.as_mut_ptr(),
-            )
-        };
-
-        if ret != metis_sys::rstatus_et_METIS_OK {
-            let msg = match ret {
-                x if x == metis_sys::rstatus_et_METIS_ERROR_INPUT => {
-                    "METIS_ERROR_INPUT: invalid input"
-                }
-                x if x == metis_sys::rstatus_et_METIS_ERROR_MEMORY => {
-                    "METIS_ERROR_MEMORY: allocation failure"
-                }
-                x if x == metis_sys::rstatus_et_METIS_ERROR => "METIS_ERROR: general error",
-                _ => "METIS: unknown error code",
-            };
-            return Err(SparseError::AnalysisFailure {
-                reason: format!("{} (return code: {}, condensed dim: {})", msg, ret, cdim),
-            });
-        }
-
         // METIS iperm: iperm[old_idx] = new_pos (this is the "order" we need)
-        iperm_i32
+        let (_perm, iperm) = call_metis_node_nd(cdim, &mut xadj, &mut adjncy)?;
+        iperm
     };
 
     // Step 5: Expand ordering
@@ -290,50 +252,11 @@ pub fn metis_ordering(
         return Ok(identity_perm(n));
     }
 
-    // Set up METIS options: 0-based numbering, defaults for everything else.
-    let mut options = [0i32; metis_sys::METIS_NOPTIONS as usize];
-    unsafe {
-        metis_sys::METIS_SetDefaultOptions(options.as_mut_ptr());
-    }
-    options[metis_sys::moptions_et_METIS_OPTION_NUMBERING as usize] = 0;
-
-    // Allocate output arrays.
-    let mut nvtxs = n as i32;
-    let mut perm_i32 = vec![0i32; n]; // METIS perm: old → new
-    let mut iperm_i32 = vec![0i32; n]; // METIS iperm: new → old
-
-    // Call METIS_NodeND.
-    let ret = unsafe {
-        metis_sys::METIS_NodeND(
-            &mut nvtxs,
-            xadj.as_mut_ptr(),
-            adjncy.as_mut_ptr(),
-            std::ptr::null_mut(), // vwgt: no vertex weights
-            options.as_mut_ptr(),
-            perm_i32.as_mut_ptr(),
-            iperm_i32.as_mut_ptr(),
-        )
-    };
-
-    // Check return code.
-    if ret != metis_sys::rstatus_et_METIS_OK {
-        let msg = match ret {
-            x if x == metis_sys::rstatus_et_METIS_ERROR_INPUT => "METIS_ERROR_INPUT: invalid input",
-            x if x == metis_sys::rstatus_et_METIS_ERROR_MEMORY => {
-                "METIS_ERROR_MEMORY: allocation failure"
-            }
-            x if x == metis_sys::rstatus_et_METIS_ERROR => "METIS_ERROR: general error",
-            _ => "METIS: unknown error code",
-        };
-        return Err(SparseError::AnalysisFailure {
-            reason: format!("{} (return code: {})", msg, ret),
-        });
-    }
-
-    // Convert i32 → usize and construct Perm.
-    // METIS manual: A' = A(perm, perm) — perm maps new→old (forward permutation).
+    // Call METIS_NodeND via shared helper.
     // METIS perm[new_pos] = old_idx  → faer forward array
     // METIS iperm[old_idx] = new_pos → faer inverse array
+    let (perm_i32, iperm_i32) = call_metis_node_nd(n, &mut xadj, &mut adjncy)?;
+
     let fwd: Box<[usize]> = perm_i32.iter().map(|&v| v as usize).collect();
     let inv: Box<[usize]> = iperm_i32.iter().map(|&v| v as usize).collect();
 
@@ -391,7 +314,7 @@ fn split_matching_cycles(
     is_matched: &[bool],
     n: usize,
 ) -> CycleDecomposition {
-    let mut partner = vec![0isize; n];
+    let mut partner = vec![isize::MIN; n];
     let mut old_to_new = vec![0usize; n];
     let mut new_to_old = Vec::new();
     let mut visited = vec![false; n];
@@ -584,6 +507,7 @@ fn expand_ordering(condensed_order: &[i32], decomp: &CycleDecomposition, n: usiz
     }
 
     // Append unmatched indices at the end
+    let matched_count = fwd.len();
     for i in 0..n {
         if decomp.partner[i] == -2 {
             fwd.push(i);
@@ -591,6 +515,15 @@ fn expand_ordering(condensed_order: &[i32], decomp: &CycleDecomposition, n: usiz
     }
 
     debug_assert_eq!(fwd.len(), n);
+    // Matched positions = singletons + 2*two_cycles; unmatched fill [matched_count..n)
+    debug_assert_eq!(
+        matched_count,
+        decomp.singletons + 2 * decomp.two_cycles,
+        "matched expansion size mismatch: {} != {} singletons + 2*{} two_cycles",
+        matched_count,
+        decomp.singletons,
+        decomp.two_cycles,
+    );
 
     // Build inverse: inv[old_idx] = new_pos
     let mut inv = vec![0usize; n];
@@ -605,6 +538,60 @@ fn expand_ordering(condensed_order: &[i32], decomp: &CycleDecomposition, n: usiz
 fn identity_perm(n: usize) -> Perm<usize> {
     let id: Vec<usize> = (0..n).collect();
     Perm::new_checked(id.clone().into_boxed_slice(), id.into_boxed_slice(), n)
+}
+
+/// Call METIS_NodeND on a CSR adjacency graph and return (perm, iperm) as i32 vectors.
+///
+/// Handles options setup, FFI call, and error mapping. The caller is responsible
+/// for validating that `n > 1`, `adjncy` is non-empty, and `n <= i32::MAX`.
+///
+/// Returns `(perm, iperm)` where:
+/// - `perm[new_pos] = old_idx` (forward permutation)
+/// - `iperm[old_idx] = new_pos` (inverse permutation)
+fn call_metis_node_nd(
+    n: usize,
+    xadj: &mut [i32],
+    adjncy: &mut [i32],
+) -> Result<(Vec<i32>, Vec<i32>), SparseError> {
+    let mut options = [0i32; metis_sys::METIS_NOPTIONS as usize];
+    unsafe {
+        metis_sys::METIS_SetDefaultOptions(options.as_mut_ptr());
+    }
+    options[metis_sys::moptions_et_METIS_OPTION_NUMBERING as usize] = 0;
+
+    let mut nvtxs = n as i32;
+    let mut perm_i32 = vec![0i32; n];
+    let mut iperm_i32 = vec![0i32; n];
+
+    let ret = unsafe {
+        metis_sys::METIS_NodeND(
+            &mut nvtxs,
+            xadj.as_mut_ptr(),
+            adjncy.as_mut_ptr(),
+            std::ptr::null_mut(),
+            options.as_mut_ptr(),
+            perm_i32.as_mut_ptr(),
+            iperm_i32.as_mut_ptr(),
+        )
+    };
+
+    if ret != metis_sys::rstatus_et_METIS_OK {
+        let msg = match ret {
+            x if x == metis_sys::rstatus_et_METIS_ERROR_INPUT => {
+                "METIS_ERROR_INPUT: invalid input"
+            }
+            x if x == metis_sys::rstatus_et_METIS_ERROR_MEMORY => {
+                "METIS_ERROR_MEMORY: allocation failure"
+            }
+            x if x == metis_sys::rstatus_et_METIS_ERROR => "METIS_ERROR: general error",
+            _ => "METIS: unknown error code",
+        };
+        return Err(SparseError::AnalysisFailure {
+            reason: format!("{} (return code: {}, dim: {})", msg, ret, n),
+        });
+    }
+
+    Ok((perm_i32, iperm_i32))
 }
 
 /// Extract CSR adjacency arrays (xadj, adjncy) from a symmetric sparse matrix.
