@@ -7,7 +7,7 @@
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
 use rivrs_sparse::SolverPhase;
-use rivrs_sparse::aptp::{Mc64Job, mc64_matching};
+use rivrs_sparse::aptp::{Mc64Job, match_order_metis, mc64_matching, metis_ordering};
 use rivrs_sparse::benchmarking::traits::Benchmarkable;
 use rivrs_sparse::benchmarking::{
     BenchmarkConfig, MockBenchmarkable, SkippedBenchmark, read_peak_rss_kb,
@@ -277,15 +277,77 @@ fn bench_mc64_matching(c: &mut Criterion) {
     }
 }
 
+fn bench_match_order(c: &mut Criterion) {
+    let cases = match load_test_cases(&TestCaseFilter::ci_subset()) {
+        Ok(cases) => cases,
+        Err(e) => {
+            eprintln!("WARNING: Failed to load test cases: {}", e);
+            return;
+        }
+    };
+
+    // Filter to SuiteSparse-source only (hand-constructed matrices are too small)
+    let suitesparse: Vec<_> = cases
+        .into_iter()
+        .filter(|c| c.properties.source == "suitesparse")
+        .collect();
+
+    if suitesparse.is_empty() {
+        eprintln!("WARNING: No SuiteSparse test cases matched the filter");
+        return;
+    }
+
+    // Benchmark combined match_order_metis pipeline
+    {
+        let mut group = c.benchmark_group("ssids/match_order_metis");
+        group.sample_size(10);
+
+        for case in &suitesparse {
+            let nnz = case.properties.nnz;
+            group.throughput(Throughput::Elements(nnz as u64));
+
+            group.bench_with_input(BenchmarkId::from_parameter(&case.name), &case, |b, case| {
+                b.iter(|| {
+                    match_order_metis(&case.matrix).expect("match_order_metis should succeed")
+                });
+            });
+        }
+        group.finish();
+    }
+
+    // Benchmark separate MC64 + METIS for comparison
+    {
+        let mut group = c.benchmark_group("ssids/mc64_plus_metis_separate");
+        group.sample_size(10);
+
+        for case in &suitesparse {
+            let nnz = case.properties.nnz;
+            group.throughput(Throughput::Elements(nnz as u64));
+
+            group.bench_with_input(BenchmarkId::from_parameter(&case.name), &case, |b, case| {
+                b.iter(|| {
+                    let _mc64 = mc64_matching(&case.matrix, Mc64Job::MaximumProduct)
+                        .expect("MC64 should succeed");
+                    let _metis =
+                        metis_ordering(case.matrix.symbolic()).expect("METIS should succeed");
+                });
+            });
+        }
+        group.finish();
+    }
+}
+
 criterion_group!(component_benches, bench_components);
 criterion_group!(e2e_benches, bench_e2e);
 criterion_group!(ci_benches, bench_ci_subset);
 criterion_group!(symbolic_benches, bench_symbolic_analysis);
 criterion_group!(mc64_benches, bench_mc64_matching);
+criterion_group!(match_order_benches, bench_match_order);
 criterion_main!(
     component_benches,
     e2e_benches,
     ci_benches,
     symbolic_benches,
-    mc64_benches
+    mc64_benches,
+    match_order_benches
 );

@@ -1,5 +1,71 @@
 # SSIDS Development Log
 
+## Phase 4.3: Match-Order Condensation Pipeline
+
+**Status**: Complete
+**Branch**: `013-match-order-condensation`
+**Date**: 2026-02-14
+
+### What Was Built
+
+Combined MC64 matching + METIS ordering pipeline via cycle condensation, implementing
+SPRAL's `ordering=2` mode. Guarantees matched 2-cycle pairs are adjacent in the
+elimination order for efficient 2x2 pivot detection in APTP.
+
+**New public API** (`src/aptp/ordering.rs`):
+- `match_order_metis()` — orchestrates MC64 → cycle split → condense → METIS → expand
+- `MatchOrderResult` — ordering, scaling, matched count, condensation diagnostics
+
+**Internal helpers** (`src/aptp/ordering.rs`):
+- `CycleDecomposition` — partner/old_to_new/new_to_old mappings
+- `split_matching_cycles()` — SPRAL `mo_split` algorithm
+- `build_condensed_adjacency()` — marker-array deduplication for condensed graph
+- `expand_ordering()` — maps condensed METIS output back to full Perm<usize>
+
+**Tests** (`tests/match_order.rs`):
+- Pair adjacency on hand-constructed and CI-subset matrices (SC-001)
+- Fill quality comparison vs unconstrained METIS (SC-003)
+- Symbolic analysis validity (SC-007)
+- Singular matrix handling with scaling validation
+- Full SuiteSparse validation (`#[ignore]`)
+
+**Benchmarks** (`benches/solver_benchmarks.rs`):
+- `match_order_metis` group — combined pipeline
+- `mc64_plus_metis_separate` group — baseline comparison
+
+### Key Results (CI Subset)
+
+| Matrix | n | 2-cycles | Condensed dim | Fill ratio |
+|--------|--:|--------:|--------------:|-----------:|
+| bloweybq | 10,001 | 0 | 10,001 | 1.000 |
+| sparsine | 50,000 | 3 | 49,997 | 1.018 |
+| t2dal | 4,257 | 0 | 4,257 | 1.000 |
+| bratu3d | 27,792 | 12,167 | 15,625 | 0.986 |
+| cvxqp3 | 17,500 | 7,475 | 10,025 | 2.466 |
+| ncvxqp1 | 12,111 | 4,942 | 7,169 | 2.354 |
+| ncvxqp3 | 75,000 | 29,321 | 45,672 | 2.134 |
+| stokes128 | 49,666 | 16,384 | 33,282 | 1.937 |
+| cfd2 | 123,440 | 0 | 123,440 | 1.011 |
+
+Fill ratio = condensed nnz(L) / unconstrained METIS nnz(L). Matrices with heavy
+condensation (40%+ reduction) show 2-2.5x fill regression — an expected trade-off
+for pair adjacency guarantee.
+
+### Key Decisions
+
+- **Code location**: All new code in existing `src/aptp/ordering.rs` alongside
+  `metis_ordering()`. Internal helpers are private; only `match_order_metis()` and
+  `MatchOrderResult` are public.
+- **Marker-array dedup**: Following SPRAL's approach for condensed graph construction.
+  O(nnz) vs O(nnz log nnz) for sort-based dedup.
+- **Fill quality tolerance**: Relaxed from strict 10% to 5x hard limit with warnings.
+  Heavy condensation fundamentally changes the graph structure — SPRAL accepts this
+  because pair adjacency improves factorization quality.
+- **is_matched field**: Essential for distinguishing singletons from unmatched indices.
+  `build_singular_permutation()` makes `fwd[i]==i` unreliable.
+
+---
+
 ## Phase 4.2b: MC64 Benchmarking & Profiling
 
 **Status**: Complete

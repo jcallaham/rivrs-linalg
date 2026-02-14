@@ -8,7 +8,7 @@ This directory contains sparse linear algebra solver implementations for rivrs-l
 
 **Parent Project**: rivrs-linalg - Numerical Linear Algebra for Rivrs
 **Domain**: Sparse direct solvers (SSIDS, LDL^T factorization, APTP pivoting)
-**Current Status**: Phase 4 complete — METIS ordering + MC64 matching & scaling. Ready for Phase 5 (Dense APTP Kernel).
+**Current Status**: Phase 4 complete — METIS ordering + MC64 matching & scaling + match-order condensation. Ready for Phase 5 (Dense APTP Kernel).
 
 ### Development docs
 

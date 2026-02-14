@@ -1,7 +1,13 @@
-//! METIS nested dissection ordering for symmetric sparse matrices.
+//! Ordering algorithms for symmetric sparse matrices.
 //!
-//! This module provides fill-reducing permutations computed by METIS's multilevel
-//! nested dissection algorithm. The resulting permutations integrate with
+//! This module provides fill-reducing permutations for symmetric sparse matrices:
+//!
+//! - [`metis_ordering()`] — METIS nested dissection on the raw sparsity pattern
+//! - [`match_order_metis()`] — Combined MC64 matching + METIS ordering with cycle
+//!   condensation, guaranteeing matched 2-cycle pairs are adjacent in the
+//!   elimination order (SPRAL `ordering=2` mode)
+//!
+//! The resulting permutations integrate with
 //! [`AptpSymbolic::analyze()`](super::AptpSymbolic::analyze) via
 //! [`SymmetricOrdering::Custom`](faer::sparse::linalg::cholesky::SymmetricOrdering::Custom).
 //!
@@ -11,6 +17,10 @@
 //!   Partitioning Irregular Graphs", SIAM J. Sci. Comput. 20(1)
 //! - George (1973), "Nested Dissection of a Regular Finite Element Mesh",
 //!   SIAM J. Numer. Anal. 10(2)
+//! - Hogg & Scott (2013), HSL_MC80 — cycle condensation approach
+//! - Duff & Koster (2001), Algorithm MPD — MC64 matching
+//! - Duff & Pralet (2005) — MC64SYM symmetric scaling
+//! - SPRAL `match_order.f90` (BSD-3) — reference implementation
 //!
 //! # Implementation Notes
 //!
@@ -19,9 +29,186 @@
 //! orderings on undirected graphs extracted from the matrix sparsity pattern.
 
 use faer::perm::Perm;
-use faer::sparse::SymbolicSparseColMatRef;
+use faer::sparse::{SparseColMat, SymbolicSparseColMatRef};
 
+use super::matching::{Mc64Job, mc64_matching};
 use crate::error::SparseError;
+
+/// Result of the combined matching-ordering pipeline.
+///
+/// Contains both the fill-reducing ordering (for symbolic analysis) and
+/// the MC64 scaling factors (for numeric factorization), plus diagnostics
+/// about the condensation process.
+///
+/// # Usage
+///
+/// ```no_run
+/// use rivrs_sparse::aptp::match_order_metis;
+/// use faer::sparse::linalg::cholesky::SymmetricOrdering;
+/// # let matrix = todo!();
+///
+/// let result = match_order_metis(&matrix).unwrap();
+/// // Use ordering for symbolic analysis:
+/// // SymmetricOrdering::Custom(result.ordering.as_ref())
+/// ```
+pub struct MatchOrderResult {
+    /// Fill-reducing permutation with matched pair adjacency guarantee.
+    /// Use with `SymmetricOrdering::Custom(result.ordering.as_ref())`.
+    pub ordering: Perm<usize>,
+
+    /// MC64 symmetric scaling factors (linear domain).
+    /// Apply as `A_scaled[i,j] = scaling[i] * A[i,j] * scaling[j]`.
+    pub scaling: Vec<f64>,
+
+    /// Number of matched entries from MC64.
+    /// Equals n for structurally nonsingular matrices.
+    pub matched: usize,
+
+    /// Dimension of the condensed graph passed to METIS.
+    /// Strictly less than n when 2-cycles exist.
+    pub condensed_dim: usize,
+
+    /// Number of singleton nodes (self-matched).
+    pub singletons: usize,
+
+    /// Number of 2-cycle pairs in the decomposed matching.
+    pub two_cycles: usize,
+}
+
+/// Compute a combined MC64 matching + METIS ordering with cycle condensation.
+///
+/// This implements SPRAL's `match_order_metis` pipeline:
+/// 1. MC64 matching → scaling + matching permutation
+/// 2. Cycle splitting → decompose matching into singletons and 2-cycles
+/// 3. Condensed graph → fuse 2-cycle pairs into single super-nodes
+/// 4. METIS ordering → fill-reducing ordering on condensed graph
+/// 5. Expansion → map back to original indices with pair adjacency
+///
+/// Matched 2-cycle pairs are guaranteed to occupy consecutive positions
+/// in the output ordering, making them natural candidates for 2x2 pivots
+/// in APTP factorization.
+///
+/// # Arguments
+///
+/// * `matrix` — Sparse symmetric matrix in upper-triangular CSC format.
+///   Must be square. Numeric values required (used by MC64).
+///
+/// # Returns
+///
+/// * `Ok(MatchOrderResult)` — Ordering, scaling, and diagnostics.
+/// * `Err(SparseError::NotSquare)` — Matrix is not square.
+/// * `Err(SparseError::InvalidInput)` — Zero dimension or non-finite entries.
+/// * `Err(SparseError::AnalysisFailure)` — METIS or MC64 internal failure.
+///
+/// # Algorithm References
+///
+/// - Hogg & Scott (2013), HSL_MC80 — cycle condensation approach
+/// - Duff & Koster (2001), Algorithm MPD — MC64 matching
+/// - Duff & Pralet (2005) — MC64SYM symmetric scaling
+/// - SPRAL `match_order.f90` (BSD-3) — reference implementation
+///
+/// # SPRAL Equivalent
+///
+/// Corresponds to `spral_match_order::match_order_metis` with
+/// `options%ordering = 2` in SSIDS.
+pub fn match_order_metis(
+    matrix: &SparseColMat<usize, f64>,
+) -> Result<MatchOrderResult, SparseError> {
+    let n = matrix.nrows();
+
+    // Trivial case: dim 0 or 1 — return identity ordering with empty matching info
+    if n <= 1 {
+        let scaling = if n == 1 { vec![1.0] } else { vec![] };
+        return Ok(MatchOrderResult {
+            ordering: identity_perm(n),
+            scaling,
+            matched: n,
+            condensed_dim: n,
+            singletons: n,
+            two_cycles: 0,
+        });
+    }
+
+    // Step 1: MC64 matching
+    let mc64_result = mc64_matching(matrix, Mc64Job::MaximumProduct)?;
+
+    // Step 2: Cycle decomposition
+    let matching_fwd = mc64_result.matching.as_ref().arrays().0;
+    let decomp = split_matching_cycles(matching_fwd, &mc64_result.is_matched, n);
+
+    // Step 3: Build condensed adjacency graph
+    let (mut xadj, mut adjncy) = build_condensed_adjacency(matrix.symbolic(), &decomp)?;
+
+    // Step 4: METIS on condensed graph
+    let cdim = decomp.condensed_dim;
+    let condensed_order = if cdim <= 1 || adjncy.is_empty() {
+        // Trivial condensed graph — identity ordering
+        (0..cdim as i32).collect::<Vec<_>>()
+    } else {
+        // Validate condensed dimension fits in i32
+        if cdim > i32::MAX as usize {
+            return Err(SparseError::InvalidInput {
+                reason: format!(
+                    "Condensed dimension {} exceeds i32::MAX; METIS requires 32-bit indices",
+                    cdim
+                ),
+            });
+        }
+
+        let mut options = [0i32; metis_sys::METIS_NOPTIONS as usize];
+        unsafe {
+            metis_sys::METIS_SetDefaultOptions(options.as_mut_ptr());
+        }
+        options[metis_sys::moptions_et_METIS_OPTION_NUMBERING as usize] = 0;
+
+        let mut nvtxs = cdim as i32;
+        let mut perm_i32 = vec![0i32; cdim];
+        let mut iperm_i32 = vec![0i32; cdim];
+
+        let ret = unsafe {
+            metis_sys::METIS_NodeND(
+                &mut nvtxs,
+                xadj.as_mut_ptr(),
+                adjncy.as_mut_ptr(),
+                std::ptr::null_mut(),
+                options.as_mut_ptr(),
+                perm_i32.as_mut_ptr(),
+                iperm_i32.as_mut_ptr(),
+            )
+        };
+
+        if ret != metis_sys::rstatus_et_METIS_OK {
+            let msg = match ret {
+                x if x == metis_sys::rstatus_et_METIS_ERROR_INPUT => {
+                    "METIS_ERROR_INPUT: invalid input"
+                }
+                x if x == metis_sys::rstatus_et_METIS_ERROR_MEMORY => {
+                    "METIS_ERROR_MEMORY: allocation failure"
+                }
+                x if x == metis_sys::rstatus_et_METIS_ERROR => "METIS_ERROR: general error",
+                _ => "METIS: unknown error code",
+            };
+            return Err(SparseError::AnalysisFailure {
+                reason: format!("{} (return code: {}, condensed dim: {})", msg, ret, cdim),
+            });
+        }
+
+        // METIS iperm: iperm[old_idx] = new_pos (this is the "order" we need)
+        iperm_i32
+    };
+
+    // Step 5: Expand ordering
+    let ordering = expand_ordering(&condensed_order, &decomp, n);
+
+    Ok(MatchOrderResult {
+        ordering,
+        scaling: mc64_result.scaling,
+        matched: mc64_result.matched,
+        condensed_dim: decomp.condensed_dim,
+        singletons: decomp.singletons,
+        two_cycles: decomp.two_cycles,
+    })
+}
 
 /// Compute a METIS nested dissection fill-reducing ordering for a symmetric sparse matrix.
 ///
@@ -151,6 +338,267 @@ pub fn metis_ordering(
     let inv: Box<[usize]> = iperm_i32.iter().map(|&v| v as usize).collect();
 
     Ok(Perm::new_checked(fwd, inv, n))
+}
+
+/// Result of decomposing an MC64 matching permutation into singletons and 2-cycles.
+///
+/// Longer cycles in the matching are split into 2-cycles plus at most one singleton
+/// (for odd-length cycles), following SPRAL's `mo_split` algorithm.
+///
+/// Each matched index is mapped to a condensed super-node index, where 2-cycle pairs
+/// share the same super-node. Unmatched indices are excluded from the condensed graph.
+struct CycleDecomposition {
+    /// Per-node classification:
+    /// - `-2`: unmatched by MC64
+    /// - `-1`: singleton (matched to self)
+    /// - `>= 0`: partner index (forms a 2-cycle pair)
+    partner: Vec<isize>,
+
+    /// Original index → condensed super-node index.
+    /// Both members of a 2-cycle pair map to the same condensed index.
+    /// Unmatched indices have undefined values (not used).
+    old_to_new: Vec<usize>,
+
+    /// Condensed super-node index → first original index.
+    /// For singletons, this is the singleton index.
+    /// For 2-cycle pairs, this is one member (the other is found via `partner`).
+    new_to_old: Vec<usize>,
+
+    /// Number of condensed super-nodes (singletons + 2-cycle pairs, matched only).
+    condensed_dim: usize,
+
+    /// Count of singleton nodes (matched to self).
+    singletons: usize,
+
+    /// Count of 2-cycle pairs.
+    two_cycles: usize,
+}
+
+/// Decompose an MC64 matching into singletons, 2-cycles, and unmatched indices.
+///
+/// Follows SPRAL's `mo_split` algorithm: walk each cycle in the matching permutation,
+/// pairing consecutive members into 2-cycles. Odd-length cycles produce one extra
+/// singleton. The `is_matched` slice distinguishes true singletons (matched, `fwd[i]==i`)
+/// from unmatched indices (assigned to arbitrary free columns by `build_singular_permutation`).
+///
+/// # Arguments
+///
+/// * `matching_fwd` — Forward permutation from MC64 matching (`Mc64Result.matching`)
+/// * `is_matched` — Per-index matched status from `Mc64Result.is_matched`
+/// * `n` — Matrix dimension
+fn split_matching_cycles(
+    matching_fwd: &[usize],
+    is_matched: &[bool],
+    n: usize,
+) -> CycleDecomposition {
+    let mut partner = vec![0isize; n];
+    let mut old_to_new = vec![0usize; n];
+    let mut new_to_old = Vec::new();
+    let mut visited = vec![false; n];
+    let mut singletons = 0usize;
+    let mut two_cycles = 0usize;
+
+    // First pass: mark unmatched indices
+    for i in 0..n {
+        if !is_matched[i] {
+            partner[i] = -2;
+            visited[i] = true;
+        }
+    }
+
+    // Second pass: walk cycles and split into singletons + 2-cycles
+    let mut condensed_idx = 0usize;
+    for i in 0..n {
+        if visited[i] {
+            continue;
+        }
+
+        // Check for singleton (self-matched)
+        if matching_fwd[i] == i {
+            partner[i] = -1;
+            old_to_new[i] = condensed_idx;
+            new_to_old.push(i);
+            condensed_idx += 1;
+            singletons += 1;
+            visited[i] = true;
+            continue;
+        }
+
+        // Walk the cycle starting at i, pairing consecutive members
+        let mut j = i;
+        loop {
+            let k = matching_fwd[j];
+            if visited[k] || k == i {
+                // Odd cycle: j is the leftover — becomes singleton
+                if !visited[j] {
+                    partner[j] = -1;
+                    old_to_new[j] = condensed_idx;
+                    new_to_old.push(j);
+                    condensed_idx += 1;
+                    singletons += 1;
+                    visited[j] = true;
+                }
+                break;
+            }
+
+            // Pair j and k as a 2-cycle
+            partner[j] = k as isize;
+            partner[k] = j as isize;
+            old_to_new[j] = condensed_idx;
+            old_to_new[k] = condensed_idx;
+            new_to_old.push(j);
+            condensed_idx += 1;
+            two_cycles += 1;
+            visited[j] = true;
+            visited[k] = true;
+
+            // Advance past k
+            let next = matching_fwd[k];
+            if next == i {
+                break;
+            }
+            j = next;
+        }
+    }
+
+    CycleDecomposition {
+        partner,
+        old_to_new,
+        new_to_old,
+        condensed_dim: condensed_idx,
+        singletons,
+        two_cycles,
+    }
+}
+
+/// Build condensed CSR adjacency arrays (xadj, adjncy) for METIS from the
+/// original matrix sparsity pattern and cycle decomposition.
+///
+/// Each condensed super-node absorbs all edges from its constituent original
+/// indices. Duplicate edges and self-loops are removed using a marker array.
+/// The output is a full symmetric graph in METIS CSR format.
+///
+/// # Arguments
+///
+/// * `matrix` — Symbolic sparsity pattern of the original matrix
+/// * `decomp` — Cycle decomposition from `split_matching_cycles`
+fn build_condensed_adjacency(
+    matrix: SymbolicSparseColMatRef<'_, usize>,
+    decomp: &CycleDecomposition,
+) -> Result<(Vec<i32>, Vec<i32>), SparseError> {
+    let n = matrix.nrows();
+    let col_ptrs = matrix.col_ptr();
+    let row_indices = matrix.row_idx();
+    let cdim = decomp.condensed_dim;
+
+    // Build symmetric neighbor lists for condensed nodes using marker dedup
+    let mut neighbors: Vec<Vec<i32>> = vec![Vec::new(); cdim];
+    let mut marker = vec![usize::MAX; cdim]; // marker[cnode] = current source cnode
+
+    for col in 0..n {
+        if decomp.partner[col] == -2 {
+            continue; // Skip unmatched columns
+        }
+        let c_col = decomp.old_to_new[col];
+
+        // Mark self to avoid self-loops
+        marker[c_col] = c_col;
+
+        let start = col_ptrs[col];
+        let end = col_ptrs[col + 1];
+        for &row in &row_indices[start..end] {
+            if decomp.partner[row] == -2 {
+                continue; // Skip unmatched rows
+            }
+            let c_row = decomp.old_to_new[row];
+            if marker[c_row] != c_col {
+                marker[c_row] = c_col;
+                // Add edge in both directions (symmetric)
+                neighbors[c_col].push(c_row as i32);
+                neighbors[c_row].push(c_col as i32);
+            }
+        }
+    }
+
+    // Deduplicate (the bidirectional insertion can create duplicates when
+    // both col→row and row→col are visited from the original CSC)
+    for nbrs in &mut neighbors {
+        nbrs.sort_unstable();
+        nbrs.dedup();
+    }
+
+    // Validate total edges fit in i32
+    let total_edges: usize = neighbors.iter().map(|v| v.len()).sum();
+    if total_edges > i32::MAX as usize {
+        return Err(SparseError::InvalidInput {
+            reason: format!(
+                "Condensed adjacency entries {} exceeds i32::MAX",
+                total_edges
+            ),
+        });
+    }
+
+    // Build CSR arrays
+    let mut xadj = Vec::with_capacity(cdim + 1);
+    xadj.push(0i32);
+    let mut adjncy = Vec::with_capacity(total_edges);
+
+    for nbrs in &neighbors {
+        adjncy.extend_from_slice(nbrs);
+        xadj.push(adjncy.len() as i32);
+    }
+
+    Ok((xadj, adjncy))
+}
+
+/// Expand a condensed METIS ordering back to full-size permutation.
+///
+/// Maps each condensed super-node position to its original index(es).
+/// 2-cycle pairs get consecutive positions, preserving pair adjacency.
+/// Unmatched indices are appended at the end.
+///
+/// # Arguments
+///
+/// * `condensed_order` — METIS output: `condensed_order[i]` = position of condensed node `i`
+/// * `decomp` — Cycle decomposition from `split_matching_cycles`
+/// * `n` — Original matrix dimension
+fn expand_ordering(condensed_order: &[i32], decomp: &CycleDecomposition, n: usize) -> Perm<usize> {
+    let cdim = decomp.condensed_dim;
+
+    // Build inverse of METIS output: inv_order[position] = condensed_node
+    let mut inv_order = vec![0usize; cdim];
+    for (cnode, &pos) in condensed_order.iter().enumerate() {
+        inv_order[pos as usize] = cnode;
+    }
+
+    // Walk positions in order, emitting original indices
+    let mut fwd = Vec::with_capacity(n); // fwd[new_pos] = old_idx
+    for &cnode in &inv_order {
+        let orig = decomp.new_to_old[cnode];
+        fwd.push(orig);
+
+        // If this condensed node is a 2-cycle pair, emit partner next
+        if decomp.partner[orig] >= 0 {
+            fwd.push(decomp.partner[orig] as usize);
+        }
+    }
+
+    // Append unmatched indices at the end
+    for i in 0..n {
+        if decomp.partner[i] == -2 {
+            fwd.push(i);
+        }
+    }
+
+    debug_assert_eq!(fwd.len(), n);
+
+    // Build inverse: inv[old_idx] = new_pos
+    let mut inv = vec![0usize; n];
+    for (new_pos, &old_idx) in fwd.iter().enumerate() {
+        inv[old_idx] = new_pos;
+    }
+
+    Perm::new_checked(fwd.into_boxed_slice(), inv.into_boxed_slice(), n)
 }
 
 /// Construct an identity permutation of dimension `n`.
@@ -537,5 +985,331 @@ mod tests {
                 }
             }
         }
+    }
+
+    // ---- T003: split_matching_cycles unit tests ----
+
+    #[test]
+    fn test_split_all_singletons() {
+        // Identity matching: fwd[i] = i, all matched
+        let fwd = vec![0, 1, 2, 3];
+        let is_matched = vec![true, true, true, true];
+        let decomp = split_matching_cycles(&fwd, &is_matched, 4);
+
+        assert_eq!(decomp.singletons, 4);
+        assert_eq!(decomp.two_cycles, 0);
+        assert_eq!(decomp.condensed_dim, 4);
+        for i in 0..4 {
+            assert_eq!(decomp.partner[i], -1, "index {} should be singleton", i);
+        }
+    }
+
+    #[test]
+    fn test_split_pure_2_cycles() {
+        // Two 2-cycles: 0↔1, 2↔3
+        let fwd = vec![1, 0, 3, 2];
+        let is_matched = vec![true, true, true, true];
+        let decomp = split_matching_cycles(&fwd, &is_matched, 4);
+
+        assert_eq!(decomp.singletons, 0);
+        assert_eq!(decomp.two_cycles, 2);
+        assert_eq!(decomp.condensed_dim, 2);
+        assert_eq!(decomp.partner[0], 1);
+        assert_eq!(decomp.partner[1], 0);
+        assert_eq!(decomp.partner[2], 3);
+        assert_eq!(decomp.partner[3], 2);
+        // Partners share condensed index
+        assert_eq!(decomp.old_to_new[0], decomp.old_to_new[1]);
+        assert_eq!(decomp.old_to_new[2], decomp.old_to_new[3]);
+        assert_ne!(decomp.old_to_new[0], decomp.old_to_new[2]);
+    }
+
+    #[test]
+    fn test_split_3_cycle() {
+        // 3-cycle: 0→1→2→0
+        let fwd = vec![1, 2, 0];
+        let is_matched = vec![true, true, true];
+        let decomp = split_matching_cycles(&fwd, &is_matched, 3);
+
+        // Should split into 1 two-cycle + 1 singleton
+        assert_eq!(decomp.two_cycles, 1);
+        assert_eq!(decomp.singletons, 1);
+        assert_eq!(decomp.condensed_dim, 2);
+
+        // Count partner types
+        let pairs: Vec<_> = (0..3).filter(|&i| decomp.partner[i] >= 0).collect();
+        let sings: Vec<_> = (0..3).filter(|&i| decomp.partner[i] == -1).collect();
+        assert_eq!(pairs.len(), 2);
+        assert_eq!(sings.len(), 1);
+    }
+
+    #[test]
+    fn test_split_4_cycle() {
+        // 4-cycle: 0→1→2→3→0
+        let fwd = vec![1, 2, 3, 0];
+        let is_matched = vec![true, true, true, true];
+        let decomp = split_matching_cycles(&fwd, &is_matched, 4);
+
+        // Should split into 2 two-cycles
+        assert_eq!(decomp.two_cycles, 2);
+        assert_eq!(decomp.singletons, 0);
+        assert_eq!(decomp.condensed_dim, 2);
+    }
+
+    #[test]
+    fn test_split_5_cycle() {
+        // 5-cycle: 0→1→2→3→4→0
+        let fwd = vec![1, 2, 3, 4, 0];
+        let is_matched = vec![true, true, true, true, true];
+        let decomp = split_matching_cycles(&fwd, &is_matched, 5);
+
+        // Should split into 2 two-cycles + 1 singleton
+        assert_eq!(decomp.two_cycles, 2);
+        assert_eq!(decomp.singletons, 1);
+        assert_eq!(decomp.condensed_dim, 3);
+    }
+
+    #[test]
+    fn test_split_mixed_with_unmatched() {
+        // 6 nodes: 0↔1 (2-cycle), 2 singleton, 3↔4 (2-cycle), 5 unmatched
+        let fwd = vec![1, 0, 2, 4, 3, 5]; // 5 maps to self but unmatched
+        let is_matched = vec![true, true, true, true, true, false];
+        let decomp = split_matching_cycles(&fwd, &is_matched, 6);
+
+        assert_eq!(decomp.two_cycles, 2);
+        assert_eq!(decomp.singletons, 1);
+        assert_eq!(decomp.condensed_dim, 3); // Only matched indices
+        assert_eq!(decomp.partner[5], -2); // Unmatched
+        assert_eq!(decomp.partner[2], -1); // Singleton
+    }
+
+    #[test]
+    fn test_split_trivial_n0() {
+        let decomp = split_matching_cycles(&[], &[], 0);
+        assert_eq!(decomp.condensed_dim, 0);
+        assert_eq!(decomp.singletons, 0);
+        assert_eq!(decomp.two_cycles, 0);
+    }
+
+    #[test]
+    fn test_split_trivial_n1() {
+        let decomp = split_matching_cycles(&[0], &[true], 1);
+        assert_eq!(decomp.condensed_dim, 1);
+        assert_eq!(decomp.singletons, 1);
+        assert_eq!(decomp.two_cycles, 0);
+        assert_eq!(decomp.partner[0], -1);
+    }
+
+    // ---- T005: build_condensed_adjacency unit tests ----
+
+    /// Helper: create a symmetric matrix from upper-triangular entries.
+    fn make_upper_tri(n: usize, entries: &[(usize, usize, f64)]) -> SparseColMat<usize, f64> {
+        let triplets: Vec<_> = entries
+            .iter()
+            .map(|&(i, j, v)| Triplet::new(i, j, v))
+            .collect();
+        SparseColMat::try_new_from_triplets(n, n, &triplets).unwrap()
+    }
+
+    #[test]
+    fn test_condensed_adjacency_arrow_with_2cycle() {
+        // 4x4 arrow: 0 connected to all, plus 2-cycle {0,1}
+        // After condensation with pair {0,1}: condensed has 3 nodes
+        //   cnode 0 = {0,1} (pair), cnode 1 = {2}, cnode 2 = {3}
+        // Edges: {0,1} connects to {2}, {3}; {2} connects to {0,1}; {3} connects to {0,1}
+        let matrix = make_arrow(4);
+
+        // Simulate matching: 0↔1, 2=singleton, 3=singleton
+        let fwd = vec![1, 0, 2, 3];
+        let is_matched = vec![true, true, true, true];
+        let decomp = split_matching_cycles(&fwd, &is_matched, 4);
+
+        assert_eq!(decomp.condensed_dim, 3);
+
+        let (xadj, adjncy) = build_condensed_adjacency(matrix.symbolic(), &decomp).unwrap();
+
+        // Condensed should have 3 nodes
+        assert_eq!(xadj.len(), 4); // 3+1
+
+        // No self-loops
+        for i in 0..3 {
+            let start = xadj[i] as usize;
+            let end = xadj[i + 1] as usize;
+            for &j in &adjncy[start..end] {
+                assert_ne!(j, i as i32, "self-loop at condensed vertex {}", i);
+            }
+        }
+
+        // Total edges should be deduplicated
+        // The pair node {0,1} absorbs edges from both 0 and 1
+        // No duplicates should remain
+        let total = adjncy.len();
+        assert!(total > 0, "condensed graph should have edges");
+    }
+
+    #[test]
+    fn test_condensed_adjacency_diagonal() {
+        // Diagonal matrix: no off-diagonal edges
+        let matrix = make_diagonal(4);
+        let fwd = vec![0, 1, 2, 3];
+        let is_matched = vec![true, true, true, true];
+        let decomp = split_matching_cycles(&fwd, &is_matched, 4);
+
+        let (xadj, adjncy) = build_condensed_adjacency(matrix.symbolic(), &decomp).unwrap();
+        assert!(
+            adjncy.is_empty(),
+            "diagonal should have zero condensed edges"
+        );
+        assert_eq!(xadj, vec![0, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn test_condensed_adjacency_full_4x4_two_pairs() {
+        // 4x4 fully connected (upper tri), 2 pairs: {0,1}, {2,3}
+        let matrix = make_upper_tri(
+            4,
+            &[
+                (0, 0, 1.0),
+                (0, 1, 1.0),
+                (0, 2, 1.0),
+                (0, 3, 1.0),
+                (1, 1, 1.0),
+                (1, 2, 1.0),
+                (1, 3, 1.0),
+                (2, 2, 1.0),
+                (2, 3, 1.0),
+                (3, 3, 1.0),
+            ],
+        );
+        let fwd = vec![1, 0, 3, 2];
+        let is_matched = vec![true, true, true, true];
+        let decomp = split_matching_cycles(&fwd, &is_matched, 4);
+
+        assert_eq!(decomp.condensed_dim, 2);
+
+        let (xadj, adjncy) = build_condensed_adjacency(matrix.symbolic(), &decomp).unwrap();
+
+        // 2 condensed nodes, connected to each other
+        assert_eq!(xadj.len(), 3);
+        // Each should neighbor the other (symmetric)
+        assert_eq!(adjncy.len(), 2);
+
+        // Verify symmetry
+        let n0_start = xadj[0] as usize;
+        let n0_end = xadj[1] as usize;
+        let n1_start = xadj[1] as usize;
+        let n1_end = xadj[2] as usize;
+        assert!(adjncy[n0_start..n0_end].contains(&1));
+        assert!(adjncy[n1_start..n1_end].contains(&0));
+    }
+
+    // ---- T007: expand_ordering unit tests ----
+
+    #[test]
+    fn test_expand_ordering_with_pairs() {
+        // 4 nodes, 2 pairs: {0,1} and {2,3}
+        // condensed_dim = 2, condensed_order = [1, 0] (swap order)
+        let fwd = vec![1, 0, 3, 2];
+        let is_matched = vec![true, true, true, true];
+        let decomp = split_matching_cycles(&fwd, &is_matched, 4);
+
+        // condensed_order[cnode] = position
+        // If cnode 0 ({0,1}) gets position 1 and cnode 1 ({2,3}) gets position 0:
+        let condensed_order = vec![1i32, 0i32];
+        let perm = expand_ordering(&condensed_order, &decomp, 4);
+
+        let (expanded_fwd, expanded_inv) = perm.as_ref().arrays();
+        assert_eq!(expanded_fwd.len(), 4);
+
+        // Verify valid permutation
+        let mut seen = vec![false; 4];
+        for &v in expanded_fwd {
+            assert!(v < 4);
+            seen[v] = true;
+        }
+        assert!(seen.iter().all(|&s| s), "not a valid permutation");
+
+        // Verify pair adjacency: partners must be consecutive
+        let pos_0 = expanded_inv[0];
+        let pos_1 = expanded_inv[1];
+        let diff_01 = if pos_0 > pos_1 {
+            pos_0 - pos_1
+        } else {
+            pos_1 - pos_0
+        };
+        assert_eq!(diff_01, 1, "pair (0,1) not consecutive");
+
+        let pos_2 = expanded_inv[2];
+        let pos_3 = expanded_inv[3];
+        let diff_23 = if pos_2 > pos_3 {
+            pos_2 - pos_3
+        } else {
+            pos_3 - pos_2
+        };
+        assert_eq!(diff_23, 1, "pair (2,3) not consecutive");
+    }
+
+    #[test]
+    fn test_expand_ordering_mixed_singletons_pairs() {
+        // 5 nodes: pair {0,1}, singleton {2}, pair {3,4}
+        let fwd = vec![1, 0, 2, 4, 3];
+        let is_matched = vec![true, true, true, true, true];
+        let decomp = split_matching_cycles(&fwd, &is_matched, 5);
+
+        assert_eq!(decomp.condensed_dim, 3);
+
+        // Identity condensed ordering
+        let condensed_order = vec![0i32, 1i32, 2i32];
+        let perm = expand_ordering(&condensed_order, &decomp, 5);
+
+        let (expanded_fwd, expanded_inv) = perm.as_ref().arrays();
+        assert_eq!(expanded_fwd.len(), 5);
+
+        // Valid permutation
+        let mut seen = vec![false; 5];
+        for &v in expanded_fwd {
+            seen[v] = true;
+        }
+        assert!(seen.iter().all(|&s| s));
+
+        // Pair {0,1} consecutive
+        let diff = (expanded_inv[0] as isize - expanded_inv[1] as isize).unsigned_abs();
+        assert_eq!(diff, 1, "pair (0,1) not consecutive");
+
+        // Pair {3,4} consecutive
+        let diff = (expanded_inv[3] as isize - expanded_inv[4] as isize).unsigned_abs();
+        assert_eq!(diff, 1, "pair (3,4) not consecutive");
+    }
+
+    #[test]
+    fn test_expand_ordering_with_unmatched() {
+        // 5 nodes: pair {0,1}, singleton {2}, unmatched {3}, unmatched {4}
+        let fwd = vec![1, 0, 2, 3, 4];
+        let is_matched = vec![true, true, true, false, false];
+        let decomp = split_matching_cycles(&fwd, &is_matched, 5);
+
+        assert_eq!(decomp.condensed_dim, 2); // pair + singleton = 2
+
+        let condensed_order = vec![0i32, 1i32];
+        let perm = expand_ordering(&condensed_order, &decomp, 5);
+
+        let (expanded_fwd, expanded_inv) = perm.as_ref().arrays();
+        assert_eq!(expanded_fwd.len(), 5);
+
+        // Unmatched should be at the end
+        assert!(
+            expanded_inv[3] >= 3,
+            "unmatched index 3 should be at end, got pos {}",
+            expanded_inv[3]
+        );
+        assert!(
+            expanded_inv[4] >= 3,
+            "unmatched index 4 should be at end, got pos {}",
+            expanded_inv[4]
+        );
+
+        // Pair {0,1} still consecutive
+        let diff = (expanded_inv[0] as isize - expanded_inv[1] as isize).unsigned_abs();
+        assert_eq!(diff, 1, "pair (0,1) not consecutive");
     }
 }

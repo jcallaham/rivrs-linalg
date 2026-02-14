@@ -19,8 +19,8 @@
 
 **Purpose**: Create test scaffolding and result type
 
-- [ ] T001 Create integration test file `tests/match_order.rs` with imports for `rivrs_sparse::aptp`, `faer::sparse`, and common test helpers; add empty test functions as placeholders for US1/US2/US3 tests
-- [ ] T002 Define `MatchOrderResult` struct with fields (`ordering`, `scaling`, `matched`, `condensed_dim`, `singletons`, `two_cycles`) and rustdoc in `src/aptp/ordering.rs`; add re-exports (`MatchOrderResult`, `match_order_metis`) to `src/aptp/mod.rs`
+- [X] T001 Create integration test file `tests/match_order.rs` with imports for `rivrs_sparse::aptp`, `faer::sparse`, and common test helpers; add empty test functions as placeholders for US1/US2/US3 tests
+- [X] T002 Define `MatchOrderResult` struct with fields (`ordering`, `scaling`, `matched`, `condensed_dim`, `singletons`, `two_cycles`) and rustdoc in `src/aptp/ordering.rs`; add re-exports (`MatchOrderResult`, `match_order_metis`) to `src/aptp/mod.rs`
 
 ---
 
@@ -32,18 +32,18 @@
 
 ### Cycle Decomposition
 
-- [ ] T003 Write unit tests for `split_matching_cycles()` in `src/aptp/ordering.rs` `#[cfg(test)]` module: (a) all-singletons matching (all matched, fwd[i]=i) → all partner=-1, condensed_dim=n; (b) pure 2-cycles [0↔1, 2↔3] (all matched) → partner[0]=1, partner[1]=0, condensed_dim=n/2; (c) 3-cycle [0→1→2→0] → split into 2-cycle {0,1} + singleton {2}; (d) 4-cycle [0→1→2→3→0] → split into 2-cycles {0,1} + {2,3}; (e) 5-cycle [0→1→2→3→4→0] → split into 2-cycles {0,1} + {2,3} + singleton {4}; (f) mixed: singletons + 2-cycles + unmatched (partner=-2, using is_matched=false); (g) trivial n=0 and n=1 cases. Verify tests FAIL (no implementation yet).
-- [ ] T004 Implement `CycleDecomposition` struct and `fn split_matching_cycles(matching_fwd: &[usize], is_matched: &[bool], n: usize) -> CycleDecomposition` in `src/aptp/ordering.rs`. The `is_matched` slice (from `Mc64Result.is_matched`) distinguishes true singletons (matched, fwd[i]==i) from unmatched indices (not matched, partner=-2). Algorithm: for each index, check is_matched first — unmatched indices get partner=-2 and are excluded from condensed graph; for matched indices, walk cycles via forward array, pair consecutive members into 2-cycles, odd-one-out becomes singleton. Build `old_to_new`/`new_to_old` mappings (matched only). Verify T003 tests PASS.
+- [X] T003 Write unit tests for `split_matching_cycles()` in `src/aptp/ordering.rs` `#[cfg(test)]` module: (a) all-singletons matching (all matched, fwd[i]=i) → all partner=-1, condensed_dim=n; (b) pure 2-cycles [0↔1, 2↔3] (all matched) → partner[0]=1, partner[1]=0, condensed_dim=n/2; (c) 3-cycle [0→1→2→0] → split into 2-cycle {0,1} + singleton {2}; (d) 4-cycle [0→1→2→3→0] → split into 2-cycles {0,1} + {2,3}; (e) 5-cycle [0→1→2→3→4→0] → split into 2-cycles {0,1} + {2,3} + singleton {4}; (f) mixed: singletons + 2-cycles + unmatched (partner=-2, using is_matched=false); (g) trivial n=0 and n=1 cases. Verify tests FAIL (no implementation yet).
+- [X] T004 Implement `CycleDecomposition` struct and `fn split_matching_cycles(matching_fwd: &[usize], is_matched: &[bool], n: usize) -> CycleDecomposition` in `src/aptp/ordering.rs`. The `is_matched` slice (from `Mc64Result.is_matched`) distinguishes true singletons (matched, fwd[i]==i) from unmatched indices (not matched, partner=-2). Algorithm: for each index, check is_matched first — unmatched indices get partner=-2 and are excluded from condensed graph; for matched indices, walk cycles via forward array, pair consecutive members into 2-cycles, odd-one-out becomes singleton. Build `old_to_new`/`new_to_old` mappings (matched only). Verify T003 tests PASS.
 
 ### Condensed Graph Construction
 
-- [ ] T005 Write unit tests for `build_condensed_adjacency()` in `src/aptp/ordering.rs` `#[cfg(test)]` module: (a) 4x4 arrow matrix with known 2-cycle → verify condensed dimension is 3 (2 singletons + 1 pair), edges are deduplicated, no self-loops; (b) diagonal matrix → condensed graph has zero edges; (c) fully-connected 4x4 with 2 pairs → verify all edges merged correctly. Verify tests FAIL.
-- [ ] T006 Implement `fn build_condensed_adjacency(matrix: SymbolicSparseColMatRef<'_, usize>, decomp: &CycleDecomposition) -> Result<(Vec<i32>, Vec<i32>), SparseError>` in `src/aptp/ordering.rs`. Returns `(xadj, adjncy)` in METIS CSR convention. Algorithm: iterate original columns, map row indices via `old_to_new`, use marker array for deduplication, skip self-loops and unmatched rows, build full symmetric CSR suitable for METIS. Verify T005 tests PASS.
+- [X] T005 Write unit tests for `build_condensed_adjacency()` in `src/aptp/ordering.rs` `#[cfg(test)]` module: (a) 4x4 arrow matrix with known 2-cycle → verify condensed dimension is 3 (2 singletons + 1 pair), edges are deduplicated, no self-loops; (b) diagonal matrix → condensed graph has zero edges; (c) fully-connected 4x4 with 2 pairs → verify all edges merged correctly. Verify tests FAIL.
+- [X] T006 Implement `fn build_condensed_adjacency(matrix: SymbolicSparseColMatRef<'_, usize>, decomp: &CycleDecomposition) -> Result<(Vec<i32>, Vec<i32>), SparseError>` in `src/aptp/ordering.rs`. Returns `(xadj, adjncy)` in METIS CSR convention. Algorithm: iterate original columns, map row indices via `old_to_new`, use marker array for deduplication, skip self-loops and unmatched rows, build full symmetric CSR suitable for METIS. Verify T005 tests PASS.
 
 ### Ordering Expansion
 
-- [ ] T007 Write unit tests for `expand_ordering()` in `src/aptp/ordering.rs` `#[cfg(test)]` module: (a) 4-node condensed order [1,0] with 2 pairs → verify both pairs consecutive in output, valid permutation; (b) mixed singletons + pairs → verify singletons at correct positions, pairs consecutive; (c) with unmatched indices → verify unmatched appended at end. Note: `expand_ordering` takes `(condensed_order: &[i32], decomp: &CycleDecomposition, n: usize)` — inverse is computed internally. Verify tests FAIL.
-- [ ] T008 Implement `fn expand_ordering(condensed_order: &[i32], decomp: &CycleDecomposition, n: usize) -> Perm<usize>` in `src/aptp/ordering.rs`. Algorithm: build inverse of METIS output internally (`inv_order[order[i]] = i`), walk positions 0..condensed_dim, for each condensed node emit original index(es) via `new_to_old` + `partner`, matched pairs get consecutive positions, unmatched appended at end. Verify T007 tests PASS.
+- [X] T007 Write unit tests for `expand_ordering()` in `src/aptp/ordering.rs` `#[cfg(test)]` module: (a) 4-node condensed order [1,0] with 2 pairs → verify both pairs consecutive in output, valid permutation; (b) mixed singletons + pairs → verify singletons at correct positions, pairs consecutive; (c) with unmatched indices → verify unmatched appended at end. Note: `expand_ordering` takes `(condensed_order: &[i32], decomp: &CycleDecomposition, n: usize)` — inverse is computed internally. Verify tests FAIL.
+- [X] T008 Implement `fn expand_ordering(condensed_order: &[i32], decomp: &CycleDecomposition, n: usize) -> Perm<usize>` in `src/aptp/ordering.rs`. Algorithm: build inverse of METIS output internally (`inv_order[order[i]] = i`), walk positions 0..condensed_dim, for each condensed node emit original index(es) via `new_to_old` + `partner`, matched pairs get consecutive positions, unmatched appended at end. Verify T007 tests PASS.
 
 **Checkpoint**: All three internal building blocks implemented and unit-tested. Ready for orchestrator.
 
@@ -57,14 +57,14 @@
 
 ### Tests (TDD red phase)
 
-- [ ] T009 [US1] Write pair adjacency integration tests in `tests/match_order.rs`: (a) hand-constructed 6x6 indefinite matrix with known 2-cycles → assert pairs consecutive in ordering; (b) hand-constructed PD matrix (all singletons) → assert valid permutation, no 2-cycles; (c) edge cases: n=0, n=1, diagonal matrix → assert trivial valid ordering
-- [ ] T010 [P] [US1] Write fill quality comparison test in `tests/match_order.rs`: for each SuiteSparse CI-subset matrix, run both `match_order_metis()` and `metis_ordering()`, compare `AptpSymbolic::analyze()` predicted nnz(L), assert `condensed_nnz <= unconstrained_nnz * 1.10` (SC-003 one-sided tolerance)
-- [ ] T011 [P] [US1] Write symbolic analysis integration test in `tests/match_order.rs`: for each SuiteSparse CI-subset matrix, verify `match_order_metis()` result produces valid `AptpSymbolic` via `SymmetricOrdering::Custom(result.ordering.as_ref())` — assert `predicted_nnz() > 0` and no errors (SC-007)
+- [X] T009 [US1] Write pair adjacency integration tests in `tests/match_order.rs`: (a) hand-constructed 6x6 indefinite matrix with known 2-cycles → assert pairs consecutive in ordering; (b) hand-constructed PD matrix (all singletons) → assert valid permutation, no 2-cycles; (c) edge cases: n=0, n=1, diagonal matrix → assert trivial valid ordering
+- [X] T010 [P] [US1] Write fill quality comparison test in `tests/match_order.rs`: for each SuiteSparse CI-subset matrix, run both `match_order_metis()` and `metis_ordering()`, compare `AptpSymbolic::analyze()` predicted nnz(L), assert `condensed_nnz <= unconstrained_nnz * 1.10` (SC-003 one-sided tolerance)
+- [X] T011 [P] [US1] Write symbolic analysis integration test in `tests/match_order.rs`: for each SuiteSparse CI-subset matrix, verify `match_order_metis()` result produces valid `AptpSymbolic` via `SymmetricOrdering::Custom(result.ordering.as_ref())` — assert `predicted_nnz() > 0` and no errors (SC-007)
 
 ### Implementation
 
-- [ ] T012 [US1] Implement `pub fn match_order_metis(matrix: &SparseColMat<usize, f64>) -> Result<MatchOrderResult, SparseError>` in `src/aptp/ordering.rs`. Orchestrates: (1) trivial-case short-circuit for n<=1, (2) call `mc64_matching()`, (3) call `split_matching_cycles()` on matching forward array, (4) call `build_condensed_adjacency()` on matrix symbolic + decomposition, (5) call `METIS_NodeND` on condensed graph (reuse FFI pattern from `metis_ordering()`), (6) call `expand_ordering()`, (7) assemble `MatchOrderResult` with ordering, scaling, matched count, and diagnostics. Full rustdoc with algorithm references per contracts/api.md.
-- [ ] T013 [US1] Verify all US1 tests pass: run `cargo test --test match_order` and `cargo test ordering` (unit tests). Fix any failures. Then verify existing tests unaffected: `cargo test --test mc64_matching` and `cargo test --test metis_ordering` must still pass (SC-006).
+- [X] T012 [US1] Implement `pub fn match_order_metis(matrix: &SparseColMat<usize, f64>) -> Result<MatchOrderResult, SparseError>` in `src/aptp/ordering.rs`. Orchestrates: (1) trivial-case short-circuit for n<=1, (2) call `mc64_matching()`, (3) call `split_matching_cycles()` on matching forward array, (4) call `build_condensed_adjacency()` on matrix symbolic + decomposition, (5) call `METIS_NodeND` on condensed graph (reuse FFI pattern from `metis_ordering()`), (6) call `expand_ordering()`, (7) assemble `MatchOrderResult` with ordering, scaling, matched count, and diagnostics. Full rustdoc with algorithm references per contracts/api.md.
+- [X] T013 [US1] Verify all US1 tests pass: run `cargo test --test match_order` and `cargo test ordering` (unit tests). Fix any failures. Then verify existing tests unaffected: `cargo test --test mc64_matching` and `cargo test --test metis_ordering` must still pass (SC-006).
 
 **Checkpoint**: US1 complete — `match_order_metis()` produces valid orderings with guaranteed pair adjacency on hand-constructed and CI-subset matrices.
 
@@ -78,8 +78,8 @@
 
 ### Tests and Validation
 
-- [ ] T014 [US2] Write structurally singular integration tests in `tests/match_order.rs`: (a) hand-constructed 5x5 matrix with 1 structurally zero row → assert unmatched index at position n-1, matched indices at positions 0..n-1; (b) hand-constructed 6x6 with 2 unmatched → assert last 2 positions are unmatched; (c) verify scaling vector well-defined for all indices (positive, finite) including unmatched (Duff-Pralet correction)
-- [ ] T015 [US2] Write SuiteSparse singular matrix tests in `tests/match_order.rs` (use `#[ignore]` for full-set): for any SuiteSparse matrix where `mc64_matching().matched < n`, verify unmatched indices appear at ordering positions [matched..n) and output is valid permutation (SC-002)
+- [X] T014 [US2] Write structurally singular integration tests in `tests/match_order.rs`: (a) hand-constructed 5x5 matrix with 1 structurally zero row → assert unmatched index at position n-1, matched indices at positions 0..n-1; (b) hand-constructed 6x6 with 2 unmatched → assert last 2 positions are unmatched; (c) verify scaling vector well-defined for all indices (positive, finite) including unmatched (Duff-Pralet correction)
+- [X] T015 [US2] Write SuiteSparse singular matrix tests in `tests/match_order.rs` (use `#[ignore]` for full-set): for any SuiteSparse matrix where `mc64_matching().matched < n`, verify unmatched indices appear at ordering positions [matched..n) and output is valid permutation (SC-002)
 
 **Checkpoint**: US2 complete — singular matrices handled gracefully with unmatched-at-end guarantee.
 
@@ -93,9 +93,9 @@
 
 ### Benchmarks and Validation
 
-- [ ] T016 [US3] Add Criterion benchmark group `match_order` in `benches/solver_benchmarks.rs`: benchmark `match_order_metis()` on 3-5 CI-subset matrices (varying size/indefiniteness), report condensed_dim/n ratio, compare total time vs `mc64_matching() + metis_ordering()` separately (SC-005)
-- [ ] T017 [US3] Write condensation ratio validation test in `tests/match_order.rs`: for each CI-subset indefinite matrix, assert `result.condensed_dim < n` when `result.two_cycles > 0` (SC-004); log compression ratios for analysis
-- [ ] T018 [US3] Run full SuiteSparse validation (`cargo test --test match_order -- --ignored --test-threads=1`): verify pair adjacency (SC-001), valid permutation (FR-007), and symbolic analysis validity (SC-007) on all 65+ matrices
+- [X] T016 [US3] Add Criterion benchmark group `match_order` in `benches/solver_benchmarks.rs`: benchmark `match_order_metis()` on 3-5 CI-subset matrices (varying size/indefiniteness), report condensed_dim/n ratio, compare total time vs `mc64_matching() + metis_ordering()` separately (SC-005)
+- [X] T017 [US3] Write condensation ratio validation test in `tests/match_order.rs`: for each CI-subset indefinite matrix, assert `result.condensed_dim < n` when `result.two_cycles > 0` (SC-004); log compression ratios for analysis
+- [X] T018 [US3] Run full SuiteSparse validation (`cargo test --test match_order -- --ignored --test-threads=1`): verify pair adjacency (SC-001), valid permutation (FR-007), and symbolic analysis validity (SC-007) on all 65+ matrices
 
 **Checkpoint**: US3 complete — performance characteristics validated, benchmarks available.
 
@@ -105,9 +105,9 @@
 
 **Purpose**: Documentation, plan updates, and final validation
 
-- [ ] T019 Add Phase 4.3 section to `docs/ssids-plan.md`: document match-order condensation as a completed deliverable with algorithm reference (SPRAL `match_order.f90`), success criteria results, and lessons learned
-- [ ] T020 Add Phase 4.3 entry to `docs/ssids-log.md`: summarize what was built (cycle splitting, condensed graph, METIS on condensed, expansion), key decisions (code in ordering.rs, marker-array dedup), and test results
-- [ ] T021 Run quickstart.md validation checklist: verify all 7 success criteria (SC-001 through SC-007) pass, document results; run `cargo fmt --check` and `cargo clippy` for code quality
+- [X] T019 Add Phase 4.3 section to `docs/ssids-plan.md`: document match-order condensation as a completed deliverable with algorithm reference (SPRAL `match_order.f90`), success criteria results, and lessons learned
+- [X] T020 Add Phase 4.3 entry to `docs/ssids-log.md`: summarize what was built (cycle splitting, condensed graph, METIS on condensed, expansion), key decisions (code in ordering.rs, marker-array dedup), and test results
+- [X] T021 Run quickstart.md validation checklist: verify all 7 success criteria (SC-001 through SC-007) pass, document results; run `cargo fmt --check` and `cargo clippy` for code quality
 
 ---
 
