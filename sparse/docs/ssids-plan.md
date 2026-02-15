@@ -19,15 +19,15 @@
 **Architecture Strategy:**
 - **Leverage faer infrastructure** (~70% reuse): CSC storage, elimination trees, AMD ordering, permutation utilities, workspace management, supernodal symbolic analysis
 - **Build APTP-specific components** (~30% new): 2x2 pivot logic, mixed diagonal storage, multifrontal APTP factorization kernel
-- **Multifrontal from the start**: APTP is inherently a blocked algorithm operating on dense frontal matrices — a simplicial (column-by-column) implementation would be throwaway code. faer already provides simplicial LDL^T as a fallback for positive-definite or mildly indefinite problems. Our value-add is the APTP kernel, which requires frontal matrices. Phases 2-7 build the multifrontal solver directly; Phase 9 adds parallelism and performance optimization.
+- **Multifrontal from the start**: APTP is inherently a blocked algorithm operating on dense frontal matrices — a simplicial (column-by-column) implementation would be throwaway code. faer already provides simplicial LDL^T as a fallback for positive-definite or mildly indefinite problems. Our value-add is the APTP kernel, which requires frontal matrices. Phases 2-7 build the multifrontal solver directly; Phase 8 adds parallelism and performance optimization.
 - **Clean room implementation**: All code derived from BSD-licensed references (LAPACK, SLICOT-Reference, SPRAL) and academic papers
 
 **Development Timeline:**
 - Phases 0-1: Foundation, infrastructure, and tooling
 - Phases 2-5: APTP data structures, symbolic analysis, ordering, dense kernel
-- Phases 6-8: Multifrontal factorization, solve, end-to-end integration
-- Phase 9: Parallelization and performance optimization
-- Phases 10-11: Polish and release
+- Phases 6-7: Multifrontal factorization, solve & end-to-end integration
+- Phase 8: Parallelization and performance optimization
+- Phase 9: Polish and release
 
 ---
 
@@ -192,7 +192,7 @@ independently:
   limited return at this stage
 
 **Deferred to:** When the Rust solver can factorize SuiteSparse matrices
-(Phases 2-8), for performance benchmarking and inertia validation on large
+(Phases 2-7), for performance benchmarking and inertia validation on large
 matrices where analytical verification is impractical.
 
 **Original Success Criteria (deferred, not abandoned):**
@@ -770,7 +770,7 @@ supernode column ranges, assembly tree, row structure per supernode, and postord
 traversal. `AptpSymbolic` should expose these through accessor methods that delegate
 to faer's `SymbolicSupernodalCholesky<I>` (accessible via `SymbolicCholesky::raw()`).
 
-This absorbs old Phase 9.1 (Supernode Detection) — faer handles supernode detection
+This absorbs old Phase 8.1 (Supernode Detection) — faer handles supernode detection
 internally. If APTP-specific supernode adjustments are needed (e.g., due to delayed
 pivots crossing supernode boundaries), they can be handled at the numeric level.
 
@@ -941,7 +941,7 @@ which produces dramatically better orderings for matrices with geometric structu
 METIS, making even symbolic analysis take 12+ seconds and the eventual numeric
 factorization infeasible.
 
-**Impact on plan**: METIS integration elevated from "consider for Phase 9" to
+**Impact on plan**: METIS integration elevated from "consider for Phase 8" to
 Phase 4.1 (before MC64). Without METIS, the solver cannot practically handle many
 of the benchmark matrices from the APTP papers. This does not change faer
 infrastructure reuse — METIS produces a `Perm<usize>` that plugs into
@@ -983,7 +983,7 @@ design decisions for details.
 
 #### METIS ordering: elevated to Phase 4.1
 
-Originally deferred to Phase 9, METIS was elevated to Phase 4.1 after Phase 3
+Originally deferred to Phase 8, METIS was elevated to Phase 4.1 after Phase 3
 testing showed AMD produces 2-20× more fill than METIS on benchmark matrices.
 SPRAL uses METIS by default — without it, the solver cannot practically handle
 many of the APTP paper benchmark matrices.
@@ -1339,7 +1339,7 @@ symbolic analysis.
 ## Phase 5: Dense APTP Factorization Kernel
 
 ### Objectives
-Implement A Posteriori Threshold Pivoting for dense symmetric indefinite matrices. This is the core numerical kernel that Phase 7 (sparse factorization) will call on each frontal matrix.
+Implement A Posteriori Threshold Pivoting for dense symmetric indefinite matrices. This is the core numerical kernel that Phase 6 (sparse factorization) will call on each frontal matrix.
 
 ### What was already completed / absorbed
 
@@ -1349,9 +1349,9 @@ Implement A Posteriori Threshold Pivoting for dense symmetric indefinite matrice
 - **5.5 (Validation on hard indefinite)**: Validation testing is exit criteria for
   this feature, using existing test infrastructure (NumericalValidator, TestCaseFilter,
   SuiteSparse collection). Not a separate deliverable.
-- **5.3 (Two-level APTP)**: Deferred to Phase 9 (supernodal optimization). Two-level
+- **5.3 (Two-level APTP)**: Deferred to Phase 8 (performance optimization). Two-level
   blocking is a cache performance optimization for large frontal matrices. In the
-  simplicial solver (Phases 5–8), fronts are small (column-level). Two-level APTP
+  simplicial solver (Phases 5–7), fronts are small (column-level). Two-level APTP
   becomes relevant when supernodal fronts reach hundreds of rows.
 
 ### Design Decisions
@@ -1378,7 +1378,7 @@ old `Parallelism` enum). There is no separate "faer integration" deliverable.
 
 In the dense kernel, "delay" means "mark this column as uneliminated and return it
 to the caller." The kernel does not know about the elimination tree or parent nodes.
-The caller (Phase 7 sparse factorization) decides what to do with delayed columns
+The caller (Phase 6 sparse factorization) decides what to do with delayed columns
 (pass to parent node in the multifrontal assembly).
 
 #### faer's Bunch-Kaufman as reference for fallback path (noted)
@@ -1408,7 +1408,7 @@ pivot size before elimination). APTP:
 1. Factors a block optimistically, assuming all 1×1 pivots
 2. Checks stability a posteriori: `|l_ij| < 1/threshold` for all entries
 3. If any entry fails: falls back to 2×2 Bunch-Kaufman pivot, or marks column as delayed
-4. Delayed columns are returned to the caller (the sparse factorization in Phase 7)
+4. Delayed columns are returned to the caller (the sparse factorization in Phase 6)
 
 This is genuinely new work — faer has no APTP implementation.
 
@@ -1553,7 +1553,7 @@ Run comprehensive validation using the existing test infrastructure:
 4. Check for numerical issues in Schur complement update
 
 **If it passes:** Working core factorization kernel. The remaining phases
-are assembly (Phase 6), sparse integration (Phase 7), and solve (Phase 8).
+are assembly (Phase 6) and solve + end-to-end integration (Phase 7).
 
 #### Phase 5 Post-Completion Review (added after Phase 5 SPRAL comparison)
 
@@ -1562,27 +1562,27 @@ Later phases should revisit them if benchmarks indicate a need:
 
 1. **Per-column backup/restore** (vs SPRAL's per-block backup): Phase 5 uses
    simple Vec backup for each column attempt, which is the degenerate case of
-   SPRAL's per-block backup with block size = 1. When Phase 9.1 adds two-level
-   blocking, the backup strategy must change to per-block — see Phase 9.1 notes.
+   SPRAL's per-block backup with block size = 1. When Phase 8.1 adds two-level
+   blocking, the backup strategy must change to per-block — see Phase 8.1 notes.
 
 2. **MixedDiagonal with PivotType enum** (vs SPRAL's flat d[2n] with Inf sentinel):
    Our approach trades a small amount of memory (the pivot_map vec) for type safety.
    SPRAL's Inf sentinel allows O(1) pivot-type detection during solve without a
-   separate type array. If Phase 9.2 benchmarks show solve is a bottleneck (>25%
-   of total time), revisit D storage format — see Phase 10.1 notes.
+   separate type array. If Phase 8.2 benchmarks show solve is a bottleneck (>25%
+   of total time), revisit D storage format — see Phase 9.1 notes.
 
 3. **Column-by-column Schur complement** (BLAS-2, not BLAS-3): Single-level APTP
    uses rank-1/rank-2 updates. BLAS-3 blocking gives ~2-5x speedup on fronts >128
-   rows. This is the primary motivation for Phase 9.1.
+   rows. This is the primary motivation for Phase 8.1.
 
 4. **No TPP (Traditional Threshold Pivoting) fallback**: SPRAL can re-factorize
    heavily-delayed columns using TPP. We return delayed columns to the parent node
-   instead. If Phase 9.2 benchmarks show excessive delays propagating up the tree
-   on real matrices, consider adding TPP — see Phase 10.1 notes.
+   instead. If Phase 8.2 benchmarks show excessive delays propagating up the tree
+   on real matrices, consider adding TPP — see Phase 9.1 notes.
 
 ---
 
-## Phase 6: Multifrontal Numeric Factorization
+## Phase 6: Multifrontal Numeric Factorization (**COMPLETE**)
 
 ### Objectives
 Implement the multifrontal factorization loop: assemble frontal matrices from
@@ -1610,7 +1610,7 @@ supernodal structure via `SymbolicSupernodalCholesky<I>`. This includes supernod
 ranges, assembly tree, row structure per supernode, and postorder traversal. We delegate
 to faer rather than reimplementing supernode detection.
 
-Old Phase 9.1 (Supernode Detection) is absorbed here.
+Old Phase 8.1 (Supernode Detection) is absorbed here.
 
 #### Frontal matrices use Phase 2 types (decided)
 
@@ -1748,132 +1748,55 @@ println!("Stats: {} delays, max front size {}",
 - **All test matrices**: reconstruction error < 10^-12 using NumericalValidator
 
 **Success Criteria:**
-- [ ] Multifrontal factorization produces correct factors on all hand-constructed matrices
-- [ ] Reconstruction error < 10^-12 on all test matrices
-- [ ] Assembly correctly scatters original entries + child contributions
-- [ ] Delayed pivots propagate to parent and are eventually eliminated
-- [ ] Uses Phase 5's `aptp_factor()` for intra-front factorization
-- [ ] Uses Phase 2's `MixedDiagonal` for D storage
-- [ ] Matches dense APTP factorization on small problems (converted to dense)
-- [ ] Factors all "easy indefinite" SuiteSparse matrices correctly
+- [x] Multifrontal factorization produces correct factors on all hand-constructed matrices
+- [x] Reconstruction error < 10^-12 on all test matrices (where dense reconstruction feasible)
+- [x] Assembly correctly scatters original entries + child contributions
+- [x] Delayed pivots propagate to parent and are eventually eliminated
+- [x] Uses Phase 5's `aptp_factor()` for intra-front factorization
+- [x] Uses Phase 2's `MixedDiagonal` for D storage
+- [x] Matches dense APTP factorization on small problems (converted to dense)
+- [x] Factors all CI-subset SuiteSparse matrices correctly
 
-**Time Estimate:** 3–4 weeks
-
-### Phase 6 Exit Criteria
+### Phase 6 Exit Criteria (**MET**)
 
 **Required Outcomes:**
-1. Multifrontal numeric factorization working end-to-end
-2. All hand-constructed and easy indefinite matrices factor correctly
-3. Reconstruction error meets tolerance on all test cases
-4. Delayed pivot mechanism working
+1. ~~Multifrontal numeric factorization working end-to-end~~ ✓
+2. ~~All hand-constructed and easy indefinite matrices factor correctly~~ ✓
+3. ~~Reconstruction error meets tolerance on all test cases~~ ✓
+4. ~~Delayed pivot mechanism working~~ ✓
 
-**Validation Questions:**
-- Does factorization match dense APTP on small test matrices?
-- Are contribution blocks computed correctly?
-- Do delayed pivots eventually get eliminated?
+**Validation Answers:**
+- Factorization matches dense APTP on small test matrices (test_dense_equivalence, test_single_supernode_matches_dense)
+- Contribution blocks computed correctly (test_multi_level_contribution_flow, test_extract_contribution_structure)
+- Delayed pivots eventually get eliminated (test_delayed_pivot_propagation)
 
-**Checkpoint:** Factor all "easy indefinite" test matrices. Verify reconstruction
-error < 10^-12.
+**Note:** Full SuiteSparse backward error validation deferred to Phase 7
+(requires triangular solve). Dense reconstruction is O(n²) and impractical
+for large matrices. SPRAL uses solve-based backward error exclusively.
 
 ---
 
-## Phase 7: Triangular Solve
+## Phase 7: Triangular Solve & Solver API
 
 ### Objectives
-Implement forward/backward substitution through the multifrontal factor structure,
-completing the core solve pipeline: analyze → factor → solve.
+Implement forward/backward substitution through the multifrontal factor structure
+and assemble the complete solver pipeline into a user-facing API. This is the
+"working solver" milestone: analyze → factor → solve, validated end-to-end against
+the full SuiteSparse test suite.
 
-### Deliverables
+### Rationale for merging old Phases 7 & 8
 
-**Task:** Implement the solve phase using the multifrontal factorization from Phase 6
-
-**Approach:**
-
-Given P^T A P = L D L^T from the multifrontal factorization, solve Ax = b via:
-1. Permute: b̂ = P b
-2. Scale (if MC64 from Phase 4): b̂ = S b̂
-3. Forward solve: L y = b̂ (postorder traversal of assembly tree)
-4. Diagonal solve: D z = y (via `MixedDiagonal::solve_in_place` from Phase 2)
-5. Backward solve: L^T w = z (reverse postorder traversal)
-6. Unscale: w = S w
-7. Unpermute: x = P^T w
-
-The forward/backward solves traverse the assembly tree, using dense TRSM
-(via faer) within each supernode's L11 and L21 blocks.
-
-**Notional API** (to be refined during speccing):
-
-```rust
-impl AptpNumeric {
-    /// Solve Ax = b given the factorization P^T A P = L D L^T.
-    pub fn solve(
-        &self,
-        symbolic: &AptpSymbolic,
-        rhs: ColRef<f64>,
-    ) -> Result<Col<f64>, SparseError>;
-
-    /// Solve Ax = b in-place.
-    pub fn solve_in_place(
-        &self,
-        symbolic: &AptpSymbolic,
-        rhs: ColMut<f64>,
-    ) -> Result<(), SparseError>;
-}
-```
-
-**Testing strategy:**
-
-- **Known solutions**: construct b = A x_exact, solve, verify x ≈ x_exact
-- **Backward error**: ||Ax - b|| / (||A|| ||x|| + ||b||) < 10^-10
-  using existing NumericalValidator
-- **Multiple RHS**: solve with several right-hand sides reusing same factorization
-- **All test matrices**: backward error on hand-constructed + SuiteSparse
-- **Backward error as supplementary oracle for factorization** *(added after Phase 5
-  SPRAL comparison)*: Phase 5 validates factorization via reconstruction error
-  (||A - P^T L D L^T P|| / ||A||). SPRAL instead validates via backward error
-  through the full pipeline (factor → solve → check residual), which is a more
-  end-to-end test. Phase 7 should add backward error checks to all existing Phase 5
-  test matrices (hand-constructed, SuiteSparse CI, random) as a supplementary oracle
-  that validates the full factor+solve pipeline, not just factorization in isolation.
-
-**Success Criteria:**
-- [ ] Backward error < 10^-10 on all test matrices
-- [ ] Backward error oracle applied to all Phase 5 test matrices (factorization
-  validated end-to-end, not just via reconstruction)
-- [ ] Permutation and scaling correctly applied/unapplied
-- [ ] Forward and backward traversals use correct supernode ordering
-- [ ] D solve via Phase 2's `MixedDiagonal::solve_in_place`
-- [ ] Multiple RHS handled efficiently (reusing factorization)
-
-**Time Estimate:** 1–2 weeks
-
-### Phase 7 Exit Criteria
-
-**Required Outcomes:**
-1. Complete solve pipeline working: analyze → factor → solve
-2. Backward error meets tolerance on all test matrices
-3. Permutation and optional scaling correctly integrated
-
-**Validation Questions:**
-- Does solve produce correct solutions on all test matrices?
-- Is backward error acceptable on hard indefinite problems?
-- Does refactoring with same sparsity pattern work correctly?
-
-**Checkpoint:** Solve Ax = b for all test matrices. Verify backward error < 10^-10.
-
----
-
-## Phase 8: End-to-End Integration & API
-
-### Objectives
-Assemble the complete solver pipeline into a user-facing API, run comprehensive
-integration tests, and validate against the full SuiteSparse test suite. This is
-the "working solver" milestone.
+The triangular solve cannot be meaningfully validated without end-to-end tests
+(backward error requires the full factor → solve pipeline), and the `SparseLDLT`
+wrapper is a thin facade over existing types (`AptpSymbolic`, `AptpNumeric`). The
+API design decisions (MemStack workspace, solver options) are straightforward
+applications of faer's existing conventions. There is no natural stopping point
+where "solve works but the API doesn't exist yet" is a useful deliverable.
 
 ### What was absorbed from other phases
 
-- **Old Phase 7.2** (User-Facing API): moved here from the solve phase
-- **Old Phase 7.3** (Integration Tests): moved here from the solve phase
+- **Old Phase 7.2** (User-Facing API): originally split into a separate phase
+- **Old Phase 7.3** (Integration Tests): originally split into a separate phase
 
 ### Design Decisions
 
@@ -1881,23 +1804,121 @@ the "working solver" milestone.
 
 faer's `Llt<I, T>` in `sparse/solvers.rs` wraps `SymbolicLlt<I>` + `numeric: Vec<T>`
 and provides solve methods. Our `SparseLDLT` is the APTP equivalent, wrapping
-`AptpSymbolic` + `Option<AptpNumeric>`. The `Option` allows the analyze-then-factor-later
-pattern. Users familiar with faer's solver API will find ours immediately recognizable.
+`AptpSymbolic` + `Option<AptpNumeric>` + optional scaling factors. The `Option`
+allows the analyze-then-factor-later pattern. Users familiar with faer's solver API
+will find ours immediately recognizable.
 
-#### Stack-based workspace allocation (decided)
+#### Stack-based workspace allocation for solve (decided)
 
 faer uses `MemStack` for all temporary workspace during solve — no heap allocations
 in the hot path. All scratch space is queried upfront via `solve_in_place_scratch()`
-and allocated from a reusable `MemBuffer`. This is the right pattern for a
-performance-oriented solver: callers can amortize allocation across multiple solves,
-and the solver itself has predictable, zero-allocation performance. Our solve and
-factor methods should accept `&mut MemStack` and expose `*_scratch() -> StackReq`
-methods following faer's convention. The one-shot `solve_full` convenience method
-can allocate internally.
+and allocated from a reusable `MemBuffer`. Our **solve** methods should accept
+`&mut MemStack` and expose `*_scratch() -> StackReq` methods following faer's
+convention. The one-shot `solve_full` convenience method can allocate internally.
+
+**Scoping note**: MemStack applies to the **solve** hot path in this phase.
+Factorization currently allocates `FrontalMatrix` (via `Mat::zeros`) per supernode
+in Phase 6's assembly loop — this is inherent to the multifrontal algorithm and
+making it MemStack-based would require arena allocation, which is deferred to
+Phase 9.1. The `factor()` method on `SparseLDLT` does **not** take `&mut MemStack`
+in this phase.
+
+#### Scaling integration at the SparseLDLT level (decided)
+
+Phase 4's `match_order_metis()` returns `MatchOrderResult { ordering, scaling, ... }`.
+The scaling factors need to persist between analyze and solve. Neither `AptpSymbolic`
+(which wraps faer's `SymbolicCholesky`) nor `AptpNumeric` knows about MC64 scaling.
+
+Scaling is applied/unapplied at the `SparseLDLT` level:
+- `SparseLDLT` stores `Option<Vec<f64>>` scaling factors alongside the symbolic
+  analysis (populated when `AnalyzeOptions` requests MC64 ordering)
+- `factor()` applies scaling to matrix entries during assembly (SPRAL's approach:
+  scale entries as they're scattered into frontal matrices, via
+  `scaled_value = s[i] * a[i][j] * s[j]`)
+- `solve()` applies `S * rhs` before forward solve and `S * solution` after
+  backward solve
+- Phase 6's `AptpNumeric::factor()` remains scaling-unaware — `SparseLDLT::factor()`
+  pre-scales and delegates
+
+#### Solve is a free function, not an AptpNumeric method (decided)
+
+Phase 6's `AptpNumeric` is a data-only type: `{ front_factors, stats, n }`. The
+solve requires both `AptpSymbolic` (supernode structure, permutation, assembly tree)
+and `AptpNumeric` (per-supernode L, D factors). Rather than putting the solve on
+`AptpNumeric` (which would need `&AptpSymbolic` passed in) or duplicating it on
+`SparseLDLT`, the core solve is a free function:
+
+```rust
+pub(crate) fn aptp_solve(
+    symbolic: &AptpSymbolic,
+    numeric: &AptpNumeric,
+    rhs: ColMut<f64>,
+    stack: &mut MemStack,
+) -> Result<(), SparseError>;
+```
+
+`SparseLDLT::solve_in_place()` adds scaling/unscaling and permutation around this.
+
+#### Refactor is trivially factor (noted)
+
+Given Phase 6's API, `refactor()` with the same sparsity pattern is identical to
+calling `factor()` again — the symbolic analysis is reusable by construction, and
+there is no internal state to reset. `refactor()` exists for API clarity and to
+mirror SPRAL's interface, but delegates directly to `factor()`.
 
 ### Deliverables
 
-**Task:** Create the user-facing API and validate end-to-end on the full test suite
+**Task 1:** Implement the per-supernode triangular solve
+
+**⚠️ Planning note — per-supernode index mapping is the hard part:**
+
+The high-level solve algorithm (permute → forward → D solve → backward → unpermute)
+is straightforward, but the per-supernode mechanics involve significant index-mapping
+complexity that must be carefully designed. Each `FrontFactors` stores:
+- `l11` (ne × ne unit lower triangular)
+- `d11` (`MixedDiagonal` with `num_delayed == 0`)
+- `l21` (r × ne subdiagonal block)
+- `local_perm` (APTP pivot permutation within the front)
+- `col_indices` (global column positions of eliminated columns)
+- `row_indices` (global row positions for L21 rows)
+
+The forward solve for supernode s must:
+1. Gather entries from the global RHS vector using `col_indices` into a local vector
+2. Apply `local_perm` to reorder the local vector to match APTP's pivot order
+3. Solve `L11 * y_local = rhs_local` via dense TRSV (faer)
+4. Scatter updates to non-fully-summed rows: for each row i in `row_indices`,
+   subtract `L21[i, :] * y_local` from `rhs[row_indices[i]]`
+
+The D solve applies `d11.solve_in_place()` to each supernode's eliminated entries
+(per-supernode, not a single global D solve).
+
+The backward solve reverses: gather, apply L21^T updates, solve L11^T, scatter.
+
+**This index-mapping logic is the most error-prone part of the solve and must be
+designed with extreme care.** During speccing:
+- Study SPRAL's `ldlt_app_solve_fwd` and `ldlt_app_solve_bwd` in
+  `spral/src/ssids/cpu/kernels/ldlt_app.cxx` (BSD-3) for reference
+- Study SPRAL's `solve()` in `spral/src/ssids/cpu/subtree.hxx` for the
+  assembly-tree traversal and per-supernode dispatch
+- Study faer's `factorize_supernodal_numeric_intranode_lblt` solve path for
+  how faer handles per-supernode gather/scatter in its own LBLT solver
+- Write exhaustive unit tests for the index-mapping functions **before**
+  integrating them into the full solve
+- Test with hand-constructed matrices where the expected per-supernode local
+  vectors can be computed analytically
+
+**High-level approach:**
+
+Given P^T A P = L D L^T from the multifrontal factorization, solve Ax = b via:
+1. Permute: b̂ = P b (using `AptpSymbolic::perm()`)
+2. Scale (if MC64): b̂ = S b̂ (using stored scaling factors)
+3. Forward solve: L y = b̂ (postorder traversal, per-supernode gather/TRSV/scatter)
+4. Diagonal solve: D z = y (per-supernode `d11.solve_in_place()`)
+5. Backward solve: L^T w = z (reverse postorder, per-supernode gather/TRSV/scatter)
+6. Unscale: w = S w
+7. Unpermute: x = P^T w
+
+**Task 2:** Create the user-facing `SparseLDLT` API and validate end-to-end
 
 **Notional API** (to be refined during speccing):
 
@@ -1910,6 +1931,7 @@ can allocate internally.
 pub struct SparseLDLT {
     symbolic: AptpSymbolic,
     numeric: Option<AptpNumeric>,
+    scaling: Option<Vec<f64>>,  // MC64 scaling factors (if ordering used MC64)
 }
 
 impl SparseLDLT {
@@ -1920,15 +1942,13 @@ impl SparseLDLT {
     ) -> Result<Self, SparseError>;
 
     /// Numeric factorization phase.
+    /// Heap-allocates per-supernode frontal matrices internally.
+    /// MemStack-based factorization workspace is deferred to Phase 9.
     pub fn factor(
         &mut self,
         matrix: &SparseColMat<usize, f64>,
         options: &FactorOptions,
-        stack: &mut MemStack,
     ) -> Result<(), SparseError>;
-
-    /// Workspace requirement for factor.
-    pub fn factor_scratch(&self) -> StackReq;
 
     /// Solve phase (allocating).
     pub fn solve(&self, rhs: ColRef<f64>, stack: &mut MemStack) -> Result<Col<f64>, SparseError>;
@@ -1947,11 +1967,11 @@ impl SparseLDLT {
     ) -> Result<Col<f64>, SparseError>;
 
     /// Refactor with same sparsity pattern (reuses symbolic analysis).
+    /// Equivalent to calling `factor()` again — provided for API clarity.
     pub fn refactor(
         &mut self,
         matrix: &SparseColMat<usize, f64>,
         options: &FactorOptions,
-        stack: &mut MemStack,
     ) -> Result<(), SparseError>;
 
     /// Get inertia from the factorization.
@@ -1970,19 +1990,41 @@ pub struct SolverOptions {
 
 **Testing strategy:**
 
+- **Per-supernode index mapping**: unit tests for gather/scatter/local_perm
+  operations with hand-computed expected values **before** integrating into full solve
+- **Known solutions**: construct b = A x_exact, solve, verify x ≈ x_exact
+- **Backward error**: ||Ax - b|| / (||A|| ||x|| + ||b||) < 10^-10
+  using existing NumericalValidator
+- **Backward error as supplementary oracle for factorization** *(added after Phase 5
+  SPRAL comparison)*: Phase 5 validates factorization via reconstruction error
+  (||A - P^T L D L^T P|| / ||A||). SPRAL instead validates via backward error
+  through the full pipeline (factor → solve → check residual), which is a more
+  end-to-end test. This phase should add backward error checks to all existing
+  Phase 5 test matrices (hand-constructed, SuiteSparse CI, random) as a
+  supplementary oracle that validates the full factor+solve pipeline, not just
+  factorization in isolation.
+- **Scaling round-trip**: verify scaling/unscaling is exact inverse on all matrices
+  that use MC64 ordering
+- **Multiple RHS**: solve with several right-hand sides reusing same factorization
+- **All test matrices**: backward error on hand-constructed + SuiteSparse
 - **API ergonomics**: one-shot solve, analyze-factor-solve, refactor
 - **Error handling**: solve before factor, pattern mismatch on refactor
 - **Documentation examples**: compile and run
-- **Integration**: all hand-constructed matrices (15), backward error < 10^-10,
-  inertia match
 - **SuiteSparse**: all easy/hard indefinite matrices, backward error, factor success
 - **Random matrices** (via Phase 0.5 generators): backward error
-- **Multiple RHS**: solve with several right-hand sides reusing same factorization
 - **Comprehensive report**: using existing test infrastructure
 
 **Success Criteria:**
-- [ ] Three-phase API working end-to-end
-- [ ] MemStack-based workspace for factor and solve (no heap allocation in hot path)
+- [ ] Backward error < 10^-10 on all test matrices
+- [ ] Backward error oracle applied to all Phase 5 test matrices (factorization
+  validated end-to-end, not just via reconstruction)
+- [ ] Per-supernode index mapping correct (gather/scatter/local_perm unit tested)
+- [ ] Permutation and scaling correctly applied/unapplied
+- [ ] Forward and backward traversals use correct supernode ordering
+- [ ] D solve per-supernode via `FrontFactors::d11().solve_in_place()`
+- [ ] Multiple RHS handled efficiently (reusing factorization)
+- [ ] Three-phase `SparseLDLT` API working end-to-end
+- [ ] MemStack-based workspace for solve (no heap allocation in solve hot path)
 - [ ] One-shot convenience method works (allocates internally)
 - [ ] Refactoring with same sparsity pattern works
 - [ ] Error messages clear and actionable
@@ -1990,28 +2032,33 @@ pub struct SolverOptions {
 - [ ] Median backward error < 10^-9
 - [ ] Inertia matches reference when available
 
-**Time Estimate:** 2–3 weeks
+**Time Estimate:** 3–4 weeks
 
-### Phase 8 Exit Criteria
+### Phase 7 Exit Criteria
 
 **Required Outcomes:**
-1. Complete solver API working end-to-end
-2. All test matrices solve correctly via public API
-3. API is documented, follows faer's MemStack convention
-4. Integration tests comprehensive and passing
+1. Complete solve pipeline working: analyze → factor → solve
+2. Backward error meets tolerance on all test matrices
+3. Permutation and optional scaling correctly integrated
+4. Per-supernode forward/backward solve with correct index mapping
+5. Complete solver API working end-to-end via `SparseLDLT`
+6. API follows faer's MemStack convention (solve only; factor allocates internally)
+7. Integration tests comprehensive and passing
 
 **Validation Questions:**
+- Does solve produce correct solutions on all test matrices?
+- Is backward error acceptable on hard indefinite problems?
+- Are per-supernode gather/scatter/local_perm operations unit tested?
+- Does refactoring with same sparsity pattern work correctly?
 - Can users solve problems with a simple API call?
 - Are error messages clear and actionable?
-- Does refactoring with same pattern work?
-- Is workspace allocation pattern consistent with faer?
 
 **Checkpoint:** Run full test suite through public API. Generate comprehensive
 test report. This is the "working solver" milestone.
 
 ---
 
-## Phase 9: Performance Optimization
+## Phase 8: Performance Optimization
 
 ### Objectives
 Optimize the working solver for performance: two-level blocking for large fronts,
@@ -2019,7 +2066,7 @@ shared-memory parallelism for independent subtree processing, and benchmarking
 against reference implementations.
 
 ### Motivation
-The solver from Phases 2–8 is correct but sequential and uses single-level APTP
+The solver from Phases 2–7 is correct but sequential and uses single-level APTP
 blocking. This phase adds:
 - Cache-efficient blocking for large frontal matrices (two-level APTP)
 - Shared-memory parallelism for independent subtree processing
@@ -2043,9 +2090,9 @@ scheduling (new infrastructure), but the user-facing control surface is faer's `
 
 ### Deliverables
 
-#### 9.1: Two-Level APTP (Deferred from Phase 5)
-**Task:** Implement nested blocking for the dense APTP kernel to improve cache
-performance on large frontal matrices
+#### 8.1: Two-Level APTP & BLAS-3 Factorization (Deferred from Phase 5)
+**Task:** Implement nested blocking for the dense APTP kernel and refactor the
+multifrontal assembly loop for BLAS-3 performance
 
 **Algorithm Reference:**
 - Hogg, Duff, Lopez (2020) - Section 4.2 "Two-level APTP"
@@ -2057,6 +2104,15 @@ of rows) benefit from cache-efficient nested blocking. Two-level APTP applies th
 APTP algorithm recursively: an outer loop processes large blocks, and within each
 block an inner loop processes smaller sub-blocks, maximizing use of faer's blocked
 matmul.
+
+**BLAS-3 scope note:** Phase 6 passes the entire frontal matrix (F11 + F21 + F22)
+to `aptp_factor_in_place()`, relying on the Phase 5 kernel's implicit column-by-column
+Schur complement propagation to update all trailing rows. This avoids a separate
+TRSM for L21 and GEMM for the Schur complement, but uses BLAS-2 rank-1/rank-2
+updates instead of BLAS-3 blocked operations. Phase 8.1 should also evaluate
+refactoring the assembly loop to do explicit TRSM (`L21 = F21 * L11^{-T}`) and
+GEMM (`F22 -= L21 * D * L21^T`) per outer block, which is the natural decomposition
+for BLAS-3 and the prerequisite for parallelizing within a supernode.
 
 **Notional API:**
 
@@ -2085,9 +2141,14 @@ pub fn two_level_aptp_factor(
 - Performance: benchmark single-level vs two-level on fronts of size 64, 128, 256, 512
 - Identify crossover point where two-level blocking wins
 
+**Revisiting `matmul` on APTP kernel:** The inner dense APTP kernel uses an O(n^2) naive
+operation rather than dispatching to `faer::linalg::matmul`.  This should only be called
+on small matrices, but it should still be assessed in end-to-end profiling whether
+there is a benefit to calling faer here for BLAS-2 operations.
+
 **Implementation notes from Phase 5 SPRAL comparison:**
 
-The following topics must be addressed during Phase 9.1 research/speccing:
+The following topics must be addressed during Phase 8.1 research/speccing:
 
 1. **Backup strategy must change from per-column to per-block**: Phase 5's
    single-level APTP backs up one column at a time (simple `Vec<f64>` in
@@ -2104,14 +2165,16 @@ The following topics must be addressed during Phase 9.1 research/speccing:
    the diagonal block using the newly factored portion), Update (rank-nb
    Schur complement on the trailing submatrix). This decomposition is what
    enables BLAS-3 performance and is also the natural parallelism boundary
-   (Apply and Update can be parallelized). Phase 9.1 research should map
+   (Apply and Update can be parallelized). Phase 8.1 research should map
    this to our existing internal function structure.
 
-3. **Skip criteria**: If Phase 9.2 benchmarks show that typical frontal matrices
-   in the benchmark suite are small enough (<128 rows) that single-level APTP
-   is adequate, Phase 9.1 may be deferred or reduced in scope. Criterion:
-   skip if two-level achieves <20% speedup over single-level on the P90 largest
-   frontal matrix across the SuiteSparse benchmark suite.
+3. **Skip criteria**: Before implementing two-level APTP, profile Phase 7's
+   working solver to measure typical frontal matrix sizes across the SuiteSparse
+   benchmark suite. If the P90 largest front is small enough (<128 rows) that
+   single-level APTP is adequate, Phase 8.1 may be deferred or reduced in scope.
+   Criterion: skip if two-level achieves <20% speedup over single-level on the
+   P90 largest frontal matrix. This profiling should be done as the **first step**
+   of Phase 8, before committing to the two-level implementation.
 
 **Success Criteria:**
 - [ ] Two-level APTP produces same factorization quality as single-level
@@ -2121,7 +2184,7 @@ The following topics must be addressed during Phase 9.1 research/speccing:
 
 **Time Estimate:** 1 week
 
-#### 9.2: Parallel Factorization & Solve + Benchmarking
+#### 8.2: Parallel Factorization & Solve + Benchmarking
 **Task:** Add shared-memory parallelism to factorization and solve, and benchmark
 the complete optimized solver
 
@@ -2174,8 +2237,8 @@ impl SparseLDLT {
 }
 ```
 
-**NOTE**: The `Par` parameter will also be added to Phase 6–8 APIs retroactively
-(with `Par::Seq` default until Phase 9 adds the parallel implementation). The
+**NOTE**: The `Par` parameter will also be added to Phase 6–7 APIs retroactively
+(with `Par::Seq` default until Phase 8 adds the parallel implementation). The
 exact threading boundary — which methods accept `Par` — will be refined during
 speccing.
 
@@ -2204,7 +2267,7 @@ speccing.
 
 **Time Estimate:** 3 weeks
 
-### Phase 9 Exit Criteria
+### Phase 8 Exit Criteria
 
 **Required Outcomes:**
 1. Two-level APTP improves cache performance on large fronts
@@ -2224,7 +2287,7 @@ scaling plots and comparison data.
 
 ---
 
-## Phase 10: Polish & Release
+## Phase 9: Polish & Release
 
 ### Objectives
 Harden the solver for production use (memory optimization, robustness testing) and
@@ -2233,25 +2296,25 @@ prepare for public release (documentation, examples, packaging).
 ### What was absorbed or superseded from original Phases 10–11
 
 - **Old 10.1 (Performance Profiling)**: Profiling tools already built in Phase 1.4.
-  Benchmarking already covered by Phase 9.2. Targeted bottleneck fixes are part of
-  10.1 below.
-- **Old 10.2 (Memory Optimization)**: Workspace allocation addressed by Phase 8's
+  Benchmarking already covered by Phase 8.2. Targeted bottleneck fixes are part of
+  9.1 below.
+- **Old 10.2 (Memory Optimization)**: Workspace allocation addressed by Phase 7's
   MemStack pattern. Compact factor storage addressed by Phase 2's MixedDiagonal and
-  Phase 6's FrontFactors. Arena allocation for frontal matrices remains (10.1 below).
-- **Old 10.3 (API Refinement)**: Superseded by Phase 8's SparseLDLT API design and
-  Phase 9's Par integration. Builder pattern is minor sugar, deferred to 10.2 if needed.
-- **Old 11.3 (Benchmarks)**: Fully superseded by Phase 9.2's performance report.
+  Phase 6's FrontFactors. Arena allocation for frontal matrices remains (9.1 below).
+- **Old 10.3 (API Refinement)**: Superseded by Phase 7's SparseLDLT API design and
+  Phase 8's Par integration. Builder pattern is minor sugar, deferred to 9.2 if needed.
+- **Old 11.3 (Benchmarks)**: Fully superseded by Phase 8.2's performance report.
 - **Old 11.4 (CI/CD)**: Already done in Phase 1.3.
 
 ### Deliverables
 
-#### 10.1: Solver Hardening
+#### 9.1: Solver Hardening
 **Task:** Improve robustness and memory efficiency of the working solver
 
 **Memory optimization:**
 - Arena allocation for frontal matrices during factorization — allocate from a
   pre-sized memory pool rather than individual heap allocations per front. This
-  complements Phase 8's MemStack (which handles solve-phase workspace) by
+  complements Phase 7's MemStack (which handles solve-phase workspace) by
   optimizing the factorization-phase memory pattern.
 - Peak memory tracking and validation against symbolic predictions
 - Memory usage within 50% of prediction from AptpSymbolic
@@ -2268,7 +2331,7 @@ prepare for public release (documentation, examples, packaging).
 - Goal: no panics, only clean error returns
 
 **Targeted performance fixes:**
-- Use Phase 1.4 profiling tools and Phase 9.2 benchmark results to identify
+- Use Phase 1.4 profiling tools and Phase 8.2 benchmark results to identify
   top 3 bottlenecks
 - Optimize allocation patterns, cache utilization, unnecessary copies
 - Verify no performance regressions
@@ -2280,7 +2343,7 @@ SPRAL has a TPP fallback (`ldlt_tpp_factor` in `ldlt_app.cxx`) — when APTP del
 too many columns in a frontal matrix, SPRAL can re-factorize the delayed portion
 using traditional threshold pivoting rather than propagating all delays to the
 parent node. Our Phase 5 kernel returns delayed columns to the caller (Phase 6
-multifrontal assembly), which passes them up the elimination tree. If Phase 9.2
+multifrontal assembly), which passes them up the elimination tree. If Phase 8.2
 benchmarks reveal excessive delay propagation (e.g., >20% of columns delayed on
 >10% of frontal matrices across the benchmark suite), consider adding a TPP
 fallback kernel. This would be a new function alongside `aptp_factor_in_place`
@@ -2293,7 +2356,7 @@ compared to a hypothetical TPP-enabled run.
 Phase 5 uses `MixedDiagonal` with a `PivotType` enum and parallel arrays
 (pivot_map, diag, off_diag). SPRAL uses a flat `d[2n]` array with an `Inf`
 sentinel to mark 2x2 block boundaries, enabling O(1) pivot-type detection during
-solve without a separate type array. If Phase 9.2 benchmarks show the triangular
+solve without a separate type array. If Phase 8.2 benchmarks show the triangular
 solve phase is >25% of total solve time, profile whether D access is a bottleneck.
 If so, consider adding a compact `pack_d()` method that produces a flat array for
 the solve phase while keeping `MixedDiagonal` for the factorization phase.
@@ -2319,7 +2382,7 @@ SPRAL that deterministic tests missed.
   (TSOPF_FS_b39_c7, d_pretok, nd12k, ship_003, thread). This is an inherent
   limitation of the MC64SYM symmetric averaging formula (Duff & Pralet 2005),
   not an implementation bug — SPRAL uses the same formula.
-- With end-to-end solve benchmarks available from Phase 9.2, measure whether
+- With end-to-end solve benchmarks available from Phase 8.2, measure whether
   the quality degradation causes measurably more delayed pivots or worse
   backward error on these matrices compared to identity scaling.
 - If impact is significant: investigate maintaining column duals during Dijkstra
@@ -2332,12 +2395,12 @@ SPRAL that deterministic tests missed.
 - [ ] Peak memory within 50% of symbolic prediction
 - [ ] Property-based tests pass on random matrices (size 5–500)
 - [ ] No panics on any invalid input (clean error returns)
-- [ ] >90% code coverage
+- [ ] >90% code coverage on core solver code (`aptp/`, `error.rs`, `validate.rs`)
 - [ ] Top bottlenecks identified and addressed
 
 **Time Estimate:** 2 weeks
 
-#### 10.2: Release Preparation
+#### 9.2: Release Preparation
 **Task:** Documentation, examples, and packaging for public release
 
 **Documentation:**
@@ -2368,7 +2431,7 @@ SPRAL that deterministic tests missed.
 
 **Time Estimate:** 2 weeks
 
-### Phase 10 Exit Criteria
+### Phase 9 Exit Criteria
 
 **Required Outcomes:**
 1. Solver robust against malformed inputs (no panics)

@@ -1214,7 +1214,7 @@ mod tests {
         assert_eq!(expanded_fwd.len(), 4);
 
         // Verify valid permutation
-        let mut seen = vec![false; 4];
+        let mut seen = [false; 4];
         for &v in expanded_fwd {
             assert!(v < 4);
             seen[v] = true;
@@ -1224,21 +1224,11 @@ mod tests {
         // Verify pair adjacency: partners must be consecutive
         let pos_0 = expanded_inv[0];
         let pos_1 = expanded_inv[1];
-        let diff_01 = if pos_0 > pos_1 {
-            pos_0 - pos_1
-        } else {
-            pos_1 - pos_0
-        };
-        assert_eq!(diff_01, 1, "pair (0,1) not consecutive");
+        assert_eq!(pos_0.abs_diff(pos_1), 1, "pair (0,1) not consecutive");
 
         let pos_2 = expanded_inv[2];
         let pos_3 = expanded_inv[3];
-        let diff_23 = if pos_2 > pos_3 {
-            pos_2 - pos_3
-        } else {
-            pos_3 - pos_2
-        };
-        assert_eq!(diff_23, 1, "pair (2,3) not consecutive");
+        assert_eq!(pos_2.abs_diff(pos_3), 1, "pair (2,3) not consecutive");
     }
 
     #[test]
@@ -1258,7 +1248,7 @@ mod tests {
         assert_eq!(expanded_fwd.len(), 5);
 
         // Valid permutation
-        let mut seen = vec![false; 5];
+        let mut seen = [false; 5];
         for &v in expanded_fwd {
             seen[v] = true;
         }

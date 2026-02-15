@@ -383,8 +383,8 @@ fn test_match_order_singular_2_unmatched() {
     // If there are unmatched indices, they should be at the end
     if result.matched < 6 {
         let mc64 = mc64_matching(&matrix, Mc64Job::MaximumProduct).expect("MC64 should succeed");
-        for i in 0..6 {
-            if !mc64.is_matched[i] {
+        for (i, &is_matched) in mc64.is_matched.iter().enumerate().take(6) {
+            if !is_matched {
                 assert!(
                     inv[i] >= result.matched,
                     "unmatched index {} at position {} should be >= matched={}",
