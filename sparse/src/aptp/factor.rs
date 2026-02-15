@@ -218,6 +218,11 @@ pub fn aptp_factor_in_place(
             reason: format!("threshold must be in (0, 1], got {}", options.threshold),
         });
     }
+    if options.small < 0.0 {
+        return Err(SparseError::InvalidInput {
+            reason: format!("small must be >= 0.0, got {}", options.small),
+        });
+    }
 
     let p = num_fully_summed;
     let threshold = options.threshold;
@@ -242,13 +247,13 @@ pub fn aptp_factor_in_place(
     let mut k = 0;
 
     while k < end_pos {
-        let pivot_result = try_1x1_pivot(a.rb_mut(), k, m, threshold, small);
+        let pivot_result = try_1x1_pivot(a.rb_mut(), k, threshold, small);
 
         match pivot_result {
             Ok((d_value, max_l)) => {
                 // 1x1 pivot accepted at position k
                 d.set_1x1(k, d_value);
-                update_schur_1x1(a.rb_mut(), k, d_value, m);
+                update_schur_1x1(a.rb_mut(), k, d_value);
 
                 stats.num_1x1 += 1;
                 if max_l > stats.max_l_entry {
@@ -262,101 +267,70 @@ pub fn aptp_factor_in_place(
                 });
                 k += 1;
             }
-            Err(max_l_1x1) => match options.fallback {
-                AptpFallback::BunchKaufman => {
-                    // Search positions k+1..end_pos for the best partner
-                    let partner = select_2x2_partner_range(a.rb(), k, k + 1, end_pos);
-
-                    if let Some(partner_pos) = partner {
-                        // Physically swap partner to position k+1
+            Err(max_l_1x1) => {
+                // 1x1 failed — try 2x2 BK fallback if configured
+                let bk_accepted = if options.fallback == AptpFallback::BunchKaufman {
+                    select_2x2_partner_range(a.rb(), k, k + 1, end_pos).and_then(|partner_pos| {
                         if partner_pos != k + 1 {
-                            swap_symmetric(a.rb_mut(), k + 1, partner_pos, m);
+                            swap_symmetric(a.rb_mut(), k + 1, partner_pos);
                             col_order.swap(k + 1, partner_pos);
                         }
+                        try_2x2_pivot(a.rb_mut(), k, k + 1, threshold, small).ok()
+                    })
+                } else {
+                    None
+                };
 
-                        let result_2x2 = try_2x2_pivot(a.rb_mut(), k, k + 1, m, threshold, small);
-                        match result_2x2 {
-                            Ok((block, max_l_2x2)) => {
-                                let d_block = Block2x2 {
-                                    first_col: k,
-                                    a: block.a,
-                                    b: block.b,
-                                    c: block.c,
-                                };
-                                d.set_2x2(d_block);
-                                update_schur_2x2(a.rb_mut(), k, k + 1, &d_block, m);
+                if let Some((block, max_l_2x2)) = bk_accepted {
+                    // 2x2 pivot accepted
+                    let d_block = Block2x2 {
+                        first_col: k,
+                        a: block.a,
+                        b: block.b,
+                        c: block.c,
+                    };
+                    d.set_2x2(d_block);
+                    update_schur_2x2(a.rb_mut(), k, k + 1, &d_block);
 
-                                stats.num_2x2 += 1;
-                                if max_l_2x2 > stats.max_l_entry {
-                                    stats.max_l_entry = max_l_2x2;
-                                }
-                                pivot_log.push(AptpPivotRecord {
-                                    col: col_order[k],
-                                    pivot_type: PivotType::TwoByTwo {
-                                        partner: col_order[k + 1],
-                                    },
-                                    max_l_entry: max_l_2x2,
-                                    was_fallback: true,
-                                });
-                                pivot_log.push(AptpPivotRecord {
-                                    col: col_order[k + 1],
-                                    pivot_type: PivotType::TwoByTwo {
-                                        partner: col_order[k],
-                                    },
-                                    max_l_entry: max_l_2x2,
-                                    was_fallback: true,
-                                });
-                                k += 2;
-                            }
-                            Err(()) => {
-                                // 2x2 failed — delay column k
-                                stats.num_delayed += 1;
-                                end_pos -= 1;
-                                pivot_log.push(AptpPivotRecord {
-                                    col: col_order[k],
-                                    pivot_type: PivotType::Delayed,
-                                    max_l_entry: max_l_1x1,
-                                    was_fallback: true,
-                                });
-                                if k != end_pos {
-                                    swap_symmetric(a.rb_mut(), k, end_pos, m);
-                                    col_order.swap(k, end_pos);
-                                }
-                                // Don't increment k: retry with new column
-                            }
-                        }
-                    } else {
-                        // No partner found — delay column k
-                        stats.num_delayed += 1;
-                        end_pos -= 1;
-                        pivot_log.push(AptpPivotRecord {
-                            col: col_order[k],
-                            pivot_type: PivotType::Delayed,
-                            max_l_entry: max_l_1x1,
-                            was_fallback: true,
-                        });
-                        if k != end_pos {
-                            swap_symmetric(a.rb_mut(), k, end_pos, m);
-                            col_order.swap(k, end_pos);
-                        }
+                    stats.num_2x2 += 1;
+                    if max_l_2x2 > stats.max_l_entry {
+                        stats.max_l_entry = max_l_2x2;
                     }
-                }
-                AptpFallback::Delay => {
+                    pivot_log.push(AptpPivotRecord {
+                        col: col_order[k],
+                        pivot_type: PivotType::TwoByTwo {
+                            partner: col_order[k + 1],
+                        },
+                        max_l_entry: max_l_2x2,
+                        was_fallback: true,
+                    });
+                    pivot_log.push(AptpPivotRecord {
+                        col: col_order[k + 1],
+                        pivot_type: PivotType::TwoByTwo {
+                            partner: col_order[k],
+                        },
+                        max_l_entry: max_l_2x2,
+                        was_fallback: true,
+                    });
+                    k += 2;
+                } else {
+                    // Delay column k (unified path for BK-failed and Delay fallback)
+                    let was_fallback = options.fallback == AptpFallback::BunchKaufman;
                     stats.num_delayed += 1;
                     end_pos -= 1;
                     pivot_log.push(AptpPivotRecord {
                         col: col_order[k],
                         pivot_type: PivotType::Delayed,
                         max_l_entry: max_l_1x1,
-                        was_fallback: false,
+                        was_fallback,
                     });
                     if k != end_pos {
-                        swap_symmetric(a.rb_mut(), k, end_pos, m);
+                        swap_symmetric(a.rb_mut(), k, end_pos);
                         col_order.swap(k, end_pos);
                     }
-                    // Don't increment k: retry with new column
+                    // Don't increment k: retry with new column at this position
                 }
-            },
+            }
         }
     }
 
@@ -440,11 +414,12 @@ pub fn aptp_factor(
 /// This performs a simultaneous row-and-column permutation on a symmetric
 /// matrix stored in the lower triangle, so that the data at position i
 /// moves to position j and vice versa.
-fn swap_symmetric(mut a: MatMut<'_, f64>, i: usize, j: usize, m: usize) {
+fn swap_symmetric(mut a: MatMut<'_, f64>, i: usize, j: usize) {
     if i == j {
         return;
     }
     let (i, j) = if i < j { (i, j) } else { (j, i) };
+    let m = a.nrows();
 
     // Swap diagonals
     let tmp = a[(i, i)];
@@ -485,10 +460,10 @@ fn swap_symmetric(mut a: MatMut<'_, f64>, i: usize, j: usize, m: usize) {
 fn try_1x1_pivot(
     mut a: MatMut<'_, f64>,
     col: usize,
-    m: usize,
     threshold: f64,
     small: f64,
 ) -> Result<(f64, f64), f64> {
+    let m = a.nrows();
     let d_kk = a[(col, col)];
 
     if d_kk.abs() < small {
@@ -498,7 +473,8 @@ fn try_1x1_pivot(
     let inv_d = 1.0 / d_kk;
     let stability_bound = 1.0 / threshold;
 
-    // Backup column
+    // TODO(Phase 9.1): Replace per-column Vec backup with per-block backup
+    // when two-level blocking is implemented.
     let backup: Vec<f64> = ((col + 1)..m).map(|i| a[(i, col)]).collect();
 
     // Compute L column: l_ik = a_ik / d_kk
@@ -557,10 +533,10 @@ fn try_2x2_pivot(
     mut a: MatMut<'_, f64>,
     col: usize,
     partner: usize,
-    m: usize,
     threshold: f64,
     small: f64,
 ) -> Result<(Block2x2, f64), ()> {
+    let m = a.nrows();
     let a11 = a[(col, col)];
     let a22 = a[(partner, partner)];
     let (r21, c21) = if partner > col {
@@ -591,6 +567,8 @@ fn try_2x2_pivot(
 
     let rows_start = col.max(partner) + 1;
     let n_rows = m - rows_start;
+    // TODO(Phase 9.1): Replace per-column Vec backup with per-block backup
+    // when two-level blocking is implemented.
     let mut backup_col: Vec<f64> = Vec::with_capacity(n_rows);
     let mut backup_partner: Vec<f64> = Vec::with_capacity(n_rows);
     for i in rows_start..m {
@@ -630,7 +608,8 @@ fn try_2x2_pivot(
 }
 
 /// Rank-1 Schur complement update after eliminating a 1x1 pivot at column `col`.
-fn update_schur_1x1(mut a: MatMut<'_, f64>, col: usize, d_value: f64, m: usize) {
+fn update_schur_1x1(mut a: MatMut<'_, f64>, col: usize, d_value: f64) {
+    let m = a.nrows();
     let n_trail = m - col - 1;
     if n_trail == 0 {
         return;
@@ -648,13 +627,8 @@ fn update_schur_1x1(mut a: MatMut<'_, f64>, col: usize, d_value: f64, m: usize) 
 }
 
 /// Rank-2 Schur complement update after eliminating a 2x2 pivot.
-fn update_schur_2x2(
-    mut a: MatMut<'_, f64>,
-    col: usize,
-    partner: usize,
-    block: &Block2x2,
-    m: usize,
-) {
+fn update_schur_2x2(mut a: MatMut<'_, f64>, col: usize, partner: usize, block: &Block2x2) {
+    let m = a.nrows();
     let start = col.max(partner) + 1;
     let n_trail = m - start;
     if n_trail == 0 {
@@ -1353,6 +1327,80 @@ mod tests {
         let mut a = Mat::zeros(3, 3);
         let opts = AptpOptions::default();
         let result = aptp_factor_in_place(a.as_mut(), 5, &opts);
+        assert!(matches!(result, Err(SparseError::InvalidInput { .. })));
+    }
+
+    // ---- Edge case and regression tests ----
+
+    #[test]
+    fn test_zero_fully_summed() {
+        let a = symmetric_matrix(3, |i, j| {
+            let vals = [[4.0, 2.0, 1.0], [2.0, 5.0, 3.0], [1.0, 3.0, 6.0]];
+            vals[i][j]
+        });
+
+        let opts = AptpOptions::default();
+        let mut a_copy = a.clone();
+        let result = aptp_factor_in_place(a_copy.as_mut(), 0, &opts).unwrap();
+
+        assert_eq!(result.num_eliminated, 0);
+        assert_eq!(result.stats.num_1x1, 0);
+        assert_eq!(result.stats.num_2x2, 0);
+        assert_eq!(result.stats.num_delayed, 0);
+        assert!(result.pivot_log.is_empty());
+    }
+
+    #[test]
+    fn test_2x2_fallback_also_fails() {
+        // Matrix designed so 1x1 fails AND 2x2 also fails → column delayed.
+        //
+        // 1x1 at col 0: a00 = 0.001, l_10 = 0.11/0.001 = 110 > 1/0.01 = 100 → fails
+        // 2x2 at (0,1): det = 0.001*12.0 - 0.11^2 = 0.012 - 0.0121 = -0.0001
+        //   0.5 * a21^2 = 0.5 * 0.0121 = 0.00605
+        //   |det| = 0.0001 < 0.00605 → determinant condition fails, 2x2 rejected
+        let a = symmetric_matrix(3, |i, j| {
+            let vals = [[0.001, 0.11, 0.0], [0.11, 12.0, 0.1], [0.0, 0.1, 5.0]];
+            vals[i][j]
+        });
+
+        let opts = AptpOptions {
+            fallback: AptpFallback::BunchKaufman,
+            ..AptpOptions::default()
+        };
+        let result = aptp_factor(a.as_ref(), &opts).unwrap();
+
+        // Column 0 should be delayed (both 1x1 and 2x2 failed)
+        assert!(
+            result.stats.num_delayed >= 1,
+            "expected at least 1 delay, got {}",
+            result.stats.num_delayed
+        );
+        assert_eq!(result.stats.num_2x2, 0, "2x2 should have been rejected");
+
+        // Verify the delayed column's pivot log shows was_fallback = true
+        let delayed_entry = result
+            .pivot_log
+            .iter()
+            .find(|p| matches!(p.pivot_type, PivotType::Delayed))
+            .expect("should have a delayed pivot log entry");
+        assert!(
+            delayed_entry.was_fallback,
+            "delayed after BK attempt should have was_fallback=true"
+        );
+
+        // Statistics invariant still holds
+        let sum = result.stats.num_1x1 + 2 * result.stats.num_2x2 + result.stats.num_delayed;
+        assert_eq!(sum, 3, "statistics sum {} != n=3", sum);
+    }
+
+    #[test]
+    fn test_invalid_small_negative() {
+        let a = Mat::zeros(2, 2);
+        let opts = AptpOptions {
+            small: -1.0,
+            ..AptpOptions::default()
+        };
+        let result = aptp_factor(a.as_ref(), &opts);
         assert!(matches!(result, Err(SparseError::InvalidInput { .. })));
     }
 
