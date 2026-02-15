@@ -1555,6 +1555,31 @@ Run comprehensive validation using the existing test infrastructure:
 **If it passes:** Working core factorization kernel. The remaining phases
 are assembly (Phase 6), sparse integration (Phase 7), and solve (Phase 8).
 
+#### Phase 5 Post-Completion Review (added after Phase 5 SPRAL comparison)
+
+The following Phase 5 design decisions were made for correctness and simplicity.
+Later phases should revisit them if benchmarks indicate a need:
+
+1. **Per-column backup/restore** (vs SPRAL's per-block backup): Phase 5 uses
+   simple Vec backup for each column attempt, which is the degenerate case of
+   SPRAL's per-block backup with block size = 1. When Phase 9.1 adds two-level
+   blocking, the backup strategy must change to per-block — see Phase 9.1 notes.
+
+2. **MixedDiagonal with PivotType enum** (vs SPRAL's flat d[2n] with Inf sentinel):
+   Our approach trades a small amount of memory (the pivot_map vec) for type safety.
+   SPRAL's Inf sentinel allows O(1) pivot-type detection during solve without a
+   separate type array. If Phase 9.2 benchmarks show solve is a bottleneck (>25%
+   of total time), revisit D storage format — see Phase 10.1 notes.
+
+3. **Column-by-column Schur complement** (BLAS-2, not BLAS-3): Single-level APTP
+   uses rank-1/rank-2 updates. BLAS-3 blocking gives ~2-5x speedup on fronts >128
+   rows. This is the primary motivation for Phase 9.1.
+
+4. **No TPP (Traditional Threshold Pivoting) fallback**: SPRAL can re-factorize
+   heavily-delayed columns using TPP. We return delayed columns to the parent node
+   instead. If Phase 9.2 benchmarks show excessive delays propagating up the tree
+   on real matrices, consider adding TPP — see Phase 10.1 notes.
+
 ---
 
 ## Phase 6: Multifrontal Numeric Factorization
@@ -1803,9 +1828,18 @@ impl AptpNumeric {
   using existing NumericalValidator
 - **Multiple RHS**: solve with several right-hand sides reusing same factorization
 - **All test matrices**: backward error on hand-constructed + SuiteSparse
+- **Backward error as supplementary oracle for factorization** *(added after Phase 5
+  SPRAL comparison)*: Phase 5 validates factorization via reconstruction error
+  (||A - P^T L D L^T P|| / ||A||). SPRAL instead validates via backward error
+  through the full pipeline (factor → solve → check residual), which is a more
+  end-to-end test. Phase 7 should add backward error checks to all existing Phase 5
+  test matrices (hand-constructed, SuiteSparse CI, random) as a supplementary oracle
+  that validates the full factor+solve pipeline, not just factorization in isolation.
 
 **Success Criteria:**
 - [ ] Backward error < 10^-10 on all test matrices
+- [ ] Backward error oracle applied to all Phase 5 test matrices (factorization
+  validated end-to-end, not just via reconstruction)
 - [ ] Permutation and scaling correctly applied/unapplied
 - [ ] Forward and backward traversals use correct supernode ordering
 - [ ] D solve via Phase 2's `MixedDiagonal::solve_in_place`
@@ -2051,10 +2085,39 @@ pub fn two_level_aptp_factor(
 - Performance: benchmark single-level vs two-level on fronts of size 64, 128, 256, 512
 - Identify crossover point where two-level blocking wins
 
+**Implementation notes from Phase 5 SPRAL comparison:**
+
+The following topics must be addressed during Phase 9.1 research/speccing:
+
+1. **Backup strategy must change from per-column to per-block**: Phase 5's
+   single-level APTP backs up one column at a time (simple `Vec<f64>` in
+   `try_1x1_pivot` and `try_2x2_pivot`). Two-level APTP processes outer blocks
+   of `nb` columns at a time. SPRAL's `APP_BLOCK` mode backs up one block column
+   before optimistic elimination, then restores on failure. SPRAL also has
+   `APP_AGGRESSIVE` (back up entire matrix, eliminate all, restore on global
+   failure) — decide which mode(s) to implement. See SPRAL's `CopyBackup<T>`
+   and `PoolBackup<T>` classes in `ldlt_app.cxx`.
+
+2. **Factor/Apply/Update decomposition**: The Duff, Hogg & Lopez (2020) paper
+   Section 4.2 describes two-level APTP as three phases per outer block:
+   Factor (inner APTP on the diagonal block), Apply (update the panel below
+   the diagonal block using the newly factored portion), Update (rank-nb
+   Schur complement on the trailing submatrix). This decomposition is what
+   enables BLAS-3 performance and is also the natural parallelism boundary
+   (Apply and Update can be parallelized). Phase 9.1 research should map
+   this to our existing internal function structure.
+
+3. **Skip criteria**: If Phase 9.2 benchmarks show that typical frontal matrices
+   in the benchmark suite are small enough (<128 rows) that single-level APTP
+   is adequate, Phase 9.1 may be deferred or reduced in scope. Criterion:
+   skip if two-level achieves <20% speedup over single-level on the P90 largest
+   frontal matrix across the SuiteSparse benchmark suite.
+
 **Success Criteria:**
 - [ ] Two-level APTP produces same factorization quality as single-level
 - [ ] Performance improvement on large frontal matrices (n > ~128)
 - [ ] Cache-friendly memory access patterns verified via profiling
+- [ ] Per-block backup/restore implemented (not per-column)
 
 **Time Estimate:** 1 week
 
@@ -2209,6 +2272,46 @@ prepare for public release (documentation, examples, packaging).
   top 3 bottlenecks
 - Optimize allocation patterns, cache utilization, unnecessary copies
 - Verify no performance regressions
+
+**Items from Phase 5 SPRAL comparison** *(added after Phase 5 completion)*:
+
+*TPP (Traditional Threshold Pivoting) fallback*:
+SPRAL has a TPP fallback (`ldlt_tpp_factor` in `ldlt_app.cxx`) — when APTP delays
+too many columns in a frontal matrix, SPRAL can re-factorize the delayed portion
+using traditional threshold pivoting rather than propagating all delays to the
+parent node. Our Phase 5 kernel returns delayed columns to the caller (Phase 6
+multifrontal assembly), which passes them up the elimination tree. If Phase 9.2
+benchmarks reveal excessive delay propagation (e.g., >20% of columns delayed on
+>10% of frontal matrices across the benchmark suite), consider adding a TPP
+fallback kernel. This would be a new function alongside `aptp_factor_in_place`
+that uses traditional pivoting on the delayed submatrix before returning results.
+Decision criterion: add TPP if delay propagation measurably increases fill
+(>15% more nonzeros in parent fronts) or worsens backward error (>10x worse)
+compared to a hypothetical TPP-enabled run.
+
+*D storage format optimization*:
+Phase 5 uses `MixedDiagonal` with a `PivotType` enum and parallel arrays
+(pivot_map, diag, off_diag). SPRAL uses a flat `d[2n]` array with an `Inf`
+sentinel to mark 2x2 block boundaries, enabling O(1) pivot-type detection during
+solve without a separate type array. If Phase 9.2 benchmarks show the triangular
+solve phase is >25% of total solve time, profile whether D access is a bottleneck.
+If so, consider adding a compact `pack_d()` method that produces a flat array for
+the solve phase while keeping `MixedDiagonal` for the factorization phase.
+
+*Torture testing (SPRAL-style stress tests)*:
+SPRAL has comprehensive torture testing for the APTP kernel that goes beyond our
+current random matrix stress tests. Add SPRAL-style perturbation functions:
+- `cause_delays()`: randomly multiply n/8 rows by 1000 to force pivot delays
+- `make_singular()`: scale one column and copy to another to create rank deficiency
+- `make_dblk_singular()`: make a specific diagonal block singular
+- Probabilistic test generation: ~70% chance of delays, ~20% singularity, ~10%
+  singular diagonal blocks (following SPRAL's distribution)
+- Generate 500+ random instances per configuration
+Reference: `spral/tests/ssids/kernels/ldlt_app.cxx` lines 78-134 (perturbation
+helpers), lines 423-451 (`ldlt_torture_test` with probabilistic generation),
+and line 593 (500 tests of 128x128 matrices). Also `ldlt_tpp.cxx` lines 343-369
+for the TPP torture test variant. These tests caught subtle numerical issues in
+SPRAL that deterministic tests missed.
 
 **MC64 scaling quality revisit:**
 - Phase 4.2's MC64 matching produces degraded row_max quality (rows where
