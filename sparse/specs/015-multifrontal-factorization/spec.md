@@ -66,7 +66,7 @@ For each supernode in assembly-tree postorder, the multifrontal method assembles
 
 After factoring the fully-summed columns (F11) of a frontal matrix, the solver computes the Schur complement to produce the contribution block (updated F22). This involves solving for L21 using triangular solve and updating F22 via a symmetric rank-k update. The contribution block is then available for extend-add into the parent supernode's frontal matrix.
 
-**Why this priority**: This is a mathematically necessary step but is a direct application of dense linear algebra (TRSM + SYRK/GEMM) using faer. It carries less implementation risk than assembly or delayed pivots but must be correct for the factorization to work end-to-end.
+**Why this priority**: This is a mathematically necessary step. In Phase 6, the Schur complement is computed implicitly by Phase 5's kernel (which updates all trailing rows when the full frontal matrix is passed — see research Decision 1). This user story validates that the implicit approach produces correct results. It carries less implementation risk than assembly or delayed pivots but must be correct for the factorization to work end-to-end.
 
 **Independent Test**: Can be tested by factoring a single frontal matrix, extracting its contribution block, and verifying that re-assembling the parent front and factoring produces the same result as dense factorization of the full permuted matrix.
 
@@ -95,8 +95,8 @@ After factoring the fully-summed columns (F11) of a frontal matrix, the solver c
 - **FR-002**: System MUST assemble each frontal matrix by scattering original sparse matrix entries into the correct dense positions using the global-to-local row index mapping.
 - **FR-003**: System MUST perform the extend-add operation to merge contribution blocks from all child supernodes into the parent's frontal matrix, using row-index intersection to place entries correctly.
 - **FR-004**: System MUST call Phase 5's `aptp_factor_in_place()` on the fully-summed portion (F11) of each frontal matrix, using the provided `AptpOptions`.
-- **FR-005**: System MUST compute L21 by solving `L21 = F21 * L11^{-T} * D11^{-1}` using dense triangular solve and diagonal solve operations.
-- **FR-006**: System MUST compute the Schur complement (contribution block) as `F22_updated = F22 - L21 * D11 * L21^T` using dense matrix operations.
+- **FR-005**: After factoring a frontal matrix, the subdiagonal block L21 at rows `[k..m, 0..ne]` MUST satisfy `L21 = F21 * L11^{-T} * D11^{-1}`. (Computed implicitly by Phase 5's kernel when the entire frontal matrix is passed; see research Decision 1.)
+- **FR-006**: After factoring a frontal matrix, the contribution block at `[k..m, k..m]` MUST satisfy `F22_updated = F22 - L21 * D11 * L21^T`. (Computed implicitly by Phase 5's kernel; see research Decision 1.)
 - **FR-007**: System MUST propagate delayed columns from a child supernode to its parent's frontal matrix as additional fully-summed columns, expanding the parent's F11 block accordingly.
 - **FR-008**: System MUST store per-supernode factors (L11, D11 as `MixedDiagonal`, L21) indexed by supernode ID in the output factorization result.
 - **FR-009**: System MUST accept `AptpSymbolic` (Phase 3) and `SparseColMat<usize, f64>` as inputs, using the symbolic analysis to determine supernode structure, assembly tree, and fill-reducing permutation.
@@ -112,7 +112,7 @@ After factoring the fully-summed columns (F11) of a frontal matrix, the solver c
 - **FrontFactors**: The stored result of factoring one supernode — L11 (unit lower triangular), D11 (`MixedDiagonal` with 1x1/2x2 pivots), L21 (subdiagonal block), and the list of delayed column indices propagated to the parent.
 - **AptpNumeric**: The complete numeric factorization result containing all per-supernode `FrontFactors`, aggregate statistics, and references back to the symbolic analysis.
 - **ContributionBlock**: The Schur complement (updated F22) from a factored supernode, along with its global row indices. Consumed by the parent supernode during extend-add assembly.
-- **FactorizationStats**: Aggregate statistics from the factorization — pivot counts, delay counts, front sizes, total floating-point operations performed.
+- **FactorizationStats**: Aggregate statistics from the factorization — pivot counts, delay counts, and front sizes.
 
 ## Success Criteria *(mandatory)*
 
@@ -148,7 +148,7 @@ The multifrontal factorization algorithm is based on the following academic sour
 ## Assumptions
 
 - **Unified code path for both decomposition types**: Phase 6 handles both supernodal and simplicial `AptpSymbolic` decompositions through a single multifrontal code path. When faer produces a simplicial decomposition (common for small matrices), each column is treated as a trivial 1-column front. The supernodal path remains the primary performance target.
-- **Sequential execution**: Phase 6 implements single-threaded factorization. Parallelism (tree-level task parallelism, intra-node BLAS parallelism) is deferred to Phase 9.
+- **Sequential execution**: Phase 6 implements single-threaded factorization. Parallelism (tree-level task parallelism, intra-node BLAS parallelism) is deferred to Phase 8.2.
 - **Stack-based contribution storage**: Contribution blocks from child supernodes are consumed by their parent and can be deallocated after extend-add. A postorder traversal naturally supports stack-based lifetime management.
 - **Dense operations via faer**: All dense linear algebra (matmul, TRSM, SYRK) uses faer's existing dense kernel APIs. No custom BLAS implementations.
 - **Permutation handling**: The fill-reducing permutation from `AptpSymbolic::perm()` is applied to the sparse matrix before assembly. Within each front, `aptp_factor_in_place()` may produce an additional local permutation for pivoting, which must be tracked per-supernode.

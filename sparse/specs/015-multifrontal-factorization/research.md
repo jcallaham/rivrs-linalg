@@ -16,7 +16,7 @@
 This eliminates the need for separate TRSM (L21 computation) and GEMM (Schur complement update) steps in Phase 6.
 
 **Alternatives considered**:
-- **Separate BLAS-3 (TRSM + GEMM)**: Factor only F11, then compute `L21 = F21 * L11^{-T} * D11^{-1}` via `solve_lower_triangular_in_place` and `F22 -= L21 * D11 * L21^T` via `matmul`. This gives better cache utilization for large fronts (BLAS-3 vs BLAS-2) but adds implementation complexity. Deferred to Phase 9 as a performance optimization.
+- **Separate BLAS-3 (TRSM + GEMM)**: Factor only F11, then compute `L21 = F21 * L11^{-T} * D11^{-1}` via `solve_lower_triangular_in_place` and `F22 -= L21 * D11 * L21^T` via `matmul`. This gives better cache utilization for large fronts (BLAS-3 vs BLAS-2) but adds implementation complexity. Deferred to Phase 8.1 as a performance optimization.
 - **Hybrid**: Use BLAS-2 (pass entire front) for small fronts, BLAS-3 for large fronts. Adds complexity without benefit until parallelism is added.
 
 **Impact on spec**: FR-005 and FR-006 (L21 computation and Schur complement) are satisfied implicitly by the Phase 5 kernel when the entire frontal matrix is passed. They describe _what_ must be true of the output, not _how_ to compute it.

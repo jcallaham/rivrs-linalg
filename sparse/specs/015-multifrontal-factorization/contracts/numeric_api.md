@@ -72,7 +72,6 @@ pub struct FactorizationStats {
     pub total_2x2_pivots: usize,
     pub total_delayed: usize,
     pub max_front_size: usize,
-    pub total_flops: usize,
 }
 ```
 

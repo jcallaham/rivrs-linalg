@@ -17,7 +17,7 @@ Implement the multifrontal numeric factorization loop for sparse symmetric indef
 **Testing**: cargo test + criterion benchmarks. Reconstruction error validation via existing `validate.rs`
 **Target Platform**: Linux (x86_64, aarch64)
 **Project Type**: Single Rust library crate (existing `sparse/`)
-**Performance Goals**: Correctness-first. Sequential factorization. BLAS-3 optimization deferred to Phase 9
+**Performance Goals**: Correctness-first. Sequential factorization. BLAS-3 optimization deferred to Phase 8.1
 **Constraints**: Reconstruction error < 10^-12 for all test matrices. No new external dependencies
 **Scale/Scope**: Factor sparse matrices up to ~1.6M dimension (SuiteSparse collection). Single new source file (~1000-1500 lines) + test file
 

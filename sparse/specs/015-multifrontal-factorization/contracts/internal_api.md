@@ -41,30 +41,14 @@ pub(crate) struct FrontalMatrix {
 }
 ```
 
-### Construction
+### Assembly (composed, not monolithic)
 
-```
-pub(crate) fn assemble_frontal_matrix(
-    sn: &SupernodeInfo,
-    delayed_from_children: &[(Vec<usize>, /* delayed global indices */
-                              Mat<f64>    /* delayed column data */)],
-    matrix: &SparseColMat<usize, f64>,
-    perm_fwd: &[usize],
-    perm_inv: &[usize],
-    child_contributions: &[ContributionBlock],
-    children: &[usize],
-    global_to_local: &mut [usize],
-) -> FrontalMatrix
-```
+Assembly is performed inline in the factorization loop via two separate operations:
 
-### Steps
+1. **Scatter** (private function): Place original sparse matrix entries into the frontal matrix at permuted positions using `global_to_local` mapping
+2. **Extend-add** (`extend_add()`): Merge each child's `ContributionBlock` into the parent frontal matrix
 
-1. Compute frontal row index set: supernode columns + delayed columns + pattern
-2. Set up global-to-local mapping
-3. Allocate Mat::zeros(m, m)
-4. Scatter original matrix entries using permutation
-5. Extend-add each child's contribution block
-6. Return assembled FrontalMatrix
+The frontal row index set is computed as: supernode columns + delayed columns from children + off-diagonal pattern. The `FrontalMatrix` is allocated with `Mat::zeros(m, m)` before scatter and extend-add are called.
 
 ## ContributionBlock
 

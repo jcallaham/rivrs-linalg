@@ -136,7 +136,6 @@ Aggregate statistics from the factorization.
 | total_2x2_pivots | usize | Total 2x2 pivot pairs across all supernodes |
 | total_delayed | usize | Total delay events across all supernodes |
 | max_front_size | usize | Largest frontal matrix dimension encountered |
-| total_flops | usize | Estimated floating-point operations performed |
 
 ## State Transitions
 
