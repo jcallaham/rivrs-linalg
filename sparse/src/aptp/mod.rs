@@ -20,6 +20,7 @@ pub mod diagonal;
 pub mod factor;
 pub mod inertia;
 pub mod matching;
+pub mod numeric;
 pub mod ordering;
 pub mod perm;
 pub mod pivot;
@@ -37,3 +38,5 @@ pub use factor::{
     AptpFactorResult, AptpFactorization, AptpFallback, AptpOptions, AptpPivotRecord,
     AptpStatistics, aptp_factor, aptp_factor_in_place,
 };
+
+pub use numeric::{AptpNumeric, FactorizationStats, FrontFactors};

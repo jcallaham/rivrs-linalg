@@ -1,5 +1,115 @@
 # SSIDS Development Log
 
+## Phase 6: Multifrontal Numeric Factorization
+
+**Status**: Complete
+**Branch**: `015-multifrontal-factorization`
+**Date**: 2026-02-15
+
+### What Was Built
+
+Multifrontal numeric factorization — the core sparse factorization loop that assembles
+and factors frontal matrices in assembly-tree postorder, propagating contribution blocks
+and delayed pivots between supernodes. This implements the Duff & Reid (1983) multifrontal
+method with Hogg, Duff & Lopez (2020) APTP pivoting within each front.
+
+**New file** (`src/aptp/numeric.rs`, ~860 lines + ~1050 lines tests):
+
+**Public API**:
+- `AptpNumeric::factor()` — full multifrontal factorization from `AptpSymbolic` + `SparseColMat`
+- `AptpNumeric` — complete factorization result with per-supernode factors and statistics
+- `FrontFactors` — per-supernode factors (L11, D11, L21, local permutation, index maps)
+- `FactorizationStats` — aggregate pivot counts, delay counts, max front size
+
+**Internal types and functions** (`pub(crate)`):
+- `SupernodeInfo` — supernode metadata (column range, row pattern, assembly tree parent)
+- `FrontalMatrix` — dense frontal matrix with F11/F21/F22 partitioning and row index mapping
+- `ContributionBlock` — Schur complement from a factored front, carrying row indices
+- `build_supernode_info()` — extracts supernode structure from `AptpSymbolic` (both supernodal and simplicial paths)
+- `build_children_map()` — builds parent→children adjacency from supernode parents
+- `extend_add()` — merges child contribution blocks into parent frontal matrix via row-index mapping
+- `extract_front_factors()` — extracts L11, D11, L21 from a factored frontal matrix
+- `extract_contribution()` — extracts Schur complement contribution block after factoring
+- `scatter_original_entries()` — scatters sparse matrix entries into dense frontal matrix positions
+
+**Test-only utility**:
+- `reassemble_global_factors()` — reconstructs dense L and global MixedDiagonal from per-supernode factors for reconstruction error validation
+
+### Key Design Decisions
+
+1. **Pass entire frontal matrix to Phase 5 kernel**: Rather than separating F11 factorization
+   from L21 solve and Schur complement update, the entire frontal matrix (all rows × fully-summed
+   columns) is passed to `aptp_factor_in_place()`. The kernel naturally updates all trailing rows,
+   computing L21 and the Schur complement implicitly. This avoids separate TRSM and SYRK calls
+   and matches how SPRAL's `ldlt_app` operates on the full front.
+
+2. **Unified supernode abstraction**: Both supernodal and simplicial `AptpSymbolic` decompositions
+   pass through the same multifrontal code path. Simplicial columns are treated as trivial
+   1-column fronts via `build_supernode_info()`, which constructs `SupernodeInfo` from either
+   faer's supernodal structure or from the column-level etree and CSC structure.
+
+3. **Stack-based contribution lifetime**: Contribution blocks are stored in
+   `Vec<Option<ContributionBlock>>` and consumed (taken via `Option::take()`) when the parent
+   processes them during extend-add. Postorder traversal guarantees children are processed
+   before parents, so contributions are available when needed and freed after use.
+
+4. **Delayed column propagation**: When a child's APTP kernel delays columns (ne < k), the
+   delayed global indices are collected from the child's contribution block and prepended to
+   the parent's fully-summed column set. The parent's frontal matrix is sized accordingly:
+   `k_parent = sn.ncols() + total_delayed_from_children`.
+
+### Test Coverage (25 tests: 24 non-ignored + 1 ignored)
+
+- 2 supernode info tests (supernodal + simplicial paths)
+- 3 assembly tests (scatter, extend-add, assembly with children)
+- 2 extraction tests (front factors, contribution block)
+- 2 delayed pivot tests (propagation, all-delayed front)
+- 8 end-to-end factorization tests (identity, 1x1, 2x2, block-diagonal, medium indefinite,
+  larger banded, strongly indefinite, hand-constructed 15-matrix suite)
+- 2 cross-validation tests (single-supernode vs dense, dense equivalence for n < 100)
+- 2 advanced tests (factorization statistics, inertia validation)
+- 2 multi-level tests (contribution flow, simplicial path)
+- 1 CI SuiteSparse subset test (24 matrices, MAX_DIM=2000 for reconstruction)
+- 1 full SuiteSparse test (#[ignore], one-at-a-time loading, factor-only for large matrices)
+
+All reconstruction errors < 1e-12 for matrices where dense reconstruction is feasible.
+
+### Bug Fixes
+
+**Scatter double-counting (two separate bugs)**:
+
+Initial implementation had all 15 hand-constructed matrices failing with reconstruction
+errors ~1e-1 (10% error). Root cause was double-counting of entries during scatter.
+
+1. **Missing non-supernode-column entries**: The upper-triangle skip logic
+   (`if orig_row < orig_col { continue }`) was too aggressive — it skipped ALL upper-triangle
+   entries, but entries where `perm_inv[orig_row]` is NOT a supernode column would never be
+   seen from the other column's perspective. Fixed by only skipping when both endpoints are
+   supernode columns: `if perm_row >= col_begin && perm_row < col_end { continue }`.
+
+2. **Double-counting with delayed columns**: When a child fully delays a column (ne=0),
+   the child's contribution block contains the ORIGINAL entries (not Schur complement updates).
+   The parent's scatter also places those same entries, causing double-counting. Fixed by
+   skipping scatter entries where `local_row >= sn_ncols && local_row < k` (the delayed
+   column range in the frontal matrix, which will be populated by extend-add from the child's
+   contribution block).
+
+### SuiteSparse Validation
+
+Dense reconstruction validation (O(n²) memory) is only practical for small matrices. For
+the full SuiteSparse collection (most matrices n > 5000), Phase 6 performs factor-only
+validation (verifying the factorization completes without errors). Solve-based backward
+error validation (`||b - Ax|| / (||A||∞ · ||x||∞ + ||b||∞) < 1e-13`, O(nnz) memory) will
+be added in Phase 7 when triangular solve is implemented — this is SPRAL's primary
+validation approach.
+
+### Feature Spec
+
+Full specification in `specs/015-multifrontal-factorization/` including spec.md, plan.md,
+research.md, data-model.md, contracts/, and tasks.md.
+
+---
+
 ## Phase 5: Dense APTP Factorization Kernel
 
 **Status**: Complete
