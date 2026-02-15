@@ -20,9 +20,9 @@
 //! - [`AptpNumeric`] — complete factorization result (public API)
 //! - [`FrontFactors`] — per-supernode factors (public, used by Phase 7 solve)
 //! - [`FactorizationStats`] — aggregate statistics (public)
-//! - [`SupernodeInfo`] — unified supernode descriptor (internal)
-//! - [`FrontalMatrix`] — temporary dense assembly matrix (internal)
-//! - [`ContributionBlock`] — Schur complement passed to parent (internal)
+//! - `SupernodeInfo` — unified supernode descriptor (internal)
+//! - `FrontalMatrix` — temporary dense assembly matrix (internal)
+//! - `ContributionBlock` — Schur complement passed to parent (internal)
 //!
 //! # References
 //!
@@ -74,13 +74,7 @@ pub(crate) struct SupernodeInfo {
     pub parent: Option<usize>,
 }
 
-impl SupernodeInfo {
-    /// Number of fully-summed columns (supernode width).
-    #[allow(dead_code)]
-    pub fn ncols(&self) -> usize {
-        self.col_end - self.col_begin
-    }
-}
+// No methods needed — fields accessed directly within this module.
 
 /// Temporary dense matrix for assembling and factoring one supernode.
 ///
@@ -137,6 +131,7 @@ pub(crate) struct ContributionBlock {
 /// - `l21.ncols() == num_eliminated`
 /// - `l21.nrows() == row_indices.len()`
 /// - `col_indices.len() == num_eliminated`
+#[derive(Debug)]
 pub struct FrontFactors {
     /// Unit lower triangular factor (ne × ne).
     l11: Mat<f64>,
@@ -203,6 +198,11 @@ pub struct FactorizationStats {
     pub total_2x2_pivots: usize,
     /// Total delay events across all supernodes.
     pub total_delayed: usize,
+    /// Columns that could not be eliminated at root supernodes (zero pivots).
+    /// These represent rank deficiency in the matrix. A nonzero value means
+    /// the matrix is numerically singular (or nearly so) — the solve phase
+    /// must handle this appropriately.
+    pub zero_pivots: usize,
     /// Largest frontal matrix dimension encountered.
     pub max_front_size: usize,
 }
@@ -229,6 +229,7 @@ pub struct FactorizationStats {
 /// let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default()).unwrap();
 /// println!("Stats: {:?}", numeric.stats());
 /// ```
+#[derive(Debug)]
 pub struct AptpNumeric {
     /// Per-supernode factors, indexed by supernode ID.
     front_factors: Vec<FrontFactors>,
@@ -269,8 +270,15 @@ impl AptpNumeric {
     /// # Errors
     ///
     /// - [`SparseError::DimensionMismatch`] if matrix dimensions don't match symbolic
-    /// - [`SparseError::NumericalSingularity`] if root has unresolvable delayed columns
     /// - [`SparseError::AnalysisFailure`] if symbolic analysis is inconsistent
+    ///
+    /// # Zero Pivots
+    ///
+    /// If a root supernode has columns that cannot be eliminated (all pivots
+    /// delayed to root but still fail the threshold), these are recorded as
+    /// zero pivots in [`FactorizationStats::zero_pivots`] rather than returning
+    /// an error. This matches SPRAL's behavior: the factorization succeeds but
+    /// the solve phase must handle the rank deficiency.
     ///
     /// # References
     ///
@@ -318,6 +326,7 @@ impl AptpNumeric {
             total_1x1_pivots: 0,
             total_2x2_pivots: 0,
             total_delayed: 0,
+            zero_pivots: 0,
             max_front_size: 0,
         };
 
@@ -396,11 +405,12 @@ impl AptpNumeric {
             if sn.parent.is_some() && ne < m {
                 contributions[s] = Some(extract_contribution(&frontal, &result));
             } else if sn.parent.is_none() && ne < m {
-                // Root supernode with unresolved delayed columns
-                return Err(SparseError::NumericalSingularity {
-                    pivot_index: ne,
-                    value: 0.0,
-                });
+                // Root supernode with unresolved delayed columns — record as zero
+                // pivots rather than erroring. This matches SPRAL's behavior:
+                // the factorization succeeds but the matrix is rank-deficient.
+                // The solve phase must handle zero pivots appropriately.
+                let n_unresolved = k - ne;
+                stats.zero_pivots += n_unresolved;
             }
 
             // 9. Cleanup global-to-local mapping
@@ -660,7 +670,13 @@ pub(crate) fn extract_front_factors(
                     }
                     col += 2;
                 }
-                _ => {
+                PivotType::TwoByTwo { .. } => {
+                    // Second column of a 2x2 pair — already handled above
+                    col += 1;
+                }
+                PivotType::Delayed => {
+                    // Should not appear for columns 0..ne (they were eliminated)
+                    debug_assert!(false, "unexpected Delayed pivot at col {} in 0..ne", col);
                     col += 1;
                 }
             }
@@ -778,81 +794,4 @@ pub(crate) fn extract_contribution(
         row_indices,
         num_delayed,
     }
-}
-
-// ---------------------------------------------------------------------------
-// Test utilities
-// ---------------------------------------------------------------------------
-
-/// Reassemble global L and D factors from per-supernode results.
-///
-/// This is an O(n²) operation used only in tests to verify reconstruction
-/// error. Not suitable for the solve path.
-#[cfg(test)]
-#[allow(dead_code)]
-pub(crate) fn reassemble_global_factors(
-    numeric: &AptpNumeric,
-    _symbolic: &AptpSymbolic,
-) -> (Mat<f64>, MixedDiagonal) {
-    let n = numeric.n;
-    let mut l_global = Mat::<f64>::zeros(n, n);
-    let mut d_global = MixedDiagonal::new(n);
-
-    // Set L diagonal to 1.0 (unit lower triangular)
-    for i in 0..n {
-        l_global[(i, i)] = 1.0;
-    }
-
-    for ff in &numeric.front_factors {
-        let ne = ff.num_eliminated;
-        if ne == 0 {
-            continue;
-        }
-
-        // Scatter L11 entries to global L
-        for i in 0..ne {
-            for j in 0..i {
-                let global_row = ff.col_indices[i];
-                let global_col = ff.col_indices[j];
-                l_global[(global_row, global_col)] = ff.l11[(i, j)];
-            }
-        }
-
-        // Scatter L21 entries to global L
-        let r = ff.row_indices.len();
-        for i in 0..r {
-            for j in 0..ne {
-                let global_row = ff.row_indices[i];
-                let global_col = ff.col_indices[j];
-                l_global[(global_row, global_col)] = ff.l21[(i, j)];
-            }
-        }
-
-        // Scatter D11 pivots to global D
-        let mut col = 0;
-        while col < ne {
-            let global_col = ff.col_indices[col];
-            match ff.d11.get_pivot_type(col) {
-                PivotType::OneByOne => {
-                    d_global.set_1x1(global_col, ff.d11.get_1x1(col));
-                    col += 1;
-                }
-                PivotType::TwoByTwo { .. } => {
-                    let block = ff.d11.get_2x2(col);
-                    d_global.set_2x2(Block2x2 {
-                        first_col: global_col,
-                        a: block.a,
-                        b: block.b,
-                        c: block.c,
-                    });
-                    col += 2;
-                }
-                PivotType::Delayed => {
-                    col += 1;
-                }
-            }
-        }
-    }
-
-    (l_global, d_global)
 }

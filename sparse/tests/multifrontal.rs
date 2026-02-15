@@ -566,6 +566,7 @@ fn test_factorization_statistics() {
     assert_eq!(stats.total_1x1_pivots, 4, "expected 4 x 1x1 pivots");
     assert_eq!(stats.total_2x2_pivots, 0, "expected 0 x 2x2 pivots");
     assert_eq!(stats.total_delayed, 0, "expected 0 delayed columns");
+    assert_eq!(stats.zero_pivots, 0, "expected 0 zero pivots");
     assert!(stats.max_front_size > 0, "max_front_size should be > 0");
 }
 
@@ -936,6 +937,231 @@ fn test_suitesparse_ci_subset() {
         tested > 0,
         "no matrices in CI subset were small enough to test"
     );
+}
+
+// ===========================================================================
+// Additional review-driven tests
+// ===========================================================================
+
+/// Test that a singular (zero) matrix produces zero_pivots instead of an error.
+/// A zero matrix has all-zero pivots; the APTP kernel delays every column,
+/// and the root supernode records them as zero pivots. This matches SPRAL's
+/// behavior: factorization succeeds, but zero_pivots > 0 signals rank deficiency.
+#[test]
+fn test_singular_matrix_zero_pivots() {
+    // Zero matrix: all entries are zero but with nonzero structure
+    // for the symbolic analysis to produce a non-trivial pattern.
+    let entries = vec![
+        (0, 0, 0.0),
+        (1, 0, 0.0),
+        (1, 1, 0.0),
+        (2, 1, 0.0),
+        (2, 2, 0.0),
+    ];
+    let matrix = sparse_from_lower_triplets(3, &entries);
+
+    let symbolic = AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Amd)
+        .expect("analyze should succeed for zero matrix");
+
+    let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default())
+        .expect("factorization should succeed (zero pivots recorded, not errored)");
+
+    assert!(
+        numeric.stats().zero_pivots > 0,
+        "zero matrix should produce zero_pivots > 0, got {}",
+        numeric.stats().zero_pivots,
+    );
+}
+
+/// Test that a rank-deficient (but non-zero) matrix produces zero_pivots.
+/// This matrix has rank 2 in a 3x3: rows 0 and 1 are identical.
+#[test]
+fn test_rank_deficient_matrix_zero_pivots() {
+    // [1  1  0]
+    // [1  1  0]
+    // [0  0  2]
+    // Rank 2: the (0,0)-(1,1) 2x2 subblock is singular.
+    let entries = vec![(0, 0, 1.0), (1, 0, 1.0), (1, 1, 1.0), (2, 2, 2.0)];
+    let matrix = sparse_from_lower_triplets(3, &entries);
+
+    let symbolic = AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Amd)
+        .expect("analyze should succeed");
+
+    let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default())
+        .expect("factorization should succeed (zero pivots recorded, not errored)");
+
+    assert!(
+        numeric.stats().zero_pivots > 0,
+        "rank-deficient matrix should produce zero_pivots > 0, got {}",
+        numeric.stats().zero_pivots,
+    );
+}
+
+/// Test factorization with METIS ordering instead of AMD.
+/// Verifies that the multifrontal factorization works correctly with
+/// non-default orderings.
+#[test]
+fn test_metis_ordering() {
+    use rivrs_sparse::aptp::metis_ordering;
+
+    // Moderately sized banded indefinite matrix
+    let n = 30;
+    let mut entries = Vec::new();
+    for i in 0..n {
+        let sign = if i % 3 == 1 { -1.0 } else { 1.0 };
+        entries.push((i, i, sign * 8.0));
+    }
+    for i in 1..n {
+        entries.push((i, i - 1, 1.5));
+    }
+    for i in 2..n {
+        entries.push((i, i - 2, 0.5));
+    }
+    let matrix = sparse_from_lower_triplets(n, &entries);
+
+    // Get METIS ordering
+    let metis_perm = metis_ordering(matrix.symbolic()).expect("METIS ordering should succeed");
+
+    let symbolic = AptpSymbolic::analyze(
+        matrix.symbolic(),
+        SymmetricOrdering::Custom(metis_perm.as_ref()),
+    )
+    .expect("analyze with METIS ordering should succeed");
+
+    let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default())
+        .expect("factor with METIS ordering should succeed");
+
+    let err = multifrontal_reconstruction_error(&matrix, &symbolic, &numeric);
+    assert!(
+        err < 1e-12,
+        "METIS-ordered 30x30 reconstruction error: {:.2e} (expected < 1e-12)",
+        err
+    );
+}
+
+/// Test factorization with METIS ordering on hand-constructed matrices.
+/// Cross-validates that AMD and METIS orderings produce factors with
+/// comparable reconstruction error.
+#[test]
+fn test_metis_vs_amd_reconstruction() {
+    use rivrs_sparse::aptp::metis_ordering;
+
+    // Arrow matrix: forces non-trivial tree structure
+    let n = 15;
+    let mut entries = Vec::new();
+    for i in 0..n {
+        entries.push((i, i, 10.0));
+    }
+    for i in 1..n {
+        entries.push((i, 0, 1.0));
+    }
+    // Add some off-diagonal entries for richer structure
+    for i in 2..n {
+        entries.push((i, i - 1, 0.5));
+    }
+    let matrix = sparse_from_lower_triplets(n, &entries);
+
+    // AMD path
+    let sym_amd = AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Amd)
+        .expect("AMD analyze should succeed");
+    let num_amd = AptpNumeric::factor(&sym_amd, &matrix, &AptpOptions::default())
+        .expect("AMD factor should succeed");
+    let err_amd = multifrontal_reconstruction_error(&matrix, &sym_amd, &num_amd);
+
+    // METIS path
+    let metis_perm = metis_ordering(matrix.symbolic()).expect("METIS ordering should succeed");
+    let sym_metis = AptpSymbolic::analyze(
+        matrix.symbolic(),
+        SymmetricOrdering::Custom(metis_perm.as_ref()),
+    )
+    .expect("METIS analyze should succeed");
+    let num_metis = AptpNumeric::factor(&sym_metis, &matrix, &AptpOptions::default())
+        .expect("METIS factor should succeed");
+    let err_metis = multifrontal_reconstruction_error(&matrix, &sym_metis, &num_metis);
+
+    // Both should be well within tolerance
+    assert!(err_amd < 1e-12, "AMD reconstruction error: {:.2e}", err_amd);
+    assert!(
+        err_metis < 1e-12,
+        "METIS reconstruction error: {:.2e}",
+        err_metis
+    );
+}
+
+/// Test multi-level cascading delayed pivots.
+///
+/// Constructs a matrix designed so that delays cascade across multiple levels
+/// of the assembly tree: a pivot that fails at a leaf must propagate through
+/// an intermediate node before being resolved at or near the root.
+///
+/// Strategy: Use a tight APTP threshold with a matrix whose small diagonal
+/// entries and large off-diagonals force delays at lower levels. The pivots
+/// can only be resolved when enough context is available at a higher level.
+#[test]
+fn test_cascading_delayed_pivots() {
+    // Build a matrix where the (0,0) pivot is tiny compared to its column,
+    // forcing delays. The tridiagonal structure with a very small leading
+    // diagonal should cascade delays through the tree.
+    //
+    // [eps  1    0    0    0  ]
+    // [1    eps  1    0    0  ]
+    // [0    1    eps  1    0  ]
+    // [0    0    1    10   1  ]
+    // [0    0    0    1    10 ]
+    //
+    // The first 3 diagonals (eps) will fail the APTP threshold test and
+    // delay upward, while the last 2 (10.0) are well-conditioned.
+    let eps = 1e-15;
+    let n = 8;
+    let mut entries = Vec::new();
+    // Small diagonal entries for first half — will trigger delays
+    for i in 0..n / 2 {
+        entries.push((i, i, eps));
+    }
+    // Well-conditioned diagonal for second half
+    for i in n / 2..n {
+        entries.push((i, i, 10.0));
+    }
+    // Tridiagonal off-diagonals
+    for i in 1..n {
+        entries.push((i, i - 1, 1.0));
+    }
+    let matrix = sparse_from_lower_triplets(n, &entries);
+
+    // Use a moderate threshold that will reject the tiny pivots
+    let options = AptpOptions {
+        threshold: 0.01,
+        ..AptpOptions::default()
+    };
+
+    let symbolic = AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Amd)
+        .expect("analyze should succeed");
+
+    let result = AptpNumeric::factor(&symbolic, &matrix, &options);
+
+    let numeric = result.expect("factorization should succeed (zero pivots allowed)");
+    let stats = numeric.stats();
+
+    // We expect some delays, 2x2 pivots, or zero pivots to have occurred
+    assert!(
+        stats.total_delayed > 0 || stats.total_2x2_pivots > 0 || stats.zero_pivots > 0,
+        "expected delays, 2x2 pivots, or zero pivots for near-singular leading block, \
+         got: 1x1={}, 2x2={}, delayed={}, zero={}",
+        stats.total_1x1_pivots,
+        stats.total_2x2_pivots,
+        stats.total_delayed,
+        stats.zero_pivots,
+    );
+
+    // If no zero pivots, verify reconstruction
+    if stats.zero_pivots == 0 {
+        let err = multifrontal_reconstruction_error(&matrix, &symbolic, &numeric);
+        assert!(
+            err < 1e-10,
+            "cascading delay reconstruction error: {:.2e} (expected < 1e-10)",
+            err
+        );
+    }
 }
 
 // ===========================================================================
