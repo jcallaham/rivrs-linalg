@@ -8,8 +8,8 @@
 //!
 //! Usage: cargo run --example accuracy_benchmark --release
 
-use faer::sparse::{SparseColMat, Triplet};
 use faer::Col;
+use faer::sparse::{SparseColMat, Triplet};
 use rivrs_sparse::aptp::SparseLDLT;
 use rivrs_sparse::io::registry;
 use rivrs_sparse::validate::sparse_backward_error;
@@ -23,22 +23,24 @@ impl Lcg {
         Self(seed)
     }
     fn next_f64(&mut self) -> f64 {
-        self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         ((self.0 >> 33) as f64) / (u32::MAX as f64) * 2.0 - 1.0 // [-1, 1]
     }
     fn next_usize(&mut self, bound: usize) -> usize {
-        self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         ((self.0 >> 33) as usize) % bound
     }
 }
 
 /// Generate a random symmetric indefinite sparse matrix.
 /// Half the diagonal entries are positive, half negative (diagonally dominant).
-fn random_symmetric_indefinite(
-    n: usize,
-    density: f64,
-    seed: u64,
-) -> SparseColMat<usize, f64> {
+fn random_symmetric_indefinite(n: usize, density: f64, seed: u64) -> SparseColMat<usize, f64> {
     let mut rng = Lcg::new(seed);
 
     let target_offdiag = ((n as f64 * (n as f64 - 1.0) / 2.0) * density) as usize;
@@ -153,8 +155,16 @@ fn run_solve(
     };
 
     let be = sparse_backward_error(a, &x, &b);
-    let inertia = solver.inertia().map(|i| format!("({},{},{})", i.positive, i.negative, i.zero));
-    let status = if be < 1e-10 { "PASS" } else if be < 1e-6 { "WARN" } else { "FAIL" };
+    let inertia = solver
+        .inertia()
+        .map(|i| format!("({},{},{})", i.positive, i.negative, i.zero));
+    let status = if be < 1e-10 {
+        "PASS"
+    } else if be < 1e-6 {
+        "WARN"
+    } else {
+        "FAIL"
+    };
 
     println!(
         "{:<40} {:>6} {:>8} {:>8} {:>12.2e}  {}  {}",
@@ -178,7 +188,9 @@ fn main() {
     use rivrs_sparse::aptp::OrderingStrategy;
 
     // ===== Part 1: Random symmetric indefinite matrices (MatchOrderMetis) =====
-    println!("\n--- Random symmetric indefinite (MatchOrderMetis, density=0.05, threshold=0.01) ---");
+    println!(
+        "\n--- Random symmetric indefinite (MatchOrderMetis, density=0.05, threshold=0.01) ---"
+    );
     for &n in &[50, 100, 200, 500, 1000] {
         for seed in 0..3u64 {
             let label = format!("random n={} seed={}", n, seed);
@@ -192,7 +204,8 @@ fn main() {
     for &density in &[0.01, 0.05, 0.10, 0.20, 0.50] {
         for seed in 0..3u64 {
             let label = format!("random n=200 dens={:.2} seed={}", density, seed);
-            let a = random_symmetric_indefinite(200, density, seed * 100 + (density * 100.0) as u64);
+            let a =
+                random_symmetric_indefinite(200, density, seed * 100 + (density * 100.0) as u64);
             run_solve(&label, &a, 0.01, OrderingStrategy::MatchOrderMetis);
         }
     }
@@ -204,7 +217,12 @@ fn main() {
         if let Some(meta) = bratu {
             if let Ok(Some(test)) = registry::load_test_matrix(&meta.name) {
                 run_solve("bratu3d METIS", &test.matrix, 0.01, OrderingStrategy::Metis);
-                run_solve("bratu3d MatchOrderMetis", &test.matrix, 0.01, OrderingStrategy::MatchOrderMetis);
+                run_solve(
+                    "bratu3d MatchOrderMetis",
+                    &test.matrix,
+                    0.01,
+                    OrderingStrategy::MatchOrderMetis,
+                );
             } else {
                 println!("bratu3d: not found in test-data");
             }

@@ -8,8 +8,8 @@
 //! Usage: cargo run --example front_sizes --release
 
 use faer::sparse::linalg::cholesky::SymmetricOrdering;
-use rivrs_sparse::aptp::ordering::metis_ordering;
 use rivrs_sparse::aptp::AptpSymbolic;
+use rivrs_sparse::aptp::ordering::metis_ordering;
 use rivrs_sparse::io::registry;
 
 fn percentile(sorted: &[usize], p: f64) -> usize {
@@ -69,10 +69,7 @@ fn main() {
         let n_supernodes = match symbolic.n_supernodes() {
             Some(ns) => ns,
             None => {
-                println!(
-                    "{:<40} {:>8} {:>10} simplicial",
-                    meta.name, n, meta.nnz
-                );
+                println!("{:<40} {:>8} {:>10} simplicial", meta.name, n, meta.nnz);
                 all_max_fronts.push((meta.name.clone(), n, 0));
                 continue;
             }
@@ -98,7 +95,15 @@ fn main() {
 
         println!(
             "{:<40} {:>8} {:>10} {:>7} {:>7} {:>7} {:>7} {:>7} {:>6}",
-            meta.name, n, meta.nnz, n_supernodes, med_front, p90_front, p99_front, max_front, large_fronts
+            meta.name,
+            n,
+            meta.nnz,
+            n_supernodes,
+            med_front,
+            p90_front,
+            p99_front,
+            max_front,
+            large_fronts
         );
 
         all_max_fronts.push((meta.name.clone(), n, max_front));
@@ -108,17 +113,38 @@ fn main() {
     println!("\n=== Summary ===");
     let total = all_max_fronts.len();
     let simplicial = all_max_fronts.iter().filter(|(_, _, mf)| *mf == 0).count();
-    let small = all_max_fronts.iter().filter(|(_, _, mf)| *mf > 0 && *mf <= 256).count();
-    let medium = all_max_fronts.iter().filter(|(_, _, mf)| *mf > 256 && *mf <= 1000).count();
-    let large = all_max_fronts.iter().filter(|(_, _, mf)| *mf > 1000 && *mf <= 5000).count();
-    let huge = all_max_fronts.iter().filter(|(_, _, mf)| *mf > 5000).count();
+    let small = all_max_fronts
+        .iter()
+        .filter(|(_, _, mf)| *mf > 0 && *mf <= 256)
+        .count();
+    let medium = all_max_fronts
+        .iter()
+        .filter(|(_, _, mf)| *mf > 256 && *mf <= 1000)
+        .count();
+    let large = all_max_fronts
+        .iter()
+        .filter(|(_, _, mf)| *mf > 1000 && *mf <= 5000)
+        .count();
+    let huge = all_max_fronts
+        .iter()
+        .filter(|(_, _, mf)| *mf > 5000)
+        .count();
 
     println!("Total matrices analyzed: {}", total);
     println!("  Simplicial (no supernodes):  {:>3}", simplicial);
-    println!("  max_front ≤ 256:             {:>3}  (single-level fine)", small);
+    println!(
+        "  max_front ≤ 256:             {:>3}  (single-level fine)",
+        small
+    );
     println!("  max_front 257–1000:          {:>3}  (borderline)", medium);
-    println!("  max_front 1001–5000:         {:>3}  (needs two-level)", large);
-    println!("  max_front > 5000:            {:>3}  (critical for two-level)", huge);
+    println!(
+        "  max_front 1001–5000:         {:>3}  (needs two-level)",
+        large
+    );
+    println!(
+        "  max_front > 5000:            {:>3}  (critical for two-level)",
+        huge
+    );
 
     println!("\nTop 10 by max front size:");
     let mut sorted = all_max_fronts.clone();

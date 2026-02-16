@@ -310,13 +310,7 @@ impl AptpNumeric {
         let children = build_children_map(&supernodes);
 
         // Get fill-reducing permutation
-        let (perm_fwd, perm_inv) = if let Some(perm) = symbolic.perm() {
-            let (fwd, inv) = perm.arrays();
-            (fwd.to_vec(), inv.to_vec())
-        } else {
-            let id: Vec<usize> = (0..n).collect();
-            (id.clone(), id)
-        };
+        let (perm_fwd, perm_inv) = symbolic.perm_vecs();
 
         // Allocate shared data structures
         let mut global_to_local = vec![usize::MAX; n];

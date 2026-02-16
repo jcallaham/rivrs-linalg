@@ -97,7 +97,13 @@ fn main() {
 
         let be = sparse_backward_error(a, &x, &b);
         let stats = solver.stats().unwrap();
-        let status = if be < 5e-11 { "PASS" } else if be < 1e-6 { "WARN" } else { "FAIL" };
+        let status = if be < 5e-11 {
+            "PASS"
+        } else if be < 1e-6 {
+            "WARN"
+        } else {
+            "FAIL"
+        };
         if be < 5e-11 {
             pass += 1;
         } else {
@@ -106,8 +112,16 @@ fn main() {
 
         println!(
             "{:<30} {:>8} {:>10} {:>8} {:>8} {:>12.2e} {:>7} {:>7} {:>7} {:>6}",
-            meta.name, n, meta.nnz, factor_ms, solve_ms, be,
-            stats.total_1x1_pivots, stats.total_2x2_pivots, stats.total_delayed, status
+            meta.name,
+            n,
+            meta.nnz,
+            factor_ms,
+            solve_ms,
+            be,
+            stats.total_1x1_pivots,
+            stats.total_2x2_pivots,
+            stats.total_delayed,
+            status
         );
     }
 

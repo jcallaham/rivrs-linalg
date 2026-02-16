@@ -422,6 +422,24 @@ impl AptpSymbolic {
         self.inner.perm()
     }
 
+    /// Returns the forward and inverse permutation arrays as owned vectors.
+    ///
+    /// If no permutation is applied (identity ordering), returns identity
+    /// arrays `(0..n, 0..n)`.
+    ///
+    /// - `fwd[new_index] = old_index`
+    /// - `inv[old_index] = new_index`
+    pub fn perm_vecs(&self) -> (Vec<usize>, Vec<usize>) {
+        if let Some(perm) = self.inner.perm() {
+            let (fwd, inv) = perm.arrays();
+            (fwd.to_vec(), inv.to_vec())
+        } else {
+            let n = self.nrows();
+            let id: Vec<usize> = (0..n).collect();
+            (id.clone(), id)
+        }
+    }
+
     /// Returns the predicted number of nonzeros in the L factor.
     pub fn predicted_nnz(&self) -> usize {
         self.inner.len_val()

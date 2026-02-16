@@ -34,9 +34,9 @@ use crate::error::SparseError;
 pub enum OrderingStrategy {
     /// AMD ordering (faer built-in).
     Amd,
-    /// METIS ordering (via metis-sys). Default.
+    /// METIS ordering (via metis-sys).
     Metis,
-    /// MC64 matching + METIS ordering. Produces scaling factors.
+    /// MC64 matching + METIS ordering. Default. Produces scaling factors.
     MatchOrderMetis,
     /// User-supplied ordering permutation.
     UserSupplied(Perm<usize>),
@@ -127,9 +127,22 @@ pub struct SparseLDLT {
     symbolic: AptpSymbolic,
     numeric: Option<AptpNumeric>,
     scaling: Option<Vec<f64>>,
+    /// Cached forward permutation (perm_fwd[new] = old). Computed once during analyze.
+    perm_fwd: Vec<usize>,
 }
 
 impl SparseLDLT {
+    /// Build a `SparseLDLT` with cached permutation vectors from symbolic analysis.
+    fn new_with_cached_perm(symbolic: AptpSymbolic, scaling: Option<Vec<f64>>) -> Self {
+        let (perm_fwd, _) = symbolic.perm_vecs();
+        SparseLDLT {
+            symbolic,
+            numeric: None,
+            scaling,
+            perm_fwd,
+        }
+    }
+
     /// Symbolic analysis phase.
     ///
     /// Computes the fill-reducing ordering, elimination tree, and
@@ -151,11 +164,7 @@ impl SparseLDLT {
         match &options.ordering {
             OrderingStrategy::Amd => {
                 let symbolic = AptpSymbolic::analyze(matrix, SymmetricOrdering::Amd)?;
-                Ok(SparseLDLT {
-                    symbolic,
-                    numeric: None,
-                    scaling: None,
-                })
+                Ok(Self::new_with_cached_perm(symbolic, None))
             }
             OrderingStrategy::Metis => {
                 // Build a dummy matrix for METIS (needs SymbolicSparseColMatRef)
@@ -177,11 +186,7 @@ impl SparseLDLT {
                 let perm = metis_ordering(dummy_matrix.symbolic())?;
                 let symbolic =
                     AptpSymbolic::analyze(matrix, SymmetricOrdering::Custom(perm.as_ref()))?;
-                Ok(SparseLDLT {
-                    symbolic,
-                    numeric: None,
-                    scaling: None,
-                })
+                Ok(Self::new_with_cached_perm(symbolic, None))
             }
             OrderingStrategy::MatchOrderMetis => Err(SparseError::AnalysisFailure {
                 reason: "MatchOrderMetis requires numeric matrix values; \
@@ -191,11 +196,7 @@ impl SparseLDLT {
             OrderingStrategy::UserSupplied(perm) => {
                 let symbolic =
                     AptpSymbolic::analyze(matrix, SymmetricOrdering::Custom(perm.as_ref()))?;
-                Ok(SparseLDLT {
-                    symbolic,
-                    numeric: None,
-                    scaling: None,
-                })
+                Ok(Self::new_with_cached_perm(symbolic, None))
             }
         }
     }
@@ -214,11 +215,7 @@ impl SparseLDLT {
         match &options.ordering {
             OrderingStrategy::Amd => {
                 let symbolic = AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Amd)?;
-                Ok(SparseLDLT {
-                    symbolic,
-                    numeric: None,
-                    scaling: None,
-                })
+                Ok(Self::new_with_cached_perm(symbolic, None))
             }
             OrderingStrategy::Metis => {
                 let perm = metis_ordering(matrix.symbolic())?;
@@ -226,11 +223,7 @@ impl SparseLDLT {
                     matrix.symbolic(),
                     SymmetricOrdering::Custom(perm.as_ref()),
                 )?;
-                Ok(SparseLDLT {
-                    symbolic,
-                    numeric: None,
-                    scaling: None,
-                })
+                Ok(Self::new_with_cached_perm(symbolic, None))
             }
             OrderingStrategy::MatchOrderMetis => {
                 let result = match_order_metis(matrix)?;
@@ -241,29 +234,17 @@ impl SparseLDLT {
                 )?;
 
                 // Transform scaling to elimination order
-                let elim_scaling = if let Some(perm) = symbolic.perm() {
-                    let (fwd, _) = perm.arrays();
-                    (0..n).map(|i| result.scaling[fwd[i]]).collect()
-                } else {
-                    result.scaling
-                };
+                let (perm_fwd, _) = symbolic.perm_vecs();
+                let elim_scaling: Vec<f64> = (0..n).map(|i| result.scaling[perm_fwd[i]]).collect();
 
-                Ok(SparseLDLT {
-                    symbolic,
-                    numeric: None,
-                    scaling: Some(elim_scaling),
-                })
+                Ok(Self::new_with_cached_perm(symbolic, Some(elim_scaling)))
             }
             OrderingStrategy::UserSupplied(perm) => {
                 let symbolic = AptpSymbolic::analyze(
                     matrix.symbolic(),
                     SymmetricOrdering::Custom(perm.as_ref()),
                 )?;
-                Ok(SparseLDLT {
-                    symbolic,
-                    numeric: None,
-                    scaling: None,
-                })
+                Ok(Self::new_with_cached_perm(symbolic, None))
             }
         }
     }
@@ -356,14 +337,7 @@ impl SparseLDLT {
             return Ok(());
         }
 
-        // Get permutation
-        let (perm_fwd, _) = if let Some(perm) = self.symbolic.perm() {
-            let (fwd, inv) = perm.arrays();
-            (fwd.to_vec(), inv.to_vec())
-        } else {
-            let id: Vec<usize> = (0..n).collect();
-            (id.clone(), id)
-        };
+        let perm_fwd = &self.perm_fwd;
 
         // 1. Permute: rhs_perm[new] = rhs[perm_fwd[new]]
         //    perm_fwd[new] = old, so this gathers original RHS into permuted order.

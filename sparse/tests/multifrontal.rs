@@ -6,32 +6,16 @@
 //! - US1: End-to-end factorization
 //! - US4: Schur complement validation
 
+mod common;
+
 use faer::Mat;
+use faer::sparse::SparseColMat;
 use faer::sparse::linalg::cholesky::SymmetricOrdering;
-use faer::sparse::{SparseColMat, Triplet};
 
 use rivrs_sparse::aptp::pivot::PivotType;
 use rivrs_sparse::aptp::{AptpNumeric, AptpOptions, AptpSymbolic};
 
-// ---------------------------------------------------------------------------
-// Helper: build a sparse symmetric matrix from dense lower triangle
-// ---------------------------------------------------------------------------
-
-/// Build a SparseColMat from a dense lower-triangular specification.
-/// Input: (i, j, val) triplets where i >= j. Automatically mirrors to upper triangle.
-fn sparse_from_lower_triplets(
-    n: usize,
-    entries: &[(usize, usize, f64)],
-) -> SparseColMat<usize, f64> {
-    let mut triplets = Vec::new();
-    for &(i, j, v) in entries {
-        triplets.push(Triplet::new(i, j, v));
-        if i != j {
-            triplets.push(Triplet::new(j, i, v));
-        }
-    }
-    SparseColMat::try_new_from_triplets(n, n, &triplets).unwrap()
-}
+use common::sparse_from_lower_triplets;
 
 /// Compute reconstruction error ||P^T A P - L D L^T|| / ||A|| for a multifrontal result.
 ///
@@ -45,13 +29,7 @@ fn multifrontal_reconstruction_error(
     let a_dense = matrix.to_dense();
 
     // Get permutation
-    let (perm_fwd, _perm_inv) = if let Some(perm) = symbolic.perm() {
-        let (fwd, inv) = perm.arrays();
-        (fwd.to_vec(), inv.to_vec())
-    } else {
-        let id: Vec<usize> = (0..n).collect();
-        (id.clone(), id)
-    };
+    let (perm_fwd, _perm_inv) = symbolic.perm_vecs();
 
     // Compute P^T A P
     let mut pap = Mat::<f64>::zeros(n, n);
