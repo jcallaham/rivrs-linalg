@@ -372,8 +372,7 @@ impl AptpNumeric {
                 &perm_fwd,
                 &perm_inv,
                 &global_to_local,
-                sn.col_begin,
-                sn.col_end,
+                sn.col_begin..sn.col_end,
                 scaling,
             );
 
@@ -533,10 +532,11 @@ fn scatter_original_entries(
     perm_fwd: &[usize],
     perm_inv: &[usize],
     global_to_local: &[usize],
-    col_begin: usize,
-    col_end: usize,
+    col_range: std::ops::Range<usize>,
     scaling: Option<&[f64]>,
 ) {
+    let col_begin = col_range.start;
+    let col_end = col_range.end;
     let symbolic = matrix.symbolic();
     let col_ptrs = symbolic.col_ptr();
     let row_indices_csc = symbolic.row_idx();
