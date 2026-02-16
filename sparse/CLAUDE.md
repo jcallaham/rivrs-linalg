@@ -235,6 +235,8 @@ Five principles guiding test design for Phases 3+ (implementation-heavy):
 - Rust 1.87+ (edition 2024) + faer 0.22 (dense matrix types, matmul, triangular solve), Phase 2 types (MixedDiagonal, PivotType, Block2x2, Inertia) (014-dense-aptp-kernel)
 - N/A (in-memory dense matrices only) (014-dense-aptp-kernel)
 - Rust 1.87+ (edition 2024) + faer 0.22 (dense LA, sparse types, permutations), Phase 2/3/5 modules (existing) (015-multifrontal-factorization)
+- Rust 1.87+ (edition 2024) + faer 0.22 (dense LA, sparse types, MemStack, triangular solve, matmul), metis-sys 0.3.x (METIS ordering), serde/serde_json (existing) (016-triangular-solve-api)
+- In-memory dense matrices per supernode (`Mat<f64>`), `MixedDiagonal` for D storage (016-triangular-solve-api)
 
 ## Recent Changes
 - 010-aptp-symbolic: Added Rust 1.87+ (edition 2024) + faer 0.22 (symbolic Cholesky, AMD ordering, MemStack), serde/serde_json (existing, not new)

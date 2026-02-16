@@ -899,8 +899,10 @@ fn test_medium_indefinite() {
 
 /// Factor CI-subset SuiteSparse matrices (n < 2000) and verify reconstruction error.
 /// Larger matrices are skipped because dense reconstruction is O(n²) memory.
+/// Uses METIS ordering for better fill-in (SPRAL's default).
 #[test]
 fn test_suitesparse_ci_subset() {
+    use rivrs_sparse::aptp::metis_ordering;
     use rivrs_sparse::testing::{TestCaseFilter, load_test_cases};
 
     const MAX_DIM: usize = 2000;
@@ -916,8 +918,13 @@ fn test_suitesparse_ci_subset() {
             continue; // Skip large matrices (dense reconstruction would OOM)
         }
 
-        let symbolic = AptpSymbolic::analyze(case.matrix.symbolic(), SymmetricOrdering::Amd)
-            .unwrap_or_else(|e| panic!("analyze failed for '{}': {}", case.name, e));
+        let metis_perm = metis_ordering(case.matrix.symbolic())
+            .unwrap_or_else(|e| panic!("METIS ordering failed for '{}': {}", case.name, e));
+        let symbolic = AptpSymbolic::analyze(
+            case.matrix.symbolic(),
+            SymmetricOrdering::Custom(metis_perm.as_ref()),
+        )
+        .unwrap_or_else(|e| panic!("analyze failed for '{}': {}", case.name, e));
 
         let numeric = AptpNumeric::factor(&symbolic, &case.matrix, &AptpOptions::default())
             .unwrap_or_else(|e| panic!("factor failed for '{}': {}", case.name, e));
@@ -1171,14 +1178,16 @@ fn test_cascading_delayed_pivots() {
 /// Factor SuiteSparse matrices one at a time and verify reconstruction error.
 /// Requires the full SuiteSparse collection (extracted from archive).
 ///
-/// Matrices are loaded individually to avoid OOM. Matrices with n <= 500 get
-/// full dense reconstruction check. Larger matrices (up to 5000) only verify
+/// Uses METIS ordering (SPRAL's default) for better fill-in than AMD.
+/// Matrices are loaded individually to avoid OOM. Matrices with n <= 1000 get
+/// full dense reconstruction check. Larger matrices (up to 20000) only verify
 /// that factorization completes without error. Very large matrices are skipped.
 ///
 /// Run with: `cargo test --test multifrontal test_suitesparse_full -- --ignored --test-threads=1`
 #[test]
 #[ignore = "requires full SuiteSparse collection"]
 fn test_suitesparse_full() {
+    use rivrs_sparse::aptp::metis_ordering;
     use rivrs_sparse::io::registry;
 
     const MAX_DIM_FOR_RECON: usize = 1000;
@@ -1216,14 +1225,24 @@ fn test_suitesparse_full() {
             continue;
         }
 
-        let symbolic =
-            match AptpSymbolic::analyze(test_matrix.matrix.symbolic(), SymmetricOrdering::Amd) {
-                Ok(s) => s,
-                Err(e) => {
-                    failed.push(format!("'{}' (n={}): analyze error: {}", meta.name, n, e));
-                    continue;
-                }
-            };
+        // Use METIS ordering (SPRAL's default) — produces 2-20× less fill than AMD
+        let metis_perm = match metis_ordering(test_matrix.matrix.symbolic()) {
+            Ok(p) => p,
+            Err(e) => {
+                failed.push(format!("'{}' (n={}): METIS ordering error: {}", meta.name, n, e));
+                continue;
+            }
+        };
+        let symbolic = match AptpSymbolic::analyze(
+            test_matrix.matrix.symbolic(),
+            SymmetricOrdering::Custom(metis_perm.as_ref()),
+        ) {
+            Ok(s) => s,
+            Err(e) => {
+                failed.push(format!("'{}' (n={}): analyze error: {}", meta.name, n, e));
+                continue;
+            }
+        };
 
         let numeric =
             match AptpNumeric::factor(&symbolic, &test_matrix.matrix, &AptpOptions::default()) {
