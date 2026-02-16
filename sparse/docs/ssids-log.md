@@ -1,5 +1,151 @@
 # SSIDS Development Log
 
+## Phase 7.5: Accuracy Investigation & Default Ordering Change
+
+**Status**: Complete
+**Branch**: `016-triangular-solve-api`
+**Date**: 2026-02-16
+
+### Problem
+
+Initial solve_timing benchmarks showed unacceptable backward error on several
+SuiteSparse CI matrices (bratu3d 5.59e-3, cvxqp3 1.56e-6, sparsine 6.86e-4)
+while small/well-structured matrices worked perfectly (bloweybq 2.16e-11,
+t2dal 1.96e-18).
+
+### Investigation
+
+1. **Random matrix benchmark** (examples/accuracy_benchmark.rs): 30 random
+   symmetric indefinite matrices (n=50..1000, density 0.01..0.50) all achieve
+   backward error ~1e-17 with both METIS and MatchOrderMetis. This rules out
+   a fundamental APTP kernel bug.
+
+2. **bratu3d diagnostics**: With METIS ordering, bratu3d accumulates 53,841
+   total delayed pivots, 120 zero pivots, and forward error of 4.3e6 — the
+   solution is numerically garbage. Root cause: the matrix structure causes
+   massive pivot delays that cascade through the elimination tree.
+
+3. **MatchOrderMetis ordering**: With MC64 matching+scaling, bratu3d has
+   only 1 total delay, 0 zero pivots, backward error 1.00e-9, and runs
+   4× faster (1.6s vs 7s). The MC64 preprocessing pairs difficult pivots
+   before ordering, eliminating nearly all delays.
+
+### Resolution
+
+Changed default ordering from `OrderingStrategy::Metis` to
+`OrderingStrategy::MatchOrderMetis` in both `AnalyzeOptions` and
+`SolverOptions`. This matches SPRAL's recommendation for indefinite problems
+(`ordering=2` mode).
+
+### Files Changed
+
+- `src/aptp/solver.rs` — default ordering changed to MatchOrderMetis
+- `examples/accuracy_benchmark.rs` — random matrix + bratu3d accuracy tests
+- `examples/front_sizes.rs` — switched from AMD to METIS ordering
+- `examples/solve_timing.rs` — removed unused import
+- Removed 6 temporary debug examples
+
+---
+
+## Phase 7: Triangular Solve & Solver API
+
+**Status**: Complete
+**Branch**: `016-triangular-solve-api`
+**Date**: 2026-02-16
+
+### What Was Built
+
+End-to-end triangular solve and user-facing solver API, completing the three-phase
+analyze → factor → solve pipeline. Transforms the multifrontal factorization (Phase 6)
+into a working sparse symmetric indefinite solver.
+
+**New file** (`src/aptp/solve.rs`, ~220 lines):
+
+**Public API**:
+- `aptp_solve()` — per-supernode triangular solve in permuted coordinates (forward L, diagonal D, backward L^T)
+- `aptp_solve_scratch()` — workspace requirement (StackReq based on max_front_size)
+
+**Internal functions** (`pub(crate)`):
+- `forward_solve_supernode()` — gather, L11 solve (unit lower triangular), scatter via L21
+- `diagonal_solve_supernode()` — gather, D11 solve_in_place, write back
+- `backward_solve_supernode()` — gather, L21^T update, L11^T solve (unit upper triangular), write back
+
+**New file** (`src/aptp/solver.rs`, ~470 lines):
+
+**Public API**:
+- `SparseLDLT` — user-facing solver struct (symbolic + numeric + optional scaling)
+- `SparseLDLT::analyze()` — symbolic analysis from sparsity pattern only
+- `SparseLDLT::analyze_with_matrix()` — symbolic analysis with numeric values (required for MatchOrderMetis)
+- `SparseLDLT::factor()` / `refactor()` — numeric factorization (P^T A P = L D L^T)
+- `SparseLDLT::solve()` / `solve_in_place()` — solve with pre-allocated workspace
+- `SparseLDLT::solve_full()` — one-shot analyze + factor + solve convenience method
+- `SparseLDLT::solve_scratch()` — workspace requirement query
+- `SparseLDLT::inertia()` — eigenvalue sign counts from factorization
+- `SparseLDLT::stats()` — factorization statistics
+- `OrderingStrategy` — Amd, Metis, MatchOrderMetis, UserSupplied(Perm)
+- `AnalyzeOptions`, `FactorOptions`, `SolverOptions` — configuration structs with Default impls
+
+**Error handling** (`src/error.rs`):
+- Added `SolveBeforeFactor` variant to `SparseError`
+
+**Validation fix** (`src/validate.rs`):
+- Fixed `sparse_backward_error()` for full symmetric CSC storage (was double-counting off-diagonal entries)
+
+**Integration tests** (`tests/solve.rs`, 16 tests: 15 active + 1 ignored):
+
+- 4 per-supernode solve tests: 3x3 PD, 4x4 indefinite, 1x1, diagonal (US3)
+- 5 end-to-end tests: 11 hand-constructed matrices, inertia validation, SuiteSparse CI (ignored), error handling, API equivalence (US1)
+- 2 reuse tests: refactor with different values, multiple RHS (US2)
+- 2 workspace tests: scratch sufficiency, workspace reuse (US5)
+- Rank-deficient, empty matrix, and dimension mismatch edge cases
+
+### Key Design Decisions
+
+1. **Core solve as free function**: `aptp_solve(symbolic, numeric, rhs, stack)` operates
+   in permuted coordinates. `SparseLDLT` wraps with permute → scale → solve → unscale → unpermute.
+   This separates concerns: the solve algorithm knows nothing about ordering or scaling.
+
+2. **Vec workspace instead of MemStack for internal buffer**: The per-supernode work buffer
+   (`Vec<f64>` of `max_front_size`) is allocated once in `aptp_solve` and reused across all
+   supernodes. The `MemStack` parameter is reserved for future multi-RHS support.
+
+3. **Dense triangular solve via faer**: Uses `solve_unit_lower_triangular_in_place_with_conj`
+   and `solve_unit_upper_triangular_in_place_with_conj` for L11 solves. Dense `matmul_with_conj`
+   for L21 scatter/gather operations. Small per-supernode matrices make dense operations efficient.
+
+4. **Scaling at SparseLDLT level**: MC64 scaling factors are transformed to elimination order
+   during analysis (`elim_scaling[i] = orig_scaling[perm_fwd[i]]`). Applied symmetrically:
+   pre-scale RHS before forward solve, post-scale solution after backward solve.
+
+5. **Inertia via per-supernode aggregation**: `SparseLDLT::inertia()` sums per-supernode
+   `d11.compute_inertia()` results. No global D reconstruction needed.
+
+### Bug Fixes
+
+**symmetric_matvec and sparse_backward_error double-counting off-diagonal entries**:
+
+Initial test suite had 8 of 16 tests failing with backward errors ~0.1 (10% error).
+The solve algorithm itself was mathematically correct (verified by hand-tracing through
+both simplicial and supernodal cases).
+
+Root cause: Both `symmetric_matvec()` in tests and `sparse_backward_error()` in validate.rs
+assumed lower-triangle-only CSC storage, adding mirror entries for off-diagonal elements.
+However, our `.mtx` reader and `SparseColMat::try_new_from_triplets()` with mirrored triplets
+both produce FULL symmetric matrices (both triangles stored). This caused every off-diagonal
+contribution to be counted twice.
+
+Fixed by:
+- `symmetric_matvec()`: Removed `if i != j { result[j] += v * x[i]; }` mirror
+- `sparse_backward_error()`: Removed mirror in matvec and 2x multiplier in Frobenius norm
+- Updated docstrings to document full symmetric CSC storage expectation
+
+### Feature Spec
+
+Full specification in `specs/016-triangular-solve-api/` including spec.md, plan.md,
+research.md, data-model.md, contracts/, quickstart.md, and tasks.md.
+
+---
+
 ## Phase 6: Multifrontal Numeric Factorization
 
 **Status**: Complete

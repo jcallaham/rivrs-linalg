@@ -8,7 +8,7 @@ This directory contains sparse linear algebra solver implementations for rivrs-l
 
 **Parent Project**: rivrs-linalg - Numerical Linear Algebra for Rivrs
 **Domain**: Sparse direct solvers (SSIDS, LDL^T factorization, APTP pivoting)
-**Current Status**: Phase 6 complete — Multifrontal numeric factorization. Ready for Phase 7 (Triangular Solve & Solver API).
+**Current Status**: Phase 7 complete — Triangular solve & solver API (end-to-end SparseLDLT). Default ordering: MatchOrderMetis (MC64+METIS). CI results: 4/8 pass SPRAL's 5e-11 threshold; remaining matrices need two-level APTP (Phase 8). Ready for Phase 8 (Performance Optimization).
 
 ### Development docs
 
@@ -168,10 +168,19 @@ Preferences (can be violated if needed)
 Primary correctness validation (established in Phase 0.3 decision):
 
 1. **Reconstruction tests**: `||P^T A P - L D L^T|| / ||A|| < 10^-12` (primary oracle)
-2. **Backward error**: `||Ax - b|| / (||A|| ||x|| + ||b||) < 10^-10` (solve pipeline)
+2. **Backward error**: `||Ax - b|| / (||A|| ||x|| + ||b||) < 5e-11` (SPRAL's threshold)
 3. **Hand-constructed matrices**: 15 matrices with analytically known factorizations
 4. **Property-based tests**: Inertia, symmetry preservation, permutation validity
 5. **SPRAL comparison**: Deferred to Phases 2-8 (performance benchmarking, large-matrix inertia)
+
+### Ordering for tests and benchmarks
+
+**Use `MatchOrderMetis` (the default) for all production and integration testing.**
+Phase 7 benchmarking showed that plain METIS causes massive pivot delays on hard
+indefinite matrices (bratu3d: 53K delays, backward error 5e-3), while MatchOrderMetis
+(MC64 matching+scaling) eliminates the delays (1 delay, backward error 1e-9).
+`OrderingStrategy::Amd` should never be used in production; it exists only for
+unit tests of the symbolic analysis and factorization kernel on small matrices.
 
 ### Test infrastructure
 
@@ -235,6 +244,8 @@ Five principles guiding test design for Phases 3+ (implementation-heavy):
 - Rust 1.87+ (edition 2024) + faer 0.22 (dense matrix types, matmul, triangular solve), Phase 2 types (MixedDiagonal, PivotType, Block2x2, Inertia) (014-dense-aptp-kernel)
 - N/A (in-memory dense matrices only) (014-dense-aptp-kernel)
 - Rust 1.87+ (edition 2024) + faer 0.22 (dense LA, sparse types, permutations), Phase 2/3/5 modules (existing) (015-multifrontal-factorization)
+- Rust 1.87+ (edition 2024) + faer 0.22 (dense LA, sparse types, MemStack, triangular solve, matmul), metis-sys 0.3.x (METIS ordering), serde/serde_json (existing) (016-triangular-solve-api)
+- In-memory dense matrices per supernode (`Mat<f64>`), `MixedDiagonal` for D storage (016-triangular-solve-api)
 
 ## Recent Changes
 - 010-aptp-symbolic: Added Rust 1.87+ (edition 2024) + faer 0.22 (symbolic Cholesky, AMD ordering, MemStack), serde/serde_json (existing, not new)

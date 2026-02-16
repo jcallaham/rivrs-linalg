@@ -41,6 +41,9 @@ pub enum SparseError {
 
     /// A named matrix was not found in the registry.
     MatrixNotFound { name: String },
+
+    /// Solve was called before factor() completed.
+    SolveBeforeFactor { context: String },
 }
 
 impl fmt::Display for SparseError {
@@ -92,6 +95,9 @@ impl fmt::Display for SparseError {
             }
             Self::MatrixNotFound { name } => {
                 write!(f, "Matrix '{}' not found in registry", name)
+            }
+            Self::SolveBeforeFactor { context } => {
+                write!(f, "Solve called before factor(): {}", context)
             }
         }
     }

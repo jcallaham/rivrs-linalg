@@ -24,6 +24,8 @@ pub mod numeric;
 pub mod ordering;
 pub mod perm;
 pub mod pivot;
+pub mod solve;
+pub mod solver;
 pub mod symbolic;
 
 pub use diagonal::MixedDiagonal;
@@ -40,3 +42,4 @@ pub use factor::{
 };
 
 pub use numeric::{AptpNumeric, FactorizationStats, FrontFactors};
+pub use solver::{AnalyzeOptions, FactorOptions, OrderingStrategy, SolverOptions, SparseLDLT};
