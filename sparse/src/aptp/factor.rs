@@ -55,11 +55,25 @@ use crate::error::SparseError;
 /// - `threshold`: 0.01 (growth factor bound of 100, matching SPRAL)
 /// - `small`: 1e-20 (singularity detection, matching SPRAL)
 /// - `fallback`: [`AptpFallback::BunchKaufman`]
+/// - `outer_block_size`: 256 (two-level outer block, matching SPRAL)
+/// - `inner_block_size`: 32 (two-level inner block, matching SPRAL)
+///
+/// # Block Size Parameters (Two-Level APTP)
+///
+/// For frontal matrices larger than `outer_block_size`, the kernel uses
+/// a two-level blocked algorithm (Duff, Hogg & Lopez 2020, Section 3):
+/// - Outer loop processes blocks of `outer_block_size` columns
+/// - Inner loop processes sub-blocks of `inner_block_size` columns
+/// - Innermost ib×ib diagonal blocks use complete pivoting (Algorithm 4.1)
+///
+/// For frontal matrices ≤ `outer_block_size`, the kernel processes the
+/// entire fully-summed portion as a single inner block.
 ///
 /// # References
 ///
 /// - SPRAL default: `u = 0.01`, `small = 1e-20`
 /// - Duff, Hogg & Lopez (2020), Section 4: threshold parameter u
+/// - Duff, Hogg & Lopez (2020), Section 3: two-level blocking with nb=256, ib=32
 #[derive(Debug, Clone)]
 pub struct AptpOptions {
     /// Stability threshold u: entries must satisfy |l_ij| < 1/u.
@@ -70,6 +84,12 @@ pub struct AptpOptions {
     pub small: f64,
     /// Strategy when a 1x1 pivot fails the stability check.
     pub fallback: AptpFallback,
+    /// Outer block size (nb) for two-level APTP. Default: 256.
+    /// Must be > 0 and >= inner_block_size.
+    pub outer_block_size: usize,
+    /// Inner block size (ib) for two-level APTP. Default: 32.
+    /// Must be > 0 and <= outer_block_size.
+    pub inner_block_size: usize,
 }
 
 impl Default for AptpOptions {
@@ -78,6 +98,8 @@ impl Default for AptpOptions {
             threshold: 0.01,
             small: 1e-20,
             fallback: AptpFallback::BunchKaufman,
+            outer_block_size: 256,
+            inner_block_size: 32,
         }
     }
 }
@@ -221,6 +243,24 @@ pub fn aptp_factor_in_place(
     if options.small < 0.0 {
         return Err(SparseError::InvalidInput {
             reason: format!("small must be >= 0.0, got {}", options.small),
+        });
+    }
+    if options.outer_block_size == 0 {
+        return Err(SparseError::InvalidInput {
+            reason: "outer_block_size must be > 0".to_string(),
+        });
+    }
+    if options.inner_block_size == 0 {
+        return Err(SparseError::InvalidInput {
+            reason: "inner_block_size must be > 0".to_string(),
+        });
+    }
+    if options.inner_block_size > options.outer_block_size {
+        return Err(SparseError::InvalidInput {
+            reason: format!(
+                "inner_block_size ({}) must be <= outer_block_size ({})",
+                options.inner_block_size, options.outer_block_size
+            ),
         });
     }
 

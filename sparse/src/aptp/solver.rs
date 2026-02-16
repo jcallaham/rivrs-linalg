@@ -64,6 +64,10 @@ pub struct FactorOptions {
     pub threshold: f64,
     /// Fallback strategy for failed 1x1 pivots. Default: BunchKaufman.
     pub fallback: AptpFallback,
+    /// Outer block size (nb) for two-level APTP. Default: 256.
+    pub outer_block_size: usize,
+    /// Inner block size (ib) for two-level APTP. Default: 32.
+    pub inner_block_size: usize,
 }
 
 impl Default for FactorOptions {
@@ -71,6 +75,8 @@ impl Default for FactorOptions {
         Self {
             threshold: 0.01,
             fallback: AptpFallback::BunchKaufman,
+            outer_block_size: 256,
+            inner_block_size: 32,
         }
     }
 }
@@ -266,6 +272,8 @@ impl SparseLDLT {
         let aptp_options = AptpOptions {
             threshold: options.threshold,
             fallback: options.fallback,
+            outer_block_size: options.outer_block_size,
+            inner_block_size: options.inner_block_size,
             ..AptpOptions::default()
         };
 
@@ -392,6 +400,7 @@ impl SparseLDLT {
         let factor_opts = FactorOptions {
             threshold: options.threshold,
             fallback: options.fallback,
+            ..FactorOptions::default()
         };
 
         let mut solver = Self::analyze_with_matrix(matrix, &analyze_opts)?;

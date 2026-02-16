@@ -17,11 +17,11 @@
 
 **Purpose**: Extend options types to support block size configuration (FR-001, D6)
 
-- [ ] T001 Add `outer_block_size: usize` and `inner_block_size: usize` fields to `AptpOptions` struct and its `Default` impl (defaults: 256, 32) in `src/aptp/factor.rs`
-- [ ] T002 Add `outer_block_size: usize` and `inner_block_size: usize` fields to `FactorOptions` struct and its `Default` impl (defaults: 256, 32) in `src/aptp/solver.rs`
-- [ ] T003 Update `AptpOptions` construction from `FactorOptions` in `SparseLDLT::factor()` to pass block size fields through in `src/aptp/solver.rs`
-- [ ] T004 Add input validation for block size fields in `aptp_factor_in_place`: `outer_block_size > 0`, `inner_block_size > 0`, `inner_block_size <= outer_block_size` in `src/aptp/factor.rs`
-- [ ] T005 Verify existing test suite passes unchanged after options extension: `cargo test` and `cargo clippy`
+- [x] T001 Add `outer_block_size: usize` and `inner_block_size: usize` fields to `AptpOptions` struct and its `Default` impl (defaults: 256, 32) in `src/aptp/factor.rs`
+- [x] T002 Add `outer_block_size: usize` and `inner_block_size: usize` fields to `FactorOptions` struct and its `Default` impl (defaults: 256, 32) in `src/aptp/solver.rs`
+- [x] T003 Update `AptpOptions` construction from `FactorOptions` in `SparseLDLT::factor()` to pass block size fields through in `src/aptp/solver.rs`
+- [x] T004 Add input validation for block size fields in `aptp_factor_in_place`: `outer_block_size > 0`, `inner_block_size > 0`, `inner_block_size <= outer_block_size` in `src/aptp/factor.rs`
+- [x] T005 Verify existing test suite passes unchanged after options extension: `cargo test` and `cargo clippy`
 
 **Checkpoint**: Options infrastructure ready. All existing tests pass. Block sizes flow from FactorOptions → AptpOptions → kernel.
 
