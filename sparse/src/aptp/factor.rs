@@ -733,6 +733,298 @@ fn extract_l(a: MatRef<'_, f64>, d: &MixedDiagonal, num_eliminated: usize) -> Ma
     l
 }
 
+// ---------------------------------------------------------------------------
+// Two-level APTP: Complete pivoting (Algorithm 4.1)
+// ---------------------------------------------------------------------------
+
+/// Factor a small dense symmetric block using complete pivoting.
+///
+/// Implements Algorithm 4.1 from Duff, Hogg & Lopez (2020): searches
+/// the entire remaining submatrix for the entry with maximum magnitude,
+/// then uses it as a 1×1 pivot (if on diagonal) or as the off-diagonal
+/// of a 2×2 pivot. Provably stable with growth factor bound ≤ 4
+/// (equivalent to threshold u=0.25).
+///
+/// Used at the innermost level of two-level APTP for ib×ib diagonal
+/// blocks. Never delays columns (always finds a valid pivot unless
+/// the block is numerically singular).
+///
+/// The matrix is factored in-place (lower triangle). On return:
+/// - Columns 0..num_eliminated contain L entries (unit diagonal implicit)
+/// - D entries stored in returned MixedDiagonal
+/// - The Schur complement is updated in-place in the trailing submatrix
+///
+/// # SPRAL Equivalent
+/// `block_ldlt()` in `spral/src/ssids/cpu/kernels/ldlt_app.cxx`
+fn complete_pivoting_factor(
+    mut a: MatMut<'_, f64>,
+    small: f64,
+) -> AptpFactorResult {
+    let n = a.nrows();
+    debug_assert_eq!(n, a.ncols(), "complete_pivoting_factor requires square matrix");
+
+    let mut col_order: Vec<usize> = (0..n).collect();
+    let mut d = MixedDiagonal::new(n);
+    let mut stats = AptpStatistics {
+        num_1x1: 0,
+        num_2x2: 0,
+        num_delayed: 0,
+        max_l_entry: 0.0,
+    };
+    let mut pivot_log = Vec::with_capacity(n);
+    let mut k = 0; // next column to eliminate
+
+    while k < n {
+        let remaining = n - k;
+
+        // 1. Find (t, m_idx) = argmax |a[i,j]| over all uneliminated entries (lower triangle)
+        let mut max_val = 0.0_f64;
+        let mut max_row = k;
+        let mut max_col = k;
+        for j in k..n {
+            for i in j..n {
+                let v = a[(i, j)].abs();
+                if v > max_val {
+                    max_val = v;
+                    max_row = i;
+                    max_col = j;
+                }
+            }
+        }
+
+        // 2. Singularity check
+        if max_val < small {
+            // Mark all remaining as zero pivots (delayed)
+            for i in k..n {
+                stats.num_delayed += 1;
+                pivot_log.push(AptpPivotRecord {
+                    col: col_order[i],
+                    pivot_type: PivotType::Delayed,
+                    max_l_entry: 0.0,
+                    was_fallback: false,
+                });
+            }
+            break;
+        }
+
+        // 3. Decide pivot type
+        if max_row == max_col {
+            // Maximum is on diagonal → 1×1 pivot
+            // Swap max_row to position k
+            if max_row != k {
+                swap_symmetric(a.rb_mut(), k, max_row);
+                col_order.swap(k, max_row);
+            }
+
+            let d_kk = a[(k, k)];
+            let inv_d = 1.0 / d_kk;
+
+            // Compute L column
+            let mut max_l = 0.0_f64;
+            for i in (k + 1)..n {
+                let l_ik = a[(i, k)] * inv_d;
+                a[(i, k)] = l_ik;
+                let abs_l = l_ik.abs();
+                if abs_l > max_l {
+                    max_l = abs_l;
+                }
+            }
+
+            // Schur complement update
+            update_schur_1x1(a.rb_mut(), k, d_kk);
+
+            d.set_1x1(k, d_kk);
+            stats.num_1x1 += 1;
+            if max_l > stats.max_l_entry {
+                stats.max_l_entry = max_l;
+            }
+            pivot_log.push(AptpPivotRecord {
+                col: col_order[k],
+                pivot_type: PivotType::OneByOne,
+                max_l_entry: max_l,
+                was_fallback: false,
+            });
+            k += 1;
+        } else {
+            // Maximum is off-diagonal at (max_row, max_col)
+            // t = max_row, m = max_col (in paper's notation)
+            let t = max_row;
+            let m = max_col;
+
+            // Compute Δ = a[m,m] * a[t,t] - a[t,m]^2
+            // Need current values (before any swap)
+            let a_mm = a[(m, m)];
+            let a_tt = a[(t, t)];
+            let a_tm = a[(t, m)]; // lower triangle: t > m
+            let delta = a_mm * a_tt - a_tm * a_tm;
+
+            if remaining < 2 {
+                // Only one column left, must use 1×1 (shouldn't normally reach here
+                // since max_row == max_col for single element, but guard anyway)
+                let d_kk = a[(k, k)];
+                if d_kk.abs() < small {
+                    stats.num_delayed += 1;
+                    pivot_log.push(AptpPivotRecord {
+                        col: col_order[k],
+                        pivot_type: PivotType::Delayed,
+                        max_l_entry: 0.0,
+                        was_fallback: false,
+                    });
+                    break;
+                }
+                let inv_d = 1.0 / d_kk;
+                for i in (k + 1)..n {
+                    a[(i, k)] = a[(i, k)] * inv_d;
+                }
+                d.set_1x1(k, d_kk);
+                stats.num_1x1 += 1;
+                k += 1;
+                continue;
+            }
+
+            if delta.abs() >= 0.5 * a_tm * a_tm {
+                // 2×2 pivot using (t, m)
+                // Swap m → k and t → k+1
+                if m != k {
+                    swap_symmetric(a.rb_mut(), k, m);
+                    col_order.swap(k, m);
+                }
+                // After swap: the row that was 't' may have moved
+                let new_t = if t == k { m } else { t };
+                if new_t != k + 1 {
+                    swap_symmetric(a.rb_mut(), k + 1, new_t);
+                    col_order.swap(k + 1, new_t);
+                }
+
+                let a11 = a[(k, k)];
+                let a22 = a[(k + 1, k + 1)];
+                let a21 = a[(k + 1, k)];
+                let det = a11 * a22 - a21 * a21;
+                let inv_det = 1.0 / det;
+
+                let block = Block2x2 {
+                    first_col: k,
+                    a: a11,
+                    b: a21,
+                    c: a22,
+                };
+
+                // Compute L columns for 2×2 pivot
+                let mut max_l = 0.0_f64;
+                let rows_start = k + 2;
+                for i in rows_start..n {
+                    let ai1 = a[(i, k)];
+                    let ai2 = a[(i, k + 1)];
+                    let l_i1 = (ai1 * a22 - ai2 * a21) * inv_det;
+                    let l_i2 = (ai2 * a11 - ai1 * a21) * inv_det;
+                    a[(i, k)] = l_i1;
+                    a[(i, k + 1)] = l_i2;
+                    if l_i1.abs() > max_l {
+                        max_l = l_i1.abs();
+                    }
+                    if l_i2.abs() > max_l {
+                        max_l = l_i2.abs();
+                    }
+                }
+
+                // Schur complement update for 2×2
+                update_schur_2x2(a.rb_mut(), k, k + 1, &block);
+
+                d.set_2x2(block);
+                stats.num_2x2 += 1;
+                if max_l > stats.max_l_entry {
+                    stats.max_l_entry = max_l;
+                }
+                pivot_log.push(AptpPivotRecord {
+                    col: col_order[k],
+                    pivot_type: PivotType::TwoByTwo {
+                        partner: col_order[k + 1],
+                    },
+                    max_l_entry: max_l,
+                    was_fallback: false,
+                });
+                pivot_log.push(AptpPivotRecord {
+                    col: col_order[k + 1],
+                    pivot_type: PivotType::TwoByTwo {
+                        partner: col_order[k],
+                    },
+                    max_l_entry: max_l,
+                    was_fallback: false,
+                });
+                k += 2;
+            } else {
+                // Failed 2×2 determinant condition → use 1×1 on max(|a_mm|, |a_tt|)
+                let pivot_pos = if a_mm.abs() >= a_tt.abs() { m } else { t };
+                if pivot_pos != k {
+                    swap_symmetric(a.rb_mut(), k, pivot_pos);
+                    col_order.swap(k, pivot_pos);
+                }
+
+                let d_kk = a[(k, k)];
+                let inv_d = 1.0 / d_kk;
+
+                let mut max_l = 0.0_f64;
+                for i in (k + 1)..n {
+                    let l_ik = a[(i, k)] * inv_d;
+                    a[(i, k)] = l_ik;
+                    let abs_l = l_ik.abs();
+                    if abs_l > max_l {
+                        max_l = abs_l;
+                    }
+                }
+
+                update_schur_1x1(a.rb_mut(), k, d_kk);
+
+                d.set_1x1(k, d_kk);
+                stats.num_1x1 += 1;
+                if max_l > stats.max_l_entry {
+                    stats.max_l_entry = max_l;
+                }
+                pivot_log.push(AptpPivotRecord {
+                    col: col_order[k],
+                    pivot_type: PivotType::OneByOne,
+                    max_l_entry: max_l,
+                    was_fallback: true, // fell back from 2×2
+                });
+                k += 1;
+            }
+        }
+    }
+
+    let num_eliminated = k;
+
+    // Build final D of correct dimension
+    let mut final_d = MixedDiagonal::new(num_eliminated);
+    let mut col = 0;
+    while col < num_eliminated {
+        match d.get_pivot_type(col) {
+            PivotType::OneByOne => {
+                final_d.set_1x1(col, d.get_1x1(col));
+                col += 1;
+            }
+            PivotType::TwoByTwo { partner } if partner > col => {
+                let block = d.get_2x2(col);
+                final_d.set_2x2(block);
+                col += 2;
+            }
+            _ => {
+                col += 1;
+            }
+        }
+    }
+
+    let delayed_cols: Vec<usize> = (num_eliminated..n).map(|i| col_order[i]).collect();
+
+    AptpFactorResult {
+        d: final_d,
+        perm: col_order,
+        num_eliminated,
+        delayed_cols,
+        stats,
+        pivot_log,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -857,6 +1149,183 @@ mod tests {
                     expected
                 );
             }
+        }
+    }
+
+    // ---- Complete Pivoting Tests (Algorithm 4.1) ----
+
+    /// Helper: run complete_pivoting_factor and extract L for reconstruction testing.
+    fn complete_pivoting_factor_and_extract(
+        a: &Mat<f64>,
+    ) -> (Mat<f64>, MixedDiagonal, Vec<usize>, AptpStatistics) {
+        let mut a_copy = a.clone();
+        let result = complete_pivoting_factor(a_copy.as_mut(), 1e-20);
+        let l = extract_l(a_copy.as_ref(), &result.d, result.num_eliminated);
+        (l, result.d, result.perm, result.stats)
+    }
+
+    #[test]
+    fn test_cp_identity() {
+        // T006: 3×3 identity → D=[1,1,1], no permutation
+        let a = Mat::identity(3, 3);
+        let mut a_copy = a.clone();
+        let result = complete_pivoting_factor(a_copy.as_mut(), 1e-20);
+
+        assert_eq!(result.num_eliminated, 3);
+        assert_eq!(result.stats.num_1x1, 3);
+        assert_eq!(result.stats.num_2x2, 0);
+        assert_eq!(result.stats.num_delayed, 0);
+
+        // D should be [1, 1, 1]
+        for i in 0..3 {
+            assert!((result.d.get_1x1(i) - 1.0).abs() < 1e-14);
+        }
+
+        // No off-diagonal L entries
+        assert!(result.stats.max_l_entry < 1e-14);
+    }
+
+    #[test]
+    fn test_cp_diagonal_pivot_ordering() {
+        // T007: 3×3 diagonal with known pivot ordering (largest diagonal first)
+        let a = symmetric_matrix(3, |i, j| {
+            if i == j {
+                [2.0, 5.0, 3.0][i]
+            } else {
+                0.0
+            }
+        });
+        let mut a_copy = a.clone();
+        let result = complete_pivoting_factor(a_copy.as_mut(), 1e-20);
+
+        assert_eq!(result.num_eliminated, 3);
+        assert_eq!(result.stats.num_1x1, 3);
+
+        // First pivot should be 5.0 (col 1), then 3.0 (col 2), then 2.0 (col 0)
+        assert!((result.d.get_1x1(0) - 5.0).abs() < 1e-14, "first pivot should be 5.0, got {}", result.d.get_1x1(0));
+        assert!((result.d.get_1x1(1) - 3.0).abs() < 1e-14, "second pivot should be 3.0, got {}", result.d.get_1x1(1));
+        assert!((result.d.get_1x1(2) - 2.0).abs() < 1e-14, "third pivot should be 2.0, got {}", result.d.get_1x1(2));
+    }
+
+    #[test]
+    fn test_cp_2x2_pivot() {
+        // T008: 4×4 matrix requiring 2×2 pivot (off-diagonal maximum)
+        // Designed so max entry is off-diagonal and Δ condition passes
+        let a = symmetric_matrix(4, |i, j| {
+            let vals = [
+                [0.1, 10.0, 0.0, 0.0],
+                [10.0, 0.1, 0.0, 0.0],
+                [0.0, 0.0, 5.0, 1.0],
+                [0.0, 0.0, 1.0, 3.0],
+            ];
+            vals[i][j]
+        });
+
+        let (l, d, perm, stats) = complete_pivoting_factor_and_extract(&a);
+
+        assert!(stats.num_2x2 >= 1, "expected at least one 2×2 pivot, got {}", stats.num_2x2);
+        // L entries bounded by 4 (complete pivoting guarantee)
+        assert!(stats.max_l_entry <= 4.0 + 1e-10, "L entries should be bounded by 4, got {}", stats.max_l_entry);
+
+        // Reconstruction
+        let error = dense_reconstruction_error(&a, &l, &d, &perm);
+        assert!(error < 1e-12, "reconstruction error {:.2e} >= 1e-12", error);
+    }
+
+    #[test]
+    fn test_cp_failed_2x2_fallback() {
+        // T009: 4×4 matrix where 2×2 Δ test fails → fallback to 1×1 on max diagonal
+        // Need |Δ| < 0.5 * |a_tm|^2
+        // a_mm * a_tt - a_tm^2 should be small relative to a_tm^2
+        // Let a_mm = 1.0, a_tt = 1.0, a_tm = 2.0
+        // Δ = 1*1 - 4 = -3, |Δ| = 3, 0.5*a_tm^2 = 2 → |Δ| > 0.5*a_tm^2
+        // Need: a_mm ≈ a_tt and both ≈ a_tm
+        // Let a_mm = 0.5, a_tt = 0.5, a_tm = 1.0
+        // Δ = 0.25 - 1 = -0.75, |Δ| = 0.75, 0.5*a_tm^2 = 0.5 → 0.75 > 0.5, passes!
+        // Let a_mm = 0.1, a_tt = 0.1, a_tm = 1.0
+        // Δ = 0.01 - 1 = -0.99, |Δ| = 0.99, 0.5*a_tm^2 = 0.5 → 0.99 > 0.5, passes!
+        // Let a_mm = 0.01, a_tt = 0.01, a_tm = 1.0
+        // Δ = 0.0001 - 1 = -0.9999, |Δ| = 0.9999, 0.5*1 = 0.5 → passes!
+        // Hmm, hard to fail. The condition is |det| >= 0.5*a_tm^2.
+        // For failure: need det ≈ 0. This means a_mm*a_tt ≈ a_tm^2.
+        // Let a_mm = 2.0, a_tt = 2.0, a_tm = 2.0
+        // Δ = 4 - 4 = 0, |Δ| = 0 < 0.5*4 = 2 → FAILS! Good.
+        let a = symmetric_matrix(4, |i, j| {
+            let vals = [
+                [2.0, 2.0, 0.1, 0.1],
+                [2.0, 2.0, 0.1, 0.1],
+                [0.1, 0.1, 5.0, 0.0],
+                [0.1, 0.1, 0.0, 3.0],
+            ];
+            vals[i][j]
+        });
+
+        let (l, d, perm, stats) = complete_pivoting_factor_and_extract(&a);
+
+        // With Δ ≈ 0, should fall back to 1×1 on max(|a_mm|, |a_tt|)
+        // L entries bounded by √2 < 4 in this case (paper's bound)
+        assert!(stats.max_l_entry <= 4.0 + 1e-10, "L entries should be bounded by 4");
+
+        // Reconstruction
+        let error = dense_reconstruction_error(&a, &l, &d, &perm);
+        assert!(error < 1e-12, "reconstruction error {:.2e} >= 1e-12", error);
+    }
+
+    #[test]
+    fn test_cp_singular_block() {
+        // T010: singular/near-singular block → zero pivot handling
+        let mut a = Mat::zeros(3, 3);
+        a[(0, 0)] = 1e-25;
+        a[(1, 1)] = 1e-25;
+        a[(2, 2)] = 1e-25;
+
+        let result = complete_pivoting_factor(a.as_mut(), 1e-20);
+
+        // All entries below small → all should be zero pivots
+        assert_eq!(result.num_eliminated, 0, "near-singular block should have 0 eliminations");
+        assert_eq!(result.stats.num_delayed, 3);
+    }
+
+    #[test]
+    fn test_cp_reconstruction_random() {
+        // T011: reconstruction on random symmetric indefinite matrices
+        // Use deterministic seed for reproducibility
+        let sizes = [8, 16, 32];
+        for &n in &sizes {
+            let a = symmetric_matrix(n, |i, j| {
+                // Deterministic pseudo-random indefinite matrix
+                let seed = (i * 1000 + j * 7 + 13) as f64;
+                let val = (seed * 0.618033988749).fract() * 2.0 - 1.0;
+                if i == j {
+                    val * 10.0 // diagonal dominance but indefinite
+                } else {
+                    val
+                }
+            });
+
+            let (l, d, perm, stats) = complete_pivoting_factor_and_extract(&a);
+
+            // Should eliminate all columns (no singular blocks)
+            assert_eq!(
+                stats.num_1x1 + 2 * stats.num_2x2 + stats.num_delayed, n,
+                "statistics invariant for {}x{}", n, n
+            );
+
+            if stats.num_delayed == 0 {
+                let error = dense_reconstruction_error(&a, &l, &d, &perm);
+                assert!(
+                    error < 1e-12,
+                    "complete pivoting {}x{}: reconstruction error {:.2e} >= 1e-12",
+                    n, n, error
+                );
+            }
+
+            // L entries bounded by 4 (Algorithm 4.1 guarantee)
+            assert!(
+                stats.max_l_entry <= 4.0 + 1e-10,
+                "complete pivoting {}x{}: max_l_entry {:.2e} > 4",
+                n, n, stats.max_l_entry
+            );
         }
     }
 

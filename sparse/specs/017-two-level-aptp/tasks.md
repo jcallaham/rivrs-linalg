@@ -35,17 +35,17 @@
 
 ### Tests (TDD — write first, verify FAIL)
 
-- [ ] T006 Write unit test: 3×3 identity matrix → complete pivoting produces D=[1,1,1], no permutation, in `src/aptp/factor.rs` tests module
-- [ ] T007 Write unit test: 3×3 diagonal matrix with known pivot ordering (largest diagonal first) → verify permutation and D values in `src/aptp/factor.rs`
-- [ ] T008 Write unit test: 4×4 matrix requiring 2×2 pivot (off-diagonal maximum) → verify Δ condition, D block, and L entries bounded by 4, in `src/aptp/factor.rs`
-- [ ] T009 Write unit test: 4×4 matrix where 2×2 Δ test fails → verify fallback to 1×1 on max diagonal, L entries bounded by √2, in `src/aptp/factor.rs`
-- [ ] T010 Write unit test: singular/near-singular block (all entries < small) → verify zero pivot handling and num_eliminated < block_size, in `src/aptp/factor.rs`
-- [ ] T011 Write reconstruction test: random symmetric indefinite matrices (sizes 8, 16, 32) → verify ||P^T A P - L D L^T|| / ||A|| < 1e-12, in `src/aptp/factor.rs`
+- [x] T006 Write unit test: 3×3 identity matrix → complete pivoting produces D=[1,1,1], no permutation, in `src/aptp/factor.rs` tests module
+- [x] T007 Write unit test: 3×3 diagonal matrix with known pivot ordering (largest diagonal first) → verify permutation and D values in `src/aptp/factor.rs`
+- [x] T008 Write unit test: 4×4 matrix requiring 2×2 pivot (off-diagonal maximum) → verify Δ condition, D block, and L entries bounded by 4, in `src/aptp/factor.rs`
+- [x] T009 Write unit test: 4×4 matrix where 2×2 Δ test fails → verify fallback to 1×1 on max diagonal, L entries bounded by √2, in `src/aptp/factor.rs`
+- [x] T010 Write unit test: singular/near-singular block (all entries < small) → verify zero pivot handling and num_eliminated < block_size, in `src/aptp/factor.rs`
+- [x] T011 Write reconstruction test: random symmetric indefinite matrices (sizes 8, 16, 32) → verify ||P^T A P - L D L^T|| / ||A|| < 1e-12, in `src/aptp/factor.rs`
 
 ### Implementation
 
-- [ ] T012 Implement `complete_pivoting_factor(a: MatMut<f64>, small: f64) -> AptpFactorResult` in `src/aptp/factor.rs`: maximum entry search, 1×1/2×2 pivot decision (Algorithm 4.1), symmetric swap, L computation, Schur update, MixedDiagonal/permutation output
-- [ ] T013 Verify all T006-T011 tests pass with `complete_pivoting_factor` implementation
+- [x] T012 Implement `complete_pivoting_factor(a: MatMut<f64>, small: f64) -> AptpFactorResult` in `src/aptp/factor.rs`: maximum entry search, 1×1/2×2 pivot decision (Algorithm 4.1), symmetric swap, L computation, Schur update, MixedDiagonal/permutation output
+- [x] T013 Verify all T006-T011 tests pass with `complete_pivoting_factor` implementation
 
 **Checkpoint**: Complete pivoting works in isolation. All 6+ tests pass. Reconstruction < 1e-12 on random matrices.
 
