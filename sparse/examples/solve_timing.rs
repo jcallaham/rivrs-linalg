@@ -13,10 +13,7 @@ use std::time::Instant;
 
 fn main() {
     let all = registry::load_registry().expect("registry");
-    let ci: Vec<_> = all
-        .iter()
-        .filter(|m| m.ci_subset && !m.name.contains("sparsine"))
-        .collect();
+    let ci: Vec<_> = all.iter().filter(|m| m.ci_subset).collect();
 
     println!(
         "{:<30} {:>8} {:>10} {:>8} {:>8} {:>12} {:>7} {:>7} {:>7} {:>6}",

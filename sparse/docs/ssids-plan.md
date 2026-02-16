@@ -1784,6 +1784,50 @@ and assemble the complete solver pipeline into a user-facing API. This is the
 "working solver" milestone: analyze → factor → solve, validated end-to-end against
 the full SuiteSparse test suite.
 
+### Key Findings: Accuracy & Ordering
+
+Post-implementation benchmarking revealed that **ordering strategy is the dominant
+factor in accuracy** for our single-level APTP kernel:
+
+| Ordering | bratu3d delays | backward error | factor time |
+|----------|---------------:|---------------:|------------:|
+| METIS | 53,841 | 5.59e-3 | 7.0s |
+| MatchOrderMetis | 1 | 1.00e-9 | 1.6s |
+
+**Root cause**: Matrices like bratu3d (3D Bratu problem, saddle-point structure)
+cause massive pivot delays with plain METIS ordering. MC64 matching+scaling
+(MatchOrderMetis) pre-pairs difficult pivots, eliminating virtually all delays.
+
+**Default ordering changed to `MatchOrderMetis`** — this matches SPRAL's
+recommendation for indefinite problems (`ordering=2` mode). All new tests and
+benchmarks should use this default.
+
+**Random matrix validation**: 30+ random symmetric indefinite matrices (n=50..1000)
+achieve backward error ~1e-17 with both METIS and MatchOrderMetis, confirming the
+dense APTP kernel is correct. Accuracy degradation is ordering- and front-size
+dependent.
+
+**CI SuiteSparse results** (8 matrices, MatchOrderMetis, excluding sparsine):
+
+| Matrix | n | backward error | status (5e-11) |
+|--------|--:|---------------:|:--------------:|
+| t2dal | 4,257 | 2.71e-18 | PASS |
+| bloweybq | 10,001 | 2.99e-11 | PASS |
+| ncvxqp1 | 12,111 | 4.69e-14 | PASS |
+| cfd2 | 123,440 | 1.03e-18 | PASS |
+| bratu3d | 27,792 | 1.00e-9 | WARN |
+| cvxqp3 | 17,500 | 1.51e-7 | WARN |
+| stokes128 | 49,666 | 6.08e-6 | FAIL |
+| ncvxqp3 | 75,000 | 1.39e-7 | WARN |
+
+Matrices with zero delayed pivots achieve machine precision. The remaining gap
+to SPRAL's 5e-11 threshold correlates with delay count and is expected to improve
+with two-level APTP (Phase 8.1), which reduces accumulated rounding error per front.
+
+**Testing guidance**: Use `MatchOrderMetis` for all production and integration
+testing. `OrderingStrategy::Metis` remains available for comparison but should not
+be used as default in tests or examples.
+
 ### Rationale for merging old Phases 7 & 8
 
 The triangular solve cannot be meaningfully validated without end-to-end tests
@@ -2137,14 +2181,22 @@ pub fn two_level_aptp_factor(
 
 **Testing:**
 - Correctness: two-level must match single-level results (same delays, same
-  reconstruction error)
-- Performance: benchmark single-level vs two-level on fronts of size 64, 128, 256, 512
+  reconstruction error) on random matrices and hand-constructed cases
+- Accuracy: CI SuiteSparse suite (MatchOrderMetis ordering) — target all 8 matrices
+  below SPRAL's 5e-11 backward error threshold (Phase 7 baseline: 4/8 pass)
+- Performance: benchmark single-level vs two-level on fronts of size 64, 128, 256,
+  512, 1024, 2048 (informed by profiling: 41 matrices have max_front 1001–5000)
+- Full SuiteSparse evaluation (67 matrices, MatchOrderMetis) after two-level is
+  working — sparsine (max_front 11,125) is the ultimate stress test
 - Identify crossover point where two-level blocking wins
 
 **Revisiting `matmul` on APTP kernel:** The inner dense APTP kernel uses an O(n^2) naive
-operation rather than dispatching to `faer::linalg::matmul`.  This should only be called
-on small matrices, but it should still be assessed in end-to-end profiling whether
-there is a benefit to calling faer here for BLAS-2 operations.
+operation rather than dispatching to `faer::linalg::matmul`. Phase 7 profiling shows
+that single-level factorization of fronts with max_front > 1000 dominates total time
+(e.g., ncvxqp3: 53s for max_front 2447). The BLAS-3 refactoring in this phase
+(explicit TRSM/GEMM per outer block) is the primary fix; the inner kernel's BLAS-2
+operations matter only for the inner block size (~32), where dispatch overhead may
+dominate any benefit from vectorized matmul.
 
 **Implementation notes from Phase 5 SPRAL comparison:**
 
@@ -2168,13 +2220,42 @@ The following topics must be addressed during Phase 8.1 research/speccing:
    (Apply and Update can be parallelized). Phase 8.1 research should map
    this to our existing internal function structure.
 
-3. **Skip criteria**: Before implementing two-level APTP, profile Phase 7's
-   working solver to measure typical frontal matrix sizes across the SuiteSparse
-   benchmark suite. If the P90 largest front is small enough (<128 rows) that
-   single-level APTP is adequate, Phase 8.1 may be deferred or reduced in scope.
-   Criterion: skip if two-level achieves <20% speedup over single-level on the
-   P90 largest frontal matrix. This profiling should be done as the **first step**
-   of Phase 8, before committing to the two-level implementation.
+3. **Front size profiling results (Phase 7 data — skip criteria resolved)**:
+   Full SuiteSparse profiling (80 matrices, METIS ordering) shows two-level APTP
+   is **strongly justified**:
+
+   | Category | Count | Description |
+   |----------|------:|-------------|
+   | Simplicial | 24 | No supernodes (hand-constructed, tridiagonal, etc.) |
+   | max_front ≤ 256 | 1 | Single-level fine |
+   | max_front 257–1000 | 10 | Borderline — two-level helps modestly |
+   | max_front 1001–5000 | **41** | Needs two-level for performance |
+   | max_front > 5000 | 4 | Critical for two-level |
+
+   **51 of 56 supernodal matrices** (91%) have max_front > 256. The top 10 by max
+   front size: sparsine (11,125), H2O (9,258), nd12k (7,387), Si5H12 (5,452),
+   nd6k (4,369), Si10H16 (4,239), apache2 (4,132), c-big (4,064), offshore (3,411),
+   shipsec5 (3,249).
+
+   However, most fronts in any given matrix are small: **median front size is
+   typically 4–70**, meaning the vast majority of supernodes need no blocking.
+   The performance win is concentrated in a long tail of large fronts at the
+   top of the elimination tree.
+
+   **Block size recommendations based on profiling**:
+   - **Outer block size 256**: Captures 91% of matrices that benefit from blocking.
+     Fronts ≤ 256 stay single-level (no overhead).
+   - **Inner block size 32**: Fits L1 cache for sub-block operations. 32×32 blocks
+     give good BLAS-3 utilization without excessive loop overhead.
+   - **Threshold for two-level dispatch**: Apply two-level only when front_size > 256.
+     Below this, single-level kernel is adequate (confirmed by Phase 7 benchmarks
+     showing excellent accuracy on small fronts).
+
+   **Accuracy note**: Phase 7 benchmarks show backward error correlates with delay
+   count, not front size per se. Two-level APTP should improve accuracy on the
+   WARN/FAIL matrices (bratu3d 1e-9, cvxqp3 1e-7, stokes128 6e-6) by reducing
+   accumulated rounding error within large fronts. Target: all CI matrices below
+   SPRAL's 5e-11 threshold with MatchOrderMetis ordering.
 
 **Success Criteria:**
 - [ ] Two-level APTP produces same factorization quality as single-level
@@ -2274,14 +2355,17 @@ speccing.
 2. Parallel factorization and solve working and deterministic
 3. Performance benchmarked and documented
 4. No correctness regressions from optimization
+5. All CI SuiteSparse matrices (MatchOrderMetis) achieve backward error < 5e-11
 
 **Validation Questions:**
 - Does two-level APTP improve performance on large fronts?
+- Does two-level APTP close the accuracy gap on WARN/FAIL matrices?
 - Is parallel speedup significant?
 - Is performance competitive with SPRAL?
 
-**Checkpoint:** Run full benchmark suite. Generate performance report with
-scaling plots and comparison data.
+**Checkpoint:** Run full SuiteSparse benchmark suite (67+ matrices, MatchOrderMetis).
+Generate performance report with scaling plots and comparison data. Compare Phase 7
+baseline (4/8 CI pass) vs Phase 8 results.
 
 **Time Estimate:** 4 weeks
 

@@ -8,7 +8,7 @@ This directory contains sparse linear algebra solver implementations for rivrs-l
 
 **Parent Project**: rivrs-linalg - Numerical Linear Algebra for Rivrs
 **Domain**: Sparse direct solvers (SSIDS, LDL^T factorization, APTP pivoting)
-**Current Status**: Phase 7 complete — Triangular solve & solver API (end-to-end SparseLDLT). Ready for Phase 8 (Performance Optimization).
+**Current Status**: Phase 7 complete — Triangular solve & solver API (end-to-end SparseLDLT). Default ordering: MatchOrderMetis (MC64+METIS). CI results: 4/8 pass SPRAL's 5e-11 threshold; remaining matrices need two-level APTP (Phase 8). Ready for Phase 8 (Performance Optimization).
 
 ### Development docs
 
@@ -168,10 +168,19 @@ Preferences (can be violated if needed)
 Primary correctness validation (established in Phase 0.3 decision):
 
 1. **Reconstruction tests**: `||P^T A P - L D L^T|| / ||A|| < 10^-12` (primary oracle)
-2. **Backward error**: `||Ax - b|| / (||A|| ||x|| + ||b||) < 10^-10` (solve pipeline)
+2. **Backward error**: `||Ax - b|| / (||A|| ||x|| + ||b||) < 5e-11` (SPRAL's threshold)
 3. **Hand-constructed matrices**: 15 matrices with analytically known factorizations
 4. **Property-based tests**: Inertia, symmetry preservation, permutation validity
 5. **SPRAL comparison**: Deferred to Phases 2-8 (performance benchmarking, large-matrix inertia)
+
+### Ordering for tests and benchmarks
+
+**Use `MatchOrderMetis` (the default) for all production and integration testing.**
+Phase 7 benchmarking showed that plain METIS causes massive pivot delays on hard
+indefinite matrices (bratu3d: 53K delays, backward error 5e-3), while MatchOrderMetis
+(MC64 matching+scaling) eliminates the delays (1 delay, backward error 1e-9).
+`OrderingStrategy::Amd` should never be used in production; it exists only for
+unit tests of the symbolic analysis and factorization kernel on small matrices.
 
 ### Test infrastructure
 
