@@ -8,7 +8,7 @@ This directory contains sparse linear algebra solver implementations for rivrs-l
 
 **Parent Project**: rivrs-linalg - Numerical Linear Algebra for Rivrs
 **Domain**: Sparse direct solvers (SSIDS, LDL^T factorization, APTP pivoting)
-**Current Status**: Phase 6 complete — Multifrontal numeric factorization. Ready for Phase 7 (Triangular Solve & Solver API).
+**Current Status**: Phase 7 complete — Triangular solve & solver API (end-to-end SparseLDLT). Ready for Phase 8 (Performance Optimization).
 
 ### Development docs
 

@@ -231,28 +231,33 @@ impl MixedDiagonal {
             match self.pivot_map[col] {
                 PivotType::OneByOne => {
                     let d = self.diag[col];
-                    debug_assert!(d != 0.0, "solve_in_place: zero 1x1 pivot at col {}", col);
-                    x[col] /= d;
+                    if d == 0.0 {
+                        // Zero pivot: set solution component to zero
+                        // (SPRAL action=true convention)
+                        x[col] = 0.0;
+                    } else {
+                        x[col] /= d;
+                    }
                     col += 1;
                 }
                 PivotType::TwoByTwo { partner } => {
                     if partner > col {
-                        // This is the owner (lower-indexed column) of the 2x2 block.
-                        // Read a, b, c directly from parallel arrays — O(1).
                         let a = self.diag[col];
                         let b = self.off_diag[col];
                         let c = self.diag[partner];
                         let det = a * c - b * b;
-                        debug_assert!(
-                            det != 0.0,
-                            "solve_in_place: zero determinant 2x2 block at col {}",
-                            col
-                        );
-                        let r1 = x[col];
-                        let r2 = x[partner];
-                        // Cramer's rule: [[a,b],[b,c]]^-1 = (1/det) * [[c,-b],[-b,a]]
-                        x[col] = (c * r1 - b * r2) / det;
-                        x[partner] = (a * r2 - b * r1) / det;
+                        if det == 0.0 {
+                            // Zero-determinant 2x2 block: set both components to zero
+                            // (SPRAL action=true convention)
+                            x[col] = 0.0;
+                            x[partner] = 0.0;
+                        } else {
+                            let r1 = x[col];
+                            let r2 = x[partner];
+                            // Cramer's rule: [[a,b],[b,c]]^-1 = (1/det) * [[c,-b],[-b,a]]
+                            x[col] = (c * r1 - b * r2) / det;
+                            x[partner] = (a * r2 - b * r1) / det;
+                        }
                     }
                     // Skip partner column if we've already processed this pair
                     col += 1;

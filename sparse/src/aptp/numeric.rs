@@ -226,7 +226,7 @@ pub struct FactorizationStats {
 /// let symbolic = AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Amd).unwrap();
 ///
 /// // Factor
-/// let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default()).unwrap();
+/// let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None).unwrap();
 /// println!("Stats: {:?}", numeric.stats());
 /// ```
 #[derive(Debug)]
@@ -291,6 +291,7 @@ impl AptpNumeric {
         symbolic: &AptpSymbolic,
         matrix: &SparseColMat<usize, f64>,
         options: &AptpOptions,
+        scaling: Option<&[f64]>,
     ) -> Result<Self, SparseError> {
         let n = symbolic.nrows();
 
@@ -379,6 +380,7 @@ impl AptpNumeric {
                 &global_to_local,
                 sn.col_begin,
                 sn.col_end,
+                scaling,
             );
 
             // Extend-add child contributions
@@ -539,6 +541,7 @@ fn scatter_original_entries(
     global_to_local: &[usize],
     col_begin: usize,
     col_end: usize,
+    scaling: Option<&[f64]>,
 ) {
     let symbolic = matrix.symbolic();
     let col_ptrs = symbolic.col_ptr();
@@ -578,7 +581,12 @@ fn scatter_original_entries(
             if local_row >= sn_ncols && local_row < k {
                 continue;
             }
-            let val = values[idx];
+            let mut val = values[idx];
+            // Apply scaling if present: scaled_val = scaling[perm_row] * val * scaling[perm_col]
+            // Scaling is in elimination order, perm_inv maps original to elimination.
+            if let Some(s) = scaling {
+                val *= s[perm_inv[orig_row]] * s[perm_inv[orig_col]];
+            }
             // Place in lower triangle of frontal matrix
             if local_row >= local_col {
                 frontal.data[(local_row, local_col)] += val;

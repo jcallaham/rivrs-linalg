@@ -17,9 +17,9 @@
 
 **Purpose**: Add error variants, module declarations, create function stubs for TDD workflow.
 
-- [ ] T001 Add `SolveBeforeFactor` variant to `SparseError` in `src/error.rs`
-- [ ] T002 [P] Add `pub(crate) mod solve;` and `pub(crate) mod solver;` declarations to `src/aptp/mod.rs`
-- [ ] T003 [P] Create stub files `src/aptp/solve.rs` and `src/aptp/solver.rs` with module-level documentation and all function/type signatures from contracts (bodies as `todo!()`). Add re-exports to `src/aptp/mod.rs` for public types (`SparseLDLT`, `AnalyzeOptions`, `FactorOptions`, `SolverOptions`, `OrderingStrategy`). Stubs must compile so test tasks can reference them.
+- [X] T001 Add `SolveBeforeFactor` variant to `SparseError` in `src/error.rs`
+- [X] T002 [P] Add `pub(crate) mod solve;` and `pub(crate) mod solver;` declarations to `src/aptp/mod.rs`
+- [X] T003 [P] Create stub files `src/aptp/solve.rs` and `src/aptp/solver.rs` with module-level documentation and all function/type signatures from contracts (bodies as `todo!()`). Add re-exports to `src/aptp/mod.rs` for public types (`SparseLDLT`, `AnalyzeOptions`, `FactorOptions`, `SolverOptions`, `OrderingStrategy`). Stubs must compile so test tasks can reference them.
 
 ---
 
@@ -29,10 +29,10 @@
 
 **CRITICAL**: No user story work can begin until this phase is complete.
 
-- [ ] T004 Modify `MixedDiagonal::solve_in_place()` in `src/aptp/diagonal.rs` to handle zero pivots gracefully: set `x[col] = 0.0` for 1x1 zero pivots, set both components to 0.0 for 2x2 zero-determinant blocks (remove `debug_assert` panics per SPRAL `action=true` convention)
-- [ ] T005 [P] Add `sparse_backward_error(a, x, b) -> f64` function to `src/validate.rs`. Since input matrices are lower-triangle CSC, compute the full symmetric product via two passes: `ax = A_lower*x + A_lower^T*x - diag(A)*x` using `sparse_dense_matmul` from `faer::sparse::linalg::matmul`. Compute `||A||_F` directly from sparse values with 2x multiplier for off-diagonal entries. See research.md R4 for details.
-- [ ] T006 Add `scaling: Option<&[f64]>` parameter to `AptpNumeric::factor()` in `src/aptp/numeric.rs`. Apply scaling during `scatter_original_entries` as `scaled_val = scaling[perm_inv[orig_row]] * val * scaling[perm_inv[orig_col]]`. APTP kernel and extend-add remain unchanged.
-- [ ] T007 Update all existing callers of `AptpNumeric::factor()` (in `tests/multifrontal.rs`, `tests/hand_constructed.rs`, and any other call sites) to pass `None` for the new `scaling` parameter
+- [X] T004 Modify `MixedDiagonal::solve_in_place()` in `src/aptp/diagonal.rs` to handle zero pivots gracefully: set `x[col] = 0.0` for 1x1 zero pivots, set both components to 0.0 for 2x2 zero-determinant blocks (remove `debug_assert` panics per SPRAL `action=true` convention)
+- [X] T005 [P] Add `sparse_backward_error(a, x, b) -> f64` function to `src/validate.rs`. Since input matrices are lower-triangle CSC, compute the full symmetric product via two passes: `ax = A_lower*x + A_lower^T*x - diag(A)*x` using `sparse_dense_matmul` from `faer::sparse::linalg::matmul`. Compute `||A||_F` directly from sparse values with 2x multiplier for off-diagonal entries. See research.md R4 for details.
+- [X] T006 Add `scaling: Option<&[f64]>` parameter to `AptpNumeric::factor()` in `src/aptp/numeric.rs`. Apply scaling during `scatter_original_entries` as `scaled_val = scaling[perm_inv[orig_row]] * val * scaling[perm_inv[orig_col]]`. APTP kernel and extend-add remain unchanged.
+- [X] T007 Update all existing callers of `AptpNumeric::factor()` (in `tests/multifrontal.rs`, `tests/hand_constructed.rs`, and any other call sites) to pass `None` for the new `scaling` parameter
 
 **Checkpoint**: Foundation ready — solve implementation can now begin.
 
@@ -48,16 +48,16 @@
 
 > **TDD**: Write these tests against the function stubs from T003. Verify they compile but FAIL (`todo!()` panics) before implementing.
 
-- [ ] T008 [US3] Add per-supernode unit tests in `tests/solve.rs`: test gather/scatter correctness on hand-constructed 2-supernode matrices with known L11, D11, L21, col_indices, row_indices. Test `forward_solve_supernode`, `diagonal_solve_supernode`, and `backward_solve_supernode` independently with analytically computed expected values.
-- [ ] T009 [US3] Add `aptp_solve` integration test in `tests/solve.rs`: factor a hand-constructed matrix via `AptpNumeric::factor()`, then call `aptp_solve()` directly (in permuted coordinates), verify the solution matches `x_exact` after permutation.
+- [X] T008 [US3] Add per-supernode unit tests in `tests/solve.rs`: test gather/scatter correctness on hand-constructed 2-supernode matrices with known L11, D11, L21, col_indices, row_indices. Test `forward_solve_supernode`, `diagonal_solve_supernode`, and `backward_solve_supernode` independently with analytically computed expected values.
+- [X] T009 [US3] Add `aptp_solve` integration test in `tests/solve.rs`: factor a hand-constructed matrix via `AptpNumeric::factor()`, then call `aptp_solve()` directly (in permuted coordinates), verify the solution matches `x_exact` after permutation.
 
 ### Implementation for User Story 3 (make tests pass — GREEN)
 
-- [ ] T010 [US3] Implement `forward_solve_supernode(ff, rhs, work)` in `src/aptp/solve.rs`: gather via `col_indices`, solve `L11 * y = local` using `solve_unit_lower_triangular_in_place_with_conj`, write back, scatter via `L21 * local` using `matmul_with_conj` to `row_indices` entries (per contracts/internal-api.md)
-- [ ] T011 [US3] Implement `diagonal_solve_supernode(ff, rhs, work)` in `src/aptp/solve.rs`: gather via `col_indices`, call `d11.solve_in_place(&mut local)`, write back
-- [ ] T012 [US3] Implement `backward_solve_supernode(ff, rhs, work)` in `src/aptp/solve.rs`: gather local and tmp via `col_indices`/`row_indices`, update `local -= L21^T * tmp` using `matmul_with_conj`, solve `L11^T * z = local` via `solve_unit_upper_triangular_in_place_with_conj` with `l11.transpose()`, write back
-- [ ] T013 [US3] Implement `aptp_solve(symbolic, numeric, rhs, stack)` in `src/aptp/solve.rs`: validate dimensions, iterate supernodes in postorder for forward solve, any order for D solve, reverse postorder for backward solve. Use `temp_mat_zeroed` from `MemStack` for per-supernode workspace.
-- [ ] T014 [US3] Implement `aptp_solve_scratch(numeric, rhs_ncols)` in `src/aptp/solve.rs`: return `StackReq` based on `numeric.stats().max_front_size` using `temp_mat_scratch::<f64>(max_front_size, rhs_ncols)`
+- [X] T010 [US3] Implement `forward_solve_supernode(ff, rhs, work)` in `src/aptp/solve.rs`: gather via `col_indices`, solve `L11 * y = local` using `solve_unit_lower_triangular_in_place_with_conj`, write back, scatter via `L21 * local` using `matmul_with_conj` to `row_indices` entries (per contracts/internal-api.md)
+- [X] T011 [US3] Implement `diagonal_solve_supernode(ff, rhs, work)` in `src/aptp/solve.rs`: gather via `col_indices`, call `d11.solve_in_place(&mut local)`, write back
+- [X] T012 [US3] Implement `backward_solve_supernode(ff, rhs, work)` in `src/aptp/solve.rs`: gather local and tmp via `col_indices`/`row_indices`, update `local -= L21^T * tmp` using `matmul_with_conj`, solve `L11^T * z = local` via `solve_unit_upper_triangular_in_place_with_conj` with `l11.transpose()`, write back
+- [X] T013 [US3] Implement `aptp_solve(symbolic, numeric, rhs, stack)` in `src/aptp/solve.rs`: validate dimensions, iterate supernodes in postorder for forward solve, any order for D solve, reverse postorder for backward solve. Use `temp_mat_zeroed` from `MemStack` for per-supernode workspace.
+- [X] T014 [US3] Implement `aptp_solve_scratch(numeric, rhs_ncols)` in `src/aptp/solve.rs`: return `StackReq` based on `numeric.stats().max_front_size` using `temp_mat_scratch::<f64>(max_front_size, rhs_ncols)`
 
 **Checkpoint**: Per-supernode solve is unit-tested and the internal solve pipeline works in permuted coordinates.
 
@@ -75,17 +75,17 @@
 
 > **TDD**: Write these tests against the type/method stubs from T003. Verify they compile but FAIL before implementing.
 
-- [ ] T015 [US1] Add end-to-end backward error tests in `tests/solve.rs`: test `SparseLDLT::solve_full()` on all 15 hand-constructed matrices, verify backward error < 10^-10 using `sparse_backward_error()`. Also verify `solver.inertia()` matches analytically known inertia for each test matrix (SC-004).
-- [ ] T016 [US1] Add SuiteSparse CI subset backward error tests in `tests/solve.rs`: test `SparseLDLT` analyze → factor → solve on the 10 CI matrices (`test-data/suitesparse-ci/`), verify backward error < 10^-10
-- [ ] T017 [US1] Add error handling and edge case tests in `tests/solve.rs`: (a) verify `SolveBeforeFactor` error when solve called before factor, (b) `DimensionMismatch` for wrong RHS length, (c) rank-deficient solve produces solution with zeroed components, (d) 0x0 matrix trivial solve, (e) matrix producing simplicial (single-column) supernodes, (f) API equivalence: for at least one matrix, assert `solve_full()` and `analyze→factor→solve` produce identical results (SC-009, SC-010).
+- [X] T015 [US1] Add end-to-end backward error tests in `tests/solve.rs`: test `SparseLDLT::solve_full()` on all 15 hand-constructed matrices, verify backward error < 10^-10 using `sparse_backward_error()`. Also verify `solver.inertia()` matches analytically known inertia for each test matrix (SC-004).
+- [X] T016 [US1] Add SuiteSparse CI subset backward error tests in `tests/solve.rs`: test `SparseLDLT` analyze → factor → solve on the 10 CI matrices (`test-data/suitesparse-ci/`), verify backward error < 10^-10
+- [X] T017 [US1] Add error handling and edge case tests in `tests/solve.rs`: (a) verify `SolveBeforeFactor` error when solve called before factor, (b) `DimensionMismatch` for wrong RHS length, (c) rank-deficient solve produces solution with zeroed components, (d) 0x0 matrix trivial solve, (e) matrix producing simplicial (single-column) supernodes, (f) API equivalence: for at least one matrix, assert `solve_full()` and `analyze→factor→solve` produce identical results (SC-009, SC-010).
 
 ### Implementation for User Story 1 (make tests pass — GREEN)
 
-- [ ] T018 [US1] Implement `AnalyzeOptions`, `FactorOptions`, `SolverOptions`, `OrderingStrategy` types with `Default` impls in `src/aptp/solver.rs` (per contracts/solve-api.md)
-- [ ] T019 [US1] Implement `SparseLDLT` struct (fields: `symbolic: AptpSymbolic`, `numeric: Option<AptpNumeric>`, `scaling: Option<Vec<f64>>`) and `SparseLDLT::analyze()` in `src/aptp/solver.rs`: compute ordering via `OrderingStrategy`, call `AptpSymbolic::new()`, return `SparseLDLT` with `numeric = None`
-- [ ] T020 [US1] Implement `SparseLDLT::factor()` in `src/aptp/solver.rs`: call `AptpNumeric::factor(symbolic, matrix, options, scaling.as_deref())`, store result in `self.numeric`
-- [ ] T021 [US1] Implement `SparseLDLT::solve_in_place()` in `src/aptp/solver.rs`: check factor state, permute RHS (`rhs_perm[perm_fwd[i]] = rhs[i]`), optionally scale (`rhs_perm[i] *= scaling[i]`), call `aptp_solve()`, optionally unscale, unpermute
-- [ ] T022 [US1] Implement `SparseLDLT::solve()` (allocating wrapper), `solve_scratch()`, `solve_full()` (one-shot), `n()`, `inertia()`, `stats()` in `src/aptp/solver.rs`
+- [X] T018 [US1] Implement `AnalyzeOptions`, `FactorOptions`, `SolverOptions`, `OrderingStrategy` types with `Default` impls in `src/aptp/solver.rs` (per contracts/solve-api.md)
+- [X] T019 [US1] Implement `SparseLDLT` struct (fields: `symbolic: AptpSymbolic`, `numeric: Option<AptpNumeric>`, `scaling: Option<Vec<f64>>`) and `SparseLDLT::analyze()` in `src/aptp/solver.rs`: compute ordering via `OrderingStrategy`, call `AptpSymbolic::new()`, return `SparseLDLT` with `numeric = None`
+- [X] T020 [US1] Implement `SparseLDLT::factor()` in `src/aptp/solver.rs`: call `AptpNumeric::factor(symbolic, matrix, options, scaling.as_deref())`, store result in `self.numeric`
+- [X] T021 [US1] Implement `SparseLDLT::solve_in_place()` in `src/aptp/solver.rs`: check factor state, permute RHS (`rhs_perm[perm_fwd[i]] = rhs[i]`), optionally scale (`rhs_perm[i] *= scaling[i]`), call `aptp_solve()`, optionally unscale, unpermute
+- [X] T022 [US1] Implement `SparseLDLT::solve()` (allocating wrapper), `solve_scratch()`, `solve_full()` (one-shot), `n()`, `inertia()`, `stats()` in `src/aptp/solver.rs`
 
 **Checkpoint**: End-to-end solver works on hand-constructed and SuiteSparse CI matrices with backward error < 10^-10.
 
@@ -101,12 +101,12 @@
 
 ### Tests for User Story 2 (write FIRST — RED)
 
-- [ ] T023 [US2] Add refactoring test in `tests/solve.rs`: analyze a matrix, factor+solve, then refactor with different numeric values (same sparsity) and solve again, verify both solutions have backward error < 10^-10
-- [ ] T024 [US2] Add multiple-RHS reuse test in `tests/solve.rs`: factor a matrix once, solve with 3 different RHS vectors reusing the same factorization, verify all solutions are correct
+- [X] T023 [US2] Add refactoring test in `tests/solve.rs`: analyze a matrix, factor+solve, then refactor with different numeric values (same sparsity) and solve again, verify both solutions have backward error < 10^-10
+- [X] T024 [US2] Add multiple-RHS reuse test in `tests/solve.rs`: factor a matrix once, solve with 3 different RHS vectors reusing the same factorization, verify all solutions are correct
 
 ### Implementation for User Story 2 (make tests pass — GREEN)
 
-- [ ] T025 [US2] Implement `SparseLDLT::refactor()` in `src/aptp/solver.rs` (delegates to `factor()` — provided for API clarity per contracts/solve-api.md)
+- [X] T025 [US2] Implement `SparseLDLT::refactor()` in `src/aptp/solver.rs` (delegates to `factor()` — provided for API clarity per contracts/solve-api.md)
 
 **Checkpoint**: Three-phase API with reuse is validated. All P1 user stories are complete.
 
@@ -122,11 +122,11 @@
 
 ### Tests for User Story 4 (write FIRST — RED)
 
-- [ ] T026 [US4] Add MC64 scaling tests in `tests/solve.rs`: test `SparseLDLT` with `MatchOrderMetis` ordering on matrices where MC64 improves conditioning, verify backward error < 10^-10 against original matrix. Compare results with and without scaling.
+- [X] T026 [US4] Add MC64 scaling tests in `tests/solve.rs`: test `SparseLDLT` with `MatchOrderMetis` ordering on matrices where MC64 improves conditioning, verify backward error < 10^-10 against original matrix. Compare results with and without scaling.
 
 ### Implementation for User Story 4 (make tests pass — GREEN)
 
-- [ ] T027 [US4] Implement scaling coordinate transform in `SparseLDLT::analyze()` in `src/aptp/solver.rs`: when `MatchOrderMetis` is selected, call `match_order_metis()`, permute scaling from original to elimination order (`elim_scaling[i] = orig_scaling[perm_fwd[i]]`), store as `self.scaling`. Verify that `solve_in_place()` (from T021) correctly applies `rhs_perm[i] *= scaling[i]` before forward solve and after backward solve (symmetric scaling in elimination order).
+- [X] T027 [US4] Implement scaling coordinate transform in `SparseLDLT::analyze()` in `src/aptp/solver.rs`: when `MatchOrderMetis` is selected, call `match_order_metis()`, permute scaling from original to elimination order (`elim_scaling[i] = orig_scaling[perm_fwd[i]]`), store as `self.scaling`. Verify that `solve_in_place()` (from T021) correctly applies `rhs_perm[i] *= scaling[i]` before forward solve and after backward solve (symmetric scaling in elimination order).
 
 **Checkpoint**: Scaling integration works end-to-end. All P2 US4 is complete.
 
@@ -142,8 +142,8 @@
 
 ### Tests for User Story 5
 
-- [ ] T028 [US5] Add workspace correctness test in `tests/solve.rs`: verify `solve_scratch(1)` returns a `StackReq` that is sufficient for solve on all hand-constructed matrices. Verify solve succeeds with `MemBuffer::new(solve_scratch(1))`. Note: no-heap guarantee (SC-008) is verified by code inspection — `aptp_solve` uses only `MemStack`-based allocation.
-- [ ] T029 [US5] Add workspace reuse test in `tests/solve.rs`: allocate `MemBuffer` once, create `MemStack`, call `solve_in_place()` twice with different RHS vectors reusing the same stack — verify both solutions correct.
+- [X] T028 [US5] Add workspace correctness test in `tests/solve.rs`: verify `solve_scratch(1)` returns a `StackReq` that is sufficient for solve on all hand-constructed matrices. Verify solve succeeds with `MemBuffer::new(solve_scratch(1))`. Note: no-heap guarantee (SC-008) is verified by code inspection — `aptp_solve` uses only `MemStack`-based allocation.
+- [X] T029 [US5] Add workspace reuse test in `tests/solve.rs`: allocate `MemBuffer` once, create `MemStack`, call `solve_in_place()` twice with different RHS vectors reusing the same stack — verify both solutions correct.
 
 **Checkpoint**: Workspace-efficient solve validated. All user stories complete.
 
@@ -153,12 +153,12 @@
 
 **Purpose**: Full validation suite, documentation, and code quality.
 
-- [ ] T030 [P] Add full SuiteSparse backward error test suite in `tests/solve_suitesparse.rs` (`#[ignore]`): test `SparseLDLT` on all 67 SuiteSparse matrices, verify >95% achieve backward error < 10^-10. Report per-matrix backward error and failure summary.
-- [ ] T031 [P] Add rustdoc documentation to all public types and functions in `src/aptp/solver.rs` and `src/aptp/solve.rs`: algorithm references (Duff+2020, Liu 1992), SPRAL equivalents, complexity, usage examples
-- [ ] T032 Run `cargo fmt --check` and `cargo clippy` on the full crate, fix any warnings
-- [ ] T033 Run `cargo test` (all non-ignored tests pass) and `cargo test -- --ignored --test-threads=1` (full SuiteSparse suite)
-- [ ] T034 Validate quickstart.md examples compile and run correctly (compile-test the code snippets from `specs/016-triangular-solve-api/quickstart.md`)
-- [ ] T035 Update `docs/ssids-log.md` with Phase 7 completion entry and update `docs/ssids-plan.md` Phase 7 status
+- [X] T030 [P] Add full SuiteSparse backward error test suite in `tests/solve_suitesparse.rs` (`#[ignore]`): test `SparseLDLT` on all 67 SuiteSparse matrices, verify >95% achieve backward error < 10^-10. Report per-matrix backward error and failure summary.
+- [X] T031 [P] Add rustdoc documentation to all public types and functions in `src/aptp/solver.rs` and `src/aptp/solve.rs`: algorithm references (Duff+2020, Liu 1992), SPRAL equivalents, complexity, usage examples
+- [X] T032 Run `cargo fmt --check` and `cargo clippy` on the full crate, fix any warnings
+- [X] T033 Run `cargo test` (all non-ignored tests pass) and `cargo test -- --ignored --test-threads=1` (full SuiteSparse suite)
+- [X] T034 Validate quickstart.md examples compile and run correctly (compile-test the code snippets from `specs/016-triangular-solve-api/quickstart.md`)
+- [X] T035 Update `docs/ssids-log.md` with Phase 7 completion entry and update `docs/ssids-plan.md` Phase 7 status
 
 ---
 

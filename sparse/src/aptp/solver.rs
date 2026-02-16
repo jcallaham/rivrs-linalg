@@ -1,0 +1,459 @@
+//! User-facing sparse symmetric indefinite solver API.
+//!
+//! Provides [`SparseLDLT`], the high-level solver struct wrapping the
+//! three-phase analyze → factor → solve pipeline. The symbolic analysis
+//! is reusable across factorizations with the same sparsity pattern.
+//!
+//! # SPRAL Equivalent
+//!
+//! Corresponds to `ssids_akeep` (symbolic) + `ssids_fkeep` (numeric)
+//! and the `ssids_analyse`, `ssids_factor`, `ssids_solve` subroutines.
+//!
+//! # References
+//!
+//! - Duff, Hogg & Lopez (2020), "A New Sparse LDL^T Solver Using A Posteriori
+//!   Threshold Pivoting", SIAM J. Sci. Comput. 42(4)
+//! - Liu (1992), "The Multifrontal Method for Sparse Matrix Solution"
+
+use faer::Col;
+use faer::dyn_stack::{MemBuffer, MemStack, StackReq};
+use faer::perm::Perm;
+use faer::sparse::linalg::cholesky::SymmetricOrdering;
+use faer::sparse::{SparseColMat, SymbolicSparseColMatRef};
+
+use super::factor::{AptpFallback, AptpOptions};
+use super::inertia::Inertia;
+use super::numeric::{AptpNumeric, FactorizationStats};
+use super::ordering::{match_order_metis, metis_ordering};
+use super::solve::{aptp_solve, aptp_solve_scratch};
+use super::symbolic::AptpSymbolic;
+use crate::error::SparseError;
+
+/// Fill-reducing ordering strategy.
+#[derive(Debug, Clone)]
+pub enum OrderingStrategy {
+    /// AMD ordering (faer built-in).
+    Amd,
+    /// METIS ordering (via metis-sys). Default.
+    Metis,
+    /// MC64 matching + METIS ordering. Produces scaling factors.
+    MatchOrderMetis,
+    /// User-supplied ordering permutation.
+    UserSupplied(Perm<usize>),
+}
+
+/// Configuration for the symbolic analysis phase.
+#[derive(Debug, Clone)]
+pub struct AnalyzeOptions {
+    /// Fill-reducing ordering strategy.
+    pub ordering: OrderingStrategy,
+}
+
+impl Default for AnalyzeOptions {
+    fn default() -> Self {
+        Self {
+            ordering: OrderingStrategy::MatchOrderMetis,
+        }
+    }
+}
+
+/// Configuration for the numeric factorization phase.
+#[derive(Debug, Clone)]
+pub struct FactorOptions {
+    /// APTP pivot threshold (u parameter). Default: 0.01.
+    pub threshold: f64,
+    /// Fallback strategy for failed 1x1 pivots. Default: BunchKaufman.
+    pub fallback: AptpFallback,
+}
+
+impl Default for FactorOptions {
+    fn default() -> Self {
+        Self {
+            threshold: 0.01,
+            fallback: AptpFallback::BunchKaufman,
+        }
+    }
+}
+
+/// Configuration for the one-shot solve.
+#[derive(Debug, Clone)]
+pub struct SolverOptions {
+    /// Fill-reducing ordering strategy.
+    pub ordering: OrderingStrategy,
+    /// APTP pivot threshold. Default: 0.01.
+    pub threshold: f64,
+    /// Fallback strategy. Default: BunchKaufman.
+    pub fallback: AptpFallback,
+}
+
+impl Default for SolverOptions {
+    fn default() -> Self {
+        Self {
+            ordering: OrderingStrategy::MatchOrderMetis,
+            threshold: 0.01,
+            fallback: AptpFallback::BunchKaufman,
+        }
+    }
+}
+
+/// High-level sparse symmetric indefinite solver.
+///
+/// Wraps the APTP multifrontal factorization (Phases 2-6) with a
+/// three-phase API: analyze → factor → solve. The symbolic analysis
+/// is reusable across factorizations with the same sparsity pattern.
+///
+/// # SPRAL Equivalent
+///
+/// Corresponds to the `ssids_akeep` (symbolic) + `ssids_fkeep` (numeric)
+/// data structures and the `ssids_analyse`, `ssids_factor`, `ssids_solve`
+/// subroutines.
+///
+/// # Examples
+///
+/// ```no_run
+/// use faer::sparse::{SparseColMat, Triplet};
+/// use faer::Col;
+/// use rivrs_sparse::aptp::{SparseLDLT, SolverOptions};
+///
+/// let triplets = vec![
+///     Triplet::new(0, 0, 4.0),
+///     Triplet::new(1, 0, 1.0), Triplet::new(1, 1, 3.0),
+/// ];
+/// let a = SparseColMat::try_new_from_triplets(2, 2, &triplets).unwrap();
+/// let b = Col::from_fn(2, |i| [5.0, 4.0][i]);
+/// let x = SparseLDLT::solve_full(&a, &b, &SolverOptions::default()).unwrap();
+/// ```
+pub struct SparseLDLT {
+    symbolic: AptpSymbolic,
+    numeric: Option<AptpNumeric>,
+    scaling: Option<Vec<f64>>,
+}
+
+impl SparseLDLT {
+    /// Symbolic analysis phase.
+    ///
+    /// Computes the fill-reducing ordering, elimination tree, and
+    /// supernode structure. Optionally computes MC64 scaling factors
+    /// when `MatchOrderMetis` ordering is requested.
+    ///
+    /// Note: `MatchOrderMetis` ordering requires numeric matrix values;
+    /// use [`analyze_with_matrix`](Self::analyze_with_matrix) instead.
+    ///
+    /// # Errors
+    ///
+    /// - `SparseError::AnalysisFailure` if ordering or symbolic analysis fails
+    pub fn analyze(
+        matrix: SymbolicSparseColMatRef<'_, usize>,
+        options: &AnalyzeOptions,
+    ) -> Result<Self, SparseError> {
+        let n = matrix.nrows();
+
+        match &options.ordering {
+            OrderingStrategy::Amd => {
+                let symbolic = AptpSymbolic::analyze(matrix, SymmetricOrdering::Amd)?;
+                Ok(SparseLDLT {
+                    symbolic,
+                    numeric: None,
+                    scaling: None,
+                })
+            }
+            OrderingStrategy::Metis => {
+                // Build a dummy matrix for METIS (needs SymbolicSparseColMatRef)
+                let col_ptrs = matrix.col_ptr();
+                let row_indices = matrix.row_idx();
+                let mut triplets = Vec::new();
+                for j in 0..n {
+                    for &i in &row_indices[col_ptrs[j]..col_ptrs[j + 1]] {
+                        triplets.push(faer::sparse::Triplet::new(i, j, 1.0f64));
+                    }
+                }
+                let dummy_matrix =
+                    SparseColMat::try_new_from_triplets(n, n, &triplets).map_err(|e| {
+                        SparseError::AnalysisFailure {
+                            reason: format!("Failed to construct matrix for METIS ordering: {}", e),
+                        }
+                    })?;
+
+                let perm = metis_ordering(dummy_matrix.symbolic())?;
+                let symbolic =
+                    AptpSymbolic::analyze(matrix, SymmetricOrdering::Custom(perm.as_ref()))?;
+                Ok(SparseLDLT {
+                    symbolic,
+                    numeric: None,
+                    scaling: None,
+                })
+            }
+            OrderingStrategy::MatchOrderMetis => Err(SparseError::AnalysisFailure {
+                reason: "MatchOrderMetis requires numeric matrix values; \
+                         use analyze_with_matrix() instead"
+                    .to_string(),
+            }),
+            OrderingStrategy::UserSupplied(perm) => {
+                let symbolic =
+                    AptpSymbolic::analyze(matrix, SymmetricOrdering::Custom(perm.as_ref()))?;
+                Ok(SparseLDLT {
+                    symbolic,
+                    numeric: None,
+                    scaling: None,
+                })
+            }
+        }
+    }
+
+    /// Symbolic analysis with full matrix (required for MatchOrderMetis).
+    ///
+    /// When `MatchOrderMetis` is requested, this method performs MC64
+    /// matching on the numeric matrix to compute scaling factors and
+    /// a fill-reducing ordering.
+    pub fn analyze_with_matrix(
+        matrix: &SparseColMat<usize, f64>,
+        options: &AnalyzeOptions,
+    ) -> Result<Self, SparseError> {
+        let n = matrix.nrows();
+
+        match &options.ordering {
+            OrderingStrategy::Amd => {
+                let symbolic = AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Amd)?;
+                Ok(SparseLDLT {
+                    symbolic,
+                    numeric: None,
+                    scaling: None,
+                })
+            }
+            OrderingStrategy::Metis => {
+                let perm = metis_ordering(matrix.symbolic())?;
+                let symbolic = AptpSymbolic::analyze(
+                    matrix.symbolic(),
+                    SymmetricOrdering::Custom(perm.as_ref()),
+                )?;
+                Ok(SparseLDLT {
+                    symbolic,
+                    numeric: None,
+                    scaling: None,
+                })
+            }
+            OrderingStrategy::MatchOrderMetis => {
+                let result = match_order_metis(matrix)?;
+                let ordering_perm = result.ordering;
+                let symbolic = AptpSymbolic::analyze(
+                    matrix.symbolic(),
+                    SymmetricOrdering::Custom(ordering_perm.as_ref()),
+                )?;
+
+                // Transform scaling to elimination order
+                let elim_scaling = if let Some(perm) = symbolic.perm() {
+                    let (fwd, _) = perm.arrays();
+                    (0..n).map(|i| result.scaling[fwd[i]]).collect()
+                } else {
+                    result.scaling
+                };
+
+                Ok(SparseLDLT {
+                    symbolic,
+                    numeric: None,
+                    scaling: Some(elim_scaling),
+                })
+            }
+            OrderingStrategy::UserSupplied(perm) => {
+                let symbolic = AptpSymbolic::analyze(
+                    matrix.symbolic(),
+                    SymmetricOrdering::Custom(perm.as_ref()),
+                )?;
+                Ok(SparseLDLT {
+                    symbolic,
+                    numeric: None,
+                    scaling: None,
+                })
+            }
+        }
+    }
+
+    /// Numeric factorization phase.
+    ///
+    /// Computes P^T A P = L D L^T using multifrontal APTP.
+    /// If scaling factors are present (from MC64 ordering), entries
+    /// are scaled at assembly time.
+    ///
+    /// # Errors
+    ///
+    /// - `SparseError::DimensionMismatch` if matrix dimensions differ from analysis
+    pub fn factor(
+        &mut self,
+        matrix: &SparseColMat<usize, f64>,
+        options: &FactorOptions,
+    ) -> Result<(), SparseError> {
+        let aptp_options = AptpOptions {
+            threshold: options.threshold,
+            fallback: options.fallback,
+            ..AptpOptions::default()
+        };
+
+        let numeric = AptpNumeric::factor(
+            &self.symbolic,
+            matrix,
+            &aptp_options,
+            self.scaling.as_deref(),
+        )?;
+        self.numeric = Some(numeric);
+        Ok(())
+    }
+
+    /// Refactor with same sparsity pattern.
+    ///
+    /// Equivalent to calling `factor()` again — provided for API clarity.
+    pub fn refactor(
+        &mut self,
+        matrix: &SparseColMat<usize, f64>,
+        options: &FactorOptions,
+    ) -> Result<(), SparseError> {
+        self.factor(matrix, options)
+    }
+
+    /// Solve Ax = b (allocating).
+    ///
+    /// Returns the solution vector.
+    ///
+    /// # Errors
+    ///
+    /// - `SparseError::SolveBeforeFactor` if `factor()` has not been called
+    /// - `SparseError::DimensionMismatch` if rhs length != matrix dimension
+    pub fn solve(&self, rhs: &Col<f64>, stack: &mut MemStack) -> Result<Col<f64>, SparseError> {
+        let mut result = rhs.to_owned();
+        self.solve_in_place(&mut result, stack)?;
+        Ok(result)
+    }
+
+    /// Solve Ax = b (in-place).
+    ///
+    /// Modifies `rhs` to contain the solution.
+    ///
+    /// # Errors
+    ///
+    /// - `SparseError::SolveBeforeFactor` if `factor()` has not been called
+    /// - `SparseError::DimensionMismatch` if rhs length != matrix dimension
+    pub fn solve_in_place(
+        &self,
+        rhs: &mut Col<f64>,
+        stack: &mut MemStack,
+    ) -> Result<(), SparseError> {
+        let numeric = self
+            .numeric
+            .as_ref()
+            .ok_or_else(|| SparseError::SolveBeforeFactor {
+                context: "factor() must be called before solve()".to_string(),
+            })?;
+
+        let n = self.symbolic.nrows();
+        if rhs.nrows() != n {
+            return Err(SparseError::DimensionMismatch {
+                expected: (n, 1),
+                got: (rhs.nrows(), 1),
+                context: "RHS length must match matrix dimension".to_string(),
+            });
+        }
+
+        if n == 0 {
+            return Ok(());
+        }
+
+        // Get permutation
+        let (perm_fwd, _) = if let Some(perm) = self.symbolic.perm() {
+            let (fwd, inv) = perm.arrays();
+            (fwd.to_vec(), inv.to_vec())
+        } else {
+            let id: Vec<usize> = (0..n).collect();
+            (id.clone(), id)
+        };
+
+        // 1. Permute: rhs_perm[new] = rhs[perm_fwd[new]]
+        //    perm_fwd[new] = old, so this gathers original RHS into permuted order.
+        let mut rhs_perm = vec![0.0f64; n];
+        for new in 0..n {
+            rhs_perm[new] = rhs[perm_fwd[new]];
+        }
+
+        // 2. Scale (if scaling present): rhs_perm[i] *= scaling[i]
+        if let Some(ref scaling) = self.scaling {
+            for i in 0..n {
+                rhs_perm[i] *= scaling[i];
+            }
+        }
+
+        // 3. Core solve: aptp_solve(symbolic, numeric, &mut rhs_perm, stack)
+        aptp_solve(&self.symbolic, numeric, &mut rhs_perm, stack)?;
+
+        // 4. Unscale: rhs_perm[i] *= scaling[i] (symmetric: same S applied)
+        if let Some(ref scaling) = self.scaling {
+            for i in 0..n {
+                rhs_perm[i] *= scaling[i];
+            }
+        }
+
+        // 5. Unpermute: rhs[perm_fwd[new]] = rhs_perm[new]
+        for new in 0..n {
+            rhs[perm_fwd[new]] = rhs_perm[new];
+        }
+
+        Ok(())
+    }
+
+    /// Workspace requirement for solve.
+    pub fn solve_scratch(&self, rhs_ncols: usize) -> StackReq {
+        if let Some(ref numeric) = self.numeric {
+            aptp_solve_scratch(numeric, rhs_ncols)
+        } else {
+            StackReq::empty()
+        }
+    }
+
+    /// One-shot: analyze + factor + solve.
+    pub fn solve_full(
+        matrix: &SparseColMat<usize, f64>,
+        rhs: &Col<f64>,
+        options: &SolverOptions,
+    ) -> Result<Col<f64>, SparseError> {
+        let analyze_opts = AnalyzeOptions {
+            ordering: options.ordering.clone(),
+        };
+        let factor_opts = FactorOptions {
+            threshold: options.threshold,
+            fallback: options.fallback,
+        };
+
+        let mut solver = Self::analyze_with_matrix(matrix, &analyze_opts)?;
+        solver.factor(matrix, &factor_opts)?;
+
+        let scratch = solver.solve_scratch(1);
+        let mut mem = MemBuffer::new(scratch);
+        let stack = MemStack::new(&mut mem);
+        solver.solve(rhs, stack)
+    }
+
+    /// Get inertia from the most recent factorization.
+    pub fn inertia(&self) -> Option<Inertia> {
+        self.numeric.as_ref().map(|numeric| {
+            let mut inertia = Inertia {
+                positive: 0,
+                negative: 0,
+                zero: 0,
+            };
+            for ff in numeric.front_factors() {
+                let local_inertia = ff.d11().compute_inertia();
+                inertia.positive += local_inertia.positive;
+                inertia.negative += local_inertia.negative;
+                inertia.zero += local_inertia.zero;
+            }
+            inertia
+        })
+    }
+
+    /// Get factorization statistics.
+    pub fn stats(&self) -> Option<&FactorizationStats> {
+        self.numeric.as_ref().map(|n| n.stats())
+    }
+
+    /// Matrix dimension (from symbolic analysis).
+    pub fn n(&self) -> usize {
+        self.symbolic.nrows()
+    }
+}

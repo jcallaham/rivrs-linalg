@@ -949,7 +949,7 @@ infrastructure reuse — METIS produces a `Perm<usize>` that plugs into
 
 ---
 
-## Phase 4: Ordering & Preprocessing
+## Phase 4: Ordering & Preprocessing (**COMPLETE**)
 
 ### Objectives
 Implement fill-reducing ordering (METIS) and matching-based scaling (MC64) for
@@ -1336,7 +1336,7 @@ symbolic analysis.
 
 ---
 
-## Phase 5: Dense APTP Factorization Kernel
+## Phase 5: Dense APTP Factorization Kernel (**COMPLETE**)
 
 ### Objectives
 Implement A Posteriori Threshold Pivoting for dense symmetric indefinite matrices. This is the core numerical kernel that Phase 6 (sparse factorization) will call on each frontal matrix.
@@ -1776,7 +1776,7 @@ for large matrices. SPRAL uses solve-based backward error exclusively.
 
 ---
 
-## Phase 7: Triangular Solve & Solver API
+## Phase 7: Triangular Solve & Solver API (**COMPLETE**)
 
 ### Objectives
 Implement forward/backward substitution through the multifrontal factor structure
