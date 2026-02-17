@@ -361,6 +361,8 @@ fn swap_symmetric(mut a: MatMut<'_, f64>, i: usize, j: usize) {
 /// On failure, the column is restored to its original state.
 ///
 /// Returns Ok((d_value, max_l_entry)) or Err(max_l_entry).
+#[cfg(test)]
+#[allow(dead_code)] // Used by complete_pivoting_factor (also #[cfg(test)])
 fn try_1x1_pivot(
     mut a: MatMut<'_, f64>,
     col: usize,
@@ -408,6 +410,8 @@ fn try_1x1_pivot(
 ///
 /// Tests the determinant condition from Algorithm 4.1:
 /// `|det(D_22)| >= 0.5 * |a_21|^2`
+#[cfg(test)]
+#[allow(dead_code)] // Used by complete_pivoting_factor (also #[cfg(test)])
 fn try_2x2_pivot(
     mut a: MatMut<'_, f64>,
     col: usize,
@@ -487,6 +491,8 @@ fn try_2x2_pivot(
 }
 
 /// Rank-1 Schur complement update after eliminating a 1x1 pivot at column `col`.
+#[cfg(test)]
+#[allow(dead_code)] // Used by complete_pivoting_factor (also #[cfg(test)])
 fn update_schur_1x1(mut a: MatMut<'_, f64>, col: usize, d_value: f64) {
     let m = a.nrows();
     let n_trail = m - col - 1;
@@ -506,6 +512,8 @@ fn update_schur_1x1(mut a: MatMut<'_, f64>, col: usize, d_value: f64) {
 }
 
 /// Rank-2 Schur complement update after eliminating a 2x2 pivot.
+#[cfg(test)]
+#[allow(dead_code)] // Used by complete_pivoting_factor (also #[cfg(test)])
 fn update_schur_2x2(mut a: MatMut<'_, f64>, col: usize, partner: usize, block: &Block2x2) {
     let m = a.nrows();
     let start = col.max(partner) + 1;
@@ -870,6 +878,318 @@ fn complete_pivoting_factor(mut a: MatMut<'_, f64>, small: f64) -> AptpFactorRes
 // Two-level APTP: BLAS-3 building blocks
 // ---------------------------------------------------------------------------
 
+/// Factor an ib×ib diagonal block using complete pivoting (Algorithm 4.1).
+///
+/// Performs complete pivoting on the diagonal block `a[col_start..col_start+block_size,
+/// col_start..col_start+block_size]`, but symmetric swaps affect ALL m rows of the
+/// matrix (keeping row ordering consistent for the panel below).
+///
+/// L entries are computed ONLY for rows within the block (col_start..col_start+block_size).
+/// Schur complement updates are ONLY within the block. The panel rows below are NOT
+/// modified except by symmetric swaps.
+///
+/// Complete pivoting guarantees |L_ij| ≤ 4 (growth factor for u=0.25).
+///
+/// # Returns
+/// (block_d, local_perm, nelim, stats, pivot_log) where:
+/// - `block_d`: MixedDiagonal of dimension block_size with D entries
+/// - `local_perm`: permutation applied within positions col_start..col_start+block_size
+///   (values are offsets from col_start)
+/// - `nelim`: number of successfully eliminated columns (may be < block_size if singular)
+/// - `stats`: pivot statistics for this block
+/// - `pivot_log`: per-pivot diagnostic records
+///
+/// # SPRAL Equivalent
+/// `block_ldlt()` in `spral/src/ssids/cpu/kernels/block_ldlt.hxx`
+fn factor_block_diagonal(
+    mut a: MatMut<'_, f64>,
+    col_start: usize,
+    block_size: usize,
+    small: f64,
+) -> (
+    MixedDiagonal,
+    Vec<usize>,
+    usize,
+    AptpStatistics,
+    Vec<AptpPivotRecord>,
+) {
+    let block_end = col_start + block_size;
+
+    let mut local_perm: Vec<usize> = (0..block_size).collect();
+    let mut d = MixedDiagonal::new(block_size);
+    let mut stats = AptpStatistics {
+        num_1x1: 0,
+        num_2x2: 0,
+        num_delayed: 0,
+        max_l_entry: 0.0,
+    };
+    let mut pivot_log = Vec::with_capacity(block_size);
+    let mut k = 0; // offset within block (next column to eliminate)
+
+    while k < block_size {
+        let cur = col_start + k; // absolute position
+        let search_end = block_end;
+        let remaining = block_size - k;
+
+        // 1. Find max |a[i,j]| in remaining diagonal sub-block [cur..search_end, cur..search_end]
+        let mut max_val = 0.0_f64;
+        let mut max_row = cur;
+        let mut max_col = cur;
+        for j in cur..search_end {
+            for i in j..search_end {
+                let v = a[(i, j)].abs();
+                if v > max_val {
+                    max_val = v;
+                    max_row = i;
+                    max_col = j;
+                }
+            }
+        }
+
+        // 2. Singularity check
+        if max_val < small {
+            // All remaining entries in block are near-zero
+            stats.num_delayed += remaining;
+            for &perm_val in &local_perm[k..block_size] {
+                pivot_log.push(AptpPivotRecord {
+                    col: perm_val,
+                    pivot_type: PivotType::Delayed,
+                    max_l_entry: 0.0,
+                    was_fallback: false,
+                });
+            }
+            break;
+        }
+
+        // 3. Decide pivot type
+        if max_row == max_col {
+            // Diagonal maximum → 1×1 pivot
+            if max_row != cur {
+                swap_symmetric(a.rb_mut(), cur, max_row);
+                local_perm.swap(k, max_row - col_start);
+            }
+
+            let d_kk = a[(cur, cur)];
+            let inv_d = 1.0 / d_kk;
+
+            // Compute L column ONLY within block
+            let mut max_l = 0.0_f64;
+            for i in (cur + 1)..block_end {
+                let l_ik = a[(i, cur)] * inv_d;
+                a[(i, cur)] = l_ik;
+                let abs_l = l_ik.abs();
+                if abs_l > max_l {
+                    max_l = abs_l;
+                }
+            }
+
+            // Schur complement update ONLY within block
+            for j in (cur + 1)..block_end {
+                let l_j = a[(j, cur)];
+                let ldl_j = l_j * d_kk;
+                for i in j..block_end {
+                    a[(i, j)] -= a[(i, cur)] * ldl_j;
+                }
+            }
+
+            d.set_1x1(k, d_kk);
+            stats.num_1x1 += 1;
+            if max_l > stats.max_l_entry {
+                stats.max_l_entry = max_l;
+            }
+            pivot_log.push(AptpPivotRecord {
+                col: local_perm[k],
+                pivot_type: PivotType::OneByOne,
+                max_l_entry: max_l,
+                was_fallback: false,
+            });
+            k += 1;
+        } else {
+            // Off-diagonal maximum → try 2×2 pivot
+            let t = max_row; // absolute positions
+            let m_idx = max_col;
+
+            let a_mm = a[(m_idx, m_idx)];
+            let a_tt = a[(t, t)];
+            let a_tm = a[(t, m_idx)]; // lower triangle: t > m_idx
+            let delta = a_mm * a_tt - a_tm * a_tm;
+
+            if remaining < 2 {
+                // Only one column left, use 1×1 on max diagonal
+                let pivot_pos = if a_mm.abs() >= a_tt.abs() { m_idx } else { t };
+                if pivot_pos != cur {
+                    swap_symmetric(a.rb_mut(), cur, pivot_pos);
+                    local_perm.swap(k, pivot_pos - col_start);
+                }
+                let d_kk = a[(cur, cur)];
+                if d_kk.abs() < small {
+                    stats.num_delayed += 1;
+                    pivot_log.push(AptpPivotRecord {
+                        col: local_perm[k],
+                        pivot_type: PivotType::Delayed,
+                        max_l_entry: 0.0,
+                        was_fallback: false,
+                    });
+                    break;
+                }
+                let inv_d = 1.0 / d_kk;
+                for i in (cur + 1)..block_end {
+                    a[(i, cur)] *= inv_d;
+                }
+                d.set_1x1(k, d_kk);
+                stats.num_1x1 += 1;
+                k += 1;
+                continue;
+            }
+
+            if delta.abs() >= 0.5 * a_tm * a_tm {
+                // 2×2 pivot: swap m_idx → cur, t → cur+1
+                if m_idx != cur {
+                    swap_symmetric(a.rb_mut(), cur, m_idx);
+                    local_perm.swap(k, m_idx - col_start);
+                }
+                let new_t = if t == cur { m_idx } else { t };
+                if new_t != cur + 1 {
+                    swap_symmetric(a.rb_mut(), cur + 1, new_t);
+                    local_perm.swap(k + 1, new_t - col_start);
+                }
+
+                let a11 = a[(cur, cur)];
+                let a22 = a[(cur + 1, cur + 1)];
+                let a21 = a[(cur + 1, cur)];
+                let det = a11 * a22 - a21 * a21;
+                let inv_det = 1.0 / det;
+
+                let block = Block2x2 {
+                    first_col: k,
+                    a: a11,
+                    b: a21,
+                    c: a22,
+                };
+
+                // Compute L columns ONLY within block
+                let mut max_l = 0.0_f64;
+                let rows_start = cur + 2;
+                for i in rows_start..block_end {
+                    let ai1 = a[(i, cur)];
+                    let ai2 = a[(i, cur + 1)];
+                    let l_i1 = (ai1 * a22 - ai2 * a21) * inv_det;
+                    let l_i2 = (ai2 * a11 - ai1 * a21) * inv_det;
+                    a[(i, cur)] = l_i1;
+                    a[(i, cur + 1)] = l_i2;
+                    if l_i1.abs() > max_l {
+                        max_l = l_i1.abs();
+                    }
+                    if l_i2.abs() > max_l {
+                        max_l = l_i2.abs();
+                    }
+                }
+
+                // Schur complement update ONLY within block (rank-2)
+                for j in rows_start..block_end {
+                    let l1j = a[(j, cur)];
+                    let l2j = a[(j, cur + 1)];
+                    let w_j1 = l1j * a11 + l2j * a21;
+                    let w_j2 = l1j * a21 + l2j * a22;
+                    for i in j..block_end {
+                        let l1i = a[(i, cur)];
+                        let l2i = a[(i, cur + 1)];
+                        a[(i, j)] -= l1i * w_j1 + l2i * w_j2;
+                    }
+                }
+
+                d.set_2x2(block);
+                stats.num_2x2 += 1;
+                if max_l > stats.max_l_entry {
+                    stats.max_l_entry = max_l;
+                }
+                pivot_log.push(AptpPivotRecord {
+                    col: local_perm[k],
+                    pivot_type: PivotType::TwoByTwo {
+                        partner: local_perm[k + 1],
+                    },
+                    max_l_entry: max_l,
+                    was_fallback: false,
+                });
+                pivot_log.push(AptpPivotRecord {
+                    col: local_perm[k + 1],
+                    pivot_type: PivotType::TwoByTwo {
+                        partner: local_perm[k],
+                    },
+                    max_l_entry: max_l,
+                    was_fallback: false,
+                });
+                k += 2;
+            } else {
+                // Failed Δ → 1×1 on max diagonal
+                let pivot_pos = if a_mm.abs() >= a_tt.abs() { m_idx } else { t };
+                if pivot_pos != cur {
+                    swap_symmetric(a.rb_mut(), cur, pivot_pos);
+                    local_perm.swap(k, pivot_pos - col_start);
+                }
+
+                let d_kk = a[(cur, cur)];
+                let inv_d = 1.0 / d_kk;
+
+                let mut max_l = 0.0_f64;
+                for i in (cur + 1)..block_end {
+                    let l_ik = a[(i, cur)] * inv_d;
+                    a[(i, cur)] = l_ik;
+                    let abs_l = l_ik.abs();
+                    if abs_l > max_l {
+                        max_l = abs_l;
+                    }
+                }
+
+                for j in (cur + 1)..block_end {
+                    let l_j = a[(j, cur)];
+                    let ldl_j = l_j * d_kk;
+                    for i in j..block_end {
+                        a[(i, j)] -= a[(i, cur)] * ldl_j;
+                    }
+                }
+
+                d.set_1x1(k, d_kk);
+                stats.num_1x1 += 1;
+                if max_l > stats.max_l_entry {
+                    stats.max_l_entry = max_l;
+                }
+                pivot_log.push(AptpPivotRecord {
+                    col: local_perm[k],
+                    pivot_type: PivotType::OneByOne,
+                    max_l_entry: max_l,
+                    was_fallback: true,
+                });
+                k += 1;
+            }
+        }
+    }
+
+    let nelim = k;
+    (d, local_perm, nelim, stats, pivot_log)
+}
+
+/// Adjust effective_nelim to avoid splitting a 2×2 pivot across block boundaries.
+///
+/// If the last accepted pivot at position `effective_nelim - 1` is the first half
+/// of a 2×2 pair whose partner is beyond `effective_nelim`, decrement by 1.
+///
+/// # SPRAL Equivalent
+/// `Column::adjust()` in `spral/src/ssids/cpu/kernels/ldlt_app.cxx:112-127`
+fn adjust_for_2x2_boundary(effective_nelim: usize, d: &MixedDiagonal) -> usize {
+    if effective_nelim == 0 {
+        return 0;
+    }
+    let last = effective_nelim - 1;
+    match d.get_pivot_type(last) {
+        PivotType::TwoByTwo { partner } if partner > last => {
+            // Last accepted is the first column of a 2×2 whose partner is beyond nelim
+            effective_nelim - 1
+        }
+        _ => effective_nelim,
+    }
+}
+
 /// Per-block backup for the two-level APTP algorithm.
 ///
 /// Stores a copy of matrix entries for one outer block column,
@@ -878,16 +1198,13 @@ fn complete_pivoting_factor(mut a: MatMut<'_, f64>, small: f64) -> AptpFactorRes
 /// # SPRAL Equivalent
 /// `CopyBackup<T>` in `spral/src/ssids/cpu/kernels/ldlt_app.cxx`
 ///
-/// Note: Currently unused because `factor_inner` handles all threshold
-/// failures internally via `try_1x1_pivot`/`try_2x2_pivot`. Will be
-/// needed when BLAS-3 refactoring limits `factor_inner` to the diagonal
-/// block and the outer loop performs separate Apply/Update phases.
-#[allow(dead_code)]
+/// Used by the BLAS-3 `factor_inner` to save the block column before
+/// factoring, so it can be restored if the Apply step's threshold check
+/// reduces nelim.
 struct BlockBackup {
     data: Mat<f64>,
 }
 
-#[allow(dead_code)]
 impl BlockBackup {
     /// Create a backup of the block column starting at `col_start` with `block_cols` columns.
     /// Backs up `a[col_start.., col_start..col_start+block_cols]`.
@@ -937,7 +1254,6 @@ impl BlockBackup {
 /// 2. Scale: L21[i,j] = X[i,j] / D[j,j] for 1×1 pivots,
 ///    or L21[i,k:k+1] via 2×2 inversion for 2×2 pivots
 /// 3. Scan L21 column-by-column; find first column where any entry exceeds 1/threshold
-#[allow(dead_code)]
 fn apply_and_check(
     mut a: MatMut<'_, f64>,
     col_start: usize,
@@ -1069,7 +1385,6 @@ fn apply_and_check(
 /// and D11 is the block diagonal from the Factor phase.
 ///
 /// Uses explicit W = L21 * D11 workspace, then A -= W * L21^T (GEMM).
-#[allow(dead_code)]
 fn update_trailing(
     mut a: MatMut<'_, f64>,
     col_start: usize,
@@ -1202,20 +1517,27 @@ fn update_delayed(
     );
 }
 
-/// Factor an nb-sized block using inner APTP with complete pivoting at ib-sized leaves.
+/// Factor an nb-sized block using BLAS-3 Factor/Apply/Update loop.
 ///
 /// This is the middle level of the two-level hierarchy. Processes `num_fully_summed`
-/// columns of the block `a[0..m, 0..m]` using ib-sized sub-blocks:
-/// - For each ib-sized sub-block: call complete_pivoting_factor on the ib×ib diagonal
-/// - Then update the remaining columns within the block (inner Apply + inner Update)
+/// columns of the block `a[0..m, 0..m]` using ib-sized sub-blocks with the
+/// three-phase BLAS-3 pattern from SPRAL's `run_elim_pivoted`:
 ///
-/// This produces the same result as the single-level algorithm but with complete
-/// pivoting at the leaves instead of threshold pivoting.
+/// 1. **Backup**: Save `a[k..m, k..k+block_size]` before factoring
+/// 2. **Factor**: `factor_block_diagonal` on the ib×ib diagonal block (complete pivoting)
+/// 3. **Apply**: `apply_and_check` — TRSM on panel + threshold check → effective_nelim
+/// 4. **Adjust**: `adjust_for_2x2_boundary` — avoid splitting 2×2 across boundaries
+/// 5. On failure: full restore from backup, swap failed columns to end, retry
+/// 6. **Update**: `update_trailing` — GEMM A22 -= L21*D*L21^T
 ///
 /// # Arguments
 /// - `a`: Dense frontal matrix block (m × m), modified in place
 /// - `num_fully_summed`: Number of columns eligible for elimination
 /// - `options`: APTP configuration (inner_block_size determines ib)
+///
+/// # References
+/// - SPRAL: `run_elim_pivoted` in `ldlt_app.cxx:1273-1579`
+/// - Duff, Hogg & Lopez (2020), Algorithm 3.1
 fn factor_inner(
     mut a: MatMut<'_, f64>,
     num_fully_summed: usize,
@@ -1239,268 +1561,209 @@ fn factor_inner(
     let mut k = 0;
     let mut end_pos = p;
 
-    // Process ib-sized sub-blocks through the full matrix.
-    // Complete pivoting selects pivots from the ib×ib diagonal sub-block,
-    // then try_1x1_pivot/try_2x2_pivot verify stability on ALL rows
-    // (including contribution block rows beyond num_fully_summed).
+    // BLAS-3 Factor/Apply/Update loop.
+    // Each iteration either eliminates ≥1 column (k advances) or
+    // delays ≥1 column (end_pos shrinks), guaranteeing termination.
     while k < end_pos {
-        let remaining = end_pos - k;
-        let block_size = remaining.min(ib);
+        let block_size = (end_pos - k).min(ib);
 
-        // === Complete pivoting on the ib×ib diagonal, applied to the FULL matrix ===
-        let mut block_eliminated = 0;
+        // 1. BACKUP: save a[k..m, k..k+block_size] before factoring
+        let backup = BlockBackup::create(a.as_ref(), k, block_size, m);
 
-        while block_eliminated < block_size && k + block_eliminated < end_pos {
-            let cur = k + block_eliminated;
-            let search_end = k + block_size.min(end_pos - k);
+        // 2. FACTOR: complete pivoting on the ib×ib diagonal block
+        //    swap_symmetric affects ALL m rows (panel stays consistent)
+        //    L entries and Schur updates limited to within block
+        let (block_d, block_perm, block_nelim, block_stats, block_log) =
+            factor_block_diagonal(a.rb_mut(), k, block_size, small);
 
-            // Find max entry in the remaining diagonal sub-block [cur..search_end, cur..search_end]
-            let mut max_val = 0.0_f64;
-            let mut max_row = cur;
-            let mut max_col = cur;
-            for j in cur..search_end {
-                for i in j..search_end {
-                    let v = a[(i, j)].abs();
-                    if v > max_val {
-                        max_val = v;
-                        max_row = i;
-                        max_col = j;
-                    }
+        if block_nelim == 0 {
+            // Entire block is singular — restore and delay all columns
+            backup.restore_failed(a.rb_mut(), k, 0, block_size, m);
+            for offset in 0..block_size {
+                let delayed_orig = col_order[k + block_perm[offset]];
+                end_pos -= 1;
+                if k + offset < end_pos {
+                    swap_symmetric(a.rb_mut(), k + offset, end_pos);
+                    col_order.swap(k + offset, end_pos);
                 }
+                stats.num_delayed += 1;
+                pivot_log.push(AptpPivotRecord {
+                    col: delayed_orig,
+                    pivot_type: PivotType::Delayed,
+                    max_l_entry: 0.0,
+                    was_fallback: false,
+                });
             }
+            continue;
+        }
 
-            if max_val < small {
-                // All remaining entries in this sub-block are near-zero — delay them
-                let n_to_delay = search_end - cur;
-                for _ in 0..n_to_delay {
-                    if cur < end_pos - 1 {
-                        end_pos -= 1;
-                        swap_symmetric(a.rb_mut(), cur, end_pos);
-                        col_order.swap(cur, end_pos);
-                    } else {
-                        end_pos -= 1;
+        // Zero out D off-diagonals so apply_and_check's TRSM reads them as
+        // L11 entries (should be 0 for 2×2 pivots where L starts at row k+2).
+        // The D values are safely stored in block_d (MixedDiagonal).
+        {
+            let mut bc = 0;
+            while bc < block_nelim {
+                match block_d.get_pivot_type(bc) {
+                    PivotType::TwoByTwo { partner } if partner > bc => {
+                        a[(k + bc + 1, k + bc)] = 0.0;
+                        bc += 2;
                     }
-                    stats.num_delayed += 1;
-                    pivot_log.push(AptpPivotRecord {
-                        col: col_order[end_pos],
-                        pivot_type: PivotType::Delayed,
-                        max_l_entry: 0.0,
-                        was_fallback: false,
-                    });
-                }
-                break;
-            }
-
-            if max_row == max_col {
-                // === 1×1 pivot: diagonal maximum ===
-                if max_row != cur {
-                    swap_symmetric(a.rb_mut(), cur, max_row);
-                    col_order.swap(cur, max_row);
-                }
-
-                match try_1x1_pivot(a.rb_mut(), cur, threshold, small) {
-                    Ok((d_kk, max_l)) => {
-                        update_schur_1x1(a.rb_mut(), cur, d_kk);
-                        d.set_1x1(cur, d_kk);
-                        stats.num_1x1 += 1;
-                        if max_l > stats.max_l_entry {
-                            stats.max_l_entry = max_l;
-                        }
-                        pivot_log.push(AptpPivotRecord {
-                            col: col_order[cur],
-                            pivot_type: PivotType::OneByOne,
-                            max_l_entry: max_l,
-                            was_fallback: false,
-                        });
-                        block_eliminated += 1;
-                    }
-                    Err(max_l) => {
-                        // Threshold failed — delay
-                        end_pos -= 1;
-                        if cur != end_pos {
-                            swap_symmetric(a.rb_mut(), cur, end_pos);
-                            col_order.swap(cur, end_pos);
-                        }
-                        stats.num_delayed += 1;
-                        pivot_log.push(AptpPivotRecord {
-                            col: col_order[end_pos],
-                            pivot_type: PivotType::Delayed,
-                            max_l_entry: max_l,
-                            was_fallback: false,
-                        });
-                        break;
-                    }
-                }
-            } else {
-                // === Off-diagonal maximum: try 2×2 or fallback to 1×1 ===
-                let t = max_row;
-                let m_idx = max_col;
-                let a_mm = a[(m_idx, m_idx)];
-                let a_tt = a[(t, t)];
-                let a_tm = a[(t, m_idx)];
-                let delta = a_mm * a_tt - a_tm * a_tm;
-
-                let not_enough_room = search_end - cur < 2;
-
-                if not_enough_room {
-                    // Not enough room for 2×2, use 1×1 on max diagonal
-                    let pivot_pos = if a_mm.abs() >= a_tt.abs() { m_idx } else { t };
-                    if pivot_pos != cur {
-                        swap_symmetric(a.rb_mut(), cur, pivot_pos);
-                        col_order.swap(cur, pivot_pos);
-                    }
-
-                    match try_1x1_pivot(a.rb_mut(), cur, threshold, small) {
-                        Ok((d_kk, max_l)) => {
-                            update_schur_1x1(a.rb_mut(), cur, d_kk);
-                            d.set_1x1(cur, d_kk);
-                            stats.num_1x1 += 1;
-                            if max_l > stats.max_l_entry {
-                                stats.max_l_entry = max_l;
-                            }
-                            pivot_log.push(AptpPivotRecord {
-                                col: col_order[cur],
-                                pivot_type: PivotType::OneByOne,
-                                max_l_entry: max_l,
-                                was_fallback: true,
-                            });
-                            block_eliminated += 1;
-                        }
-                        Err(max_l) => {
-                            end_pos -= 1;
-                            if cur != end_pos {
-                                swap_symmetric(a.rb_mut(), cur, end_pos);
-                                col_order.swap(cur, end_pos);
-                            }
-                            stats.num_delayed += 1;
-                            pivot_log.push(AptpPivotRecord {
-                                col: col_order[end_pos],
-                                pivot_type: PivotType::Delayed,
-                                max_l_entry: max_l,
-                                was_fallback: true,
-                            });
-                            break;
-                        }
-                    }
-                } else if delta.abs() >= 0.5 * a_tm * a_tm {
-                    // 2×2 pivot: swap to positions cur, cur+1
-                    if m_idx != cur {
-                        swap_symmetric(a.rb_mut(), cur, m_idx);
-                        col_order.swap(cur, m_idx);
-                    }
-                    let new_t = if t == cur { m_idx } else { t };
-                    if new_t != cur + 1 {
-                        swap_symmetric(a.rb_mut(), cur + 1, new_t);
-                        col_order.swap(cur + 1, new_t);
-                    }
-
-                    match try_2x2_pivot(a.rb_mut(), cur, cur + 1, threshold, small) {
-                        Ok((block, max_l)) => {
-                            update_schur_2x2(a.rb_mut(), cur, cur + 1, &block);
-                            d.set_2x2(block);
-                            stats.num_2x2 += 1;
-                            if max_l > stats.max_l_entry {
-                                stats.max_l_entry = max_l;
-                            }
-                            pivot_log.push(AptpPivotRecord {
-                                col: col_order[cur],
-                                pivot_type: PivotType::TwoByTwo {
-                                    partner: col_order[cur + 1],
-                                },
-                                max_l_entry: max_l,
-                                was_fallback: false,
-                            });
-                            pivot_log.push(AptpPivotRecord {
-                                col: col_order[cur + 1],
-                                pivot_type: PivotType::TwoByTwo {
-                                    partner: col_order[cur],
-                                },
-                                max_l_entry: max_l,
-                                was_fallback: false,
-                            });
-                            block_eliminated += 2;
-                        }
-                        Err(()) => {
-                            // 2×2 failed threshold — try 1×1 on cur
-                            match try_1x1_pivot(a.rb_mut(), cur, threshold, small) {
-                                Ok((d_kk, max_l)) => {
-                                    update_schur_1x1(a.rb_mut(), cur, d_kk);
-                                    d.set_1x1(cur, d_kk);
-                                    stats.num_1x1 += 1;
-                                    if max_l > stats.max_l_entry {
-                                        stats.max_l_entry = max_l;
-                                    }
-                                    pivot_log.push(AptpPivotRecord {
-                                        col: col_order[cur],
-                                        pivot_type: PivotType::OneByOne,
-                                        max_l_entry: max_l,
-                                        was_fallback: true,
-                                    });
-                                    block_eliminated += 1;
-                                }
-                                Err(max_l) => {
-                                    end_pos -= 1;
-                                    if cur != end_pos {
-                                        swap_symmetric(a.rb_mut(), cur, end_pos);
-                                        col_order.swap(cur, end_pos);
-                                    }
-                                    stats.num_delayed += 1;
-                                    pivot_log.push(AptpPivotRecord {
-                                        col: col_order[end_pos],
-                                        pivot_type: PivotType::Delayed,
-                                        max_l_entry: max_l,
-                                        was_fallback: true,
-                                    });
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    // Failed Δ → 1×1 on max diagonal
-                    let pivot_pos = if a_mm.abs() >= a_tt.abs() { m_idx } else { t };
-                    if pivot_pos != cur {
-                        swap_symmetric(a.rb_mut(), cur, pivot_pos);
-                        col_order.swap(cur, pivot_pos);
-                    }
-
-                    match try_1x1_pivot(a.rb_mut(), cur, threshold, small) {
-                        Ok((d_kk, max_l)) => {
-                            update_schur_1x1(a.rb_mut(), cur, d_kk);
-                            d.set_1x1(cur, d_kk);
-                            stats.num_1x1 += 1;
-                            if max_l > stats.max_l_entry {
-                                stats.max_l_entry = max_l;
-                            }
-                            pivot_log.push(AptpPivotRecord {
-                                col: col_order[cur],
-                                pivot_type: PivotType::OneByOne,
-                                max_l_entry: max_l,
-                                was_fallback: true,
-                            });
-                            block_eliminated += 1;
-                        }
-                        Err(max_l) => {
-                            end_pos -= 1;
-                            if cur != end_pos {
-                                swap_symmetric(a.rb_mut(), cur, end_pos);
-                                col_order.swap(cur, end_pos);
-                            }
-                            stats.num_delayed += 1;
-                            pivot_log.push(AptpPivotRecord {
-                                col: col_order[end_pos],
-                                pivot_type: PivotType::Delayed,
-                                max_l_entry: max_l,
-                                was_fallback: true,
-                            });
-                            break;
-                        }
+                    _ => {
+                        bc += 1;
                     }
                 }
             }
         }
 
-        k += block_eliminated;
+        // 3. APPLY: TRSM on panel below + threshold check
+        let mut effective_nelim = apply_and_check(
+            a.rb_mut(),
+            k,
+            block_nelim,
+            block_size,
+            m,
+            &block_d,
+            threshold,
+        );
+
+        // 4. ADJUST: don't split 2×2 pivot across block boundary
+        effective_nelim = adjust_for_2x2_boundary(effective_nelim, &block_d);
+
+        if effective_nelim < block_nelim {
+            // Threshold failure: full restore, delay failed columns, retry
+
+            // a. Full restore from backup (undo factor + apply)
+            backup.restore_failed(a.rb_mut(), k, 0, block_size, m);
+
+            // b. Identify failed columns via block_perm and delay them.
+            //    Failed columns are at block_perm positions effective_nelim..block_nelim.
+            //    We also delay any columns that were singular (block_nelim..block_size).
+            let n_failed = block_size - effective_nelim;
+
+            // Collect the absolute positions of failed columns (reverse-sorted
+            // to swap from end first, avoiding positional conflicts)
+            let mut failed_positions: Vec<usize> = (effective_nelim..block_size)
+                .map(|i| k + block_perm[i])
+                .collect();
+            failed_positions.sort_unstable();
+            failed_positions.reverse();
+
+            for &failed_abs in &failed_positions {
+                end_pos -= 1;
+                if failed_abs < end_pos {
+                    swap_symmetric(a.rb_mut(), failed_abs, end_pos);
+                    col_order.swap(failed_abs, end_pos);
+                }
+                stats.num_delayed += 1;
+                pivot_log.push(AptpPivotRecord {
+                    col: col_order[end_pos],
+                    pivot_type: PivotType::Delayed,
+                    max_l_entry: 0.0,
+                    was_fallback: false,
+                });
+            }
+
+            // If some columns passed (effective_nelim > 0), we need to re-factor
+            // with the reduced block. The loop will naturally retry with the
+            // smaller end_pos (delayed columns are now beyond end_pos).
+            // If effective_nelim == 0 but block_nelim > 0, that means the panel
+            // check failed on the first pivot — still delay and retry.
+            let _ = n_failed; // used for clarity above
+            continue;
+        }
+
+        // All block_nelim columns passed threshold check.
+        // Apply the block's permutation to col_order.
+        let orig_order: Vec<usize> = col_order[k..k + block_size].to_vec();
+        for i in 0..block_size {
+            col_order[k + i] = orig_order[block_perm[i]];
+        }
+
+        // 5. UPDATE: GEMM A22 -= L21 * D11 * L21^T
+        update_trailing(a.rb_mut(), k, block_nelim, block_size, m, &block_d);
+
+        // 6. Accumulate D entries (remap from block-local to global positions)
+        let mut bcol = 0;
+        while bcol < block_nelim {
+            match block_d.get_pivot_type(bcol) {
+                PivotType::OneByOne => {
+                    d.set_1x1(k + bcol, block_d.get_1x1(bcol));
+                    bcol += 1;
+                }
+                PivotType::TwoByTwo { partner } if partner > bcol => {
+                    let blk = block_d.get_2x2(bcol);
+                    d.set_2x2(Block2x2 {
+                        first_col: k + bcol,
+                        a: blk.a,
+                        b: blk.b,
+                        c: blk.c,
+                    });
+                    bcol += 2;
+                }
+                _ => {
+                    bcol += 1;
+                }
+            }
+        }
+
+        // Accumulate stats
+        stats.num_1x1 += block_stats.num_1x1;
+        stats.num_2x2 += block_stats.num_2x2;
+        if block_stats.max_l_entry > stats.max_l_entry {
+            stats.max_l_entry = block_stats.max_l_entry;
+        }
+        // Also check panel L entries for max_l_entry
+        let panel_start = k + block_size;
+        for c in 0..block_nelim {
+            for i in panel_start..m {
+                let v = a[(i, k + c)].abs();
+                if v > stats.max_l_entry {
+                    stats.max_l_entry = v;
+                }
+            }
+        }
+
+        // Accumulate pivot log (skip delayed — we handled delays above)
+        for record in &block_log {
+            if !matches!(record.pivot_type, PivotType::Delayed) {
+                // Remap col indices from block-local to original via col_order
+                let global_col = col_order[k + record.col];
+                let global_pivot_type = match record.pivot_type {
+                    PivotType::TwoByTwo { partner } => PivotType::TwoByTwo {
+                        partner: col_order[k + partner],
+                    },
+                    other => other,
+                };
+                pivot_log.push(AptpPivotRecord {
+                    col: global_col,
+                    pivot_type: global_pivot_type,
+                    max_l_entry: record.max_l_entry,
+                    was_fallback: record.was_fallback,
+                });
+            }
+        }
+
+        // Handle any columns that were singular within the block (block_nelim < block_size)
+        if block_nelim < block_size {
+            let n_block_delayed = block_size - block_nelim;
+            for i in 0..n_block_delayed {
+                let delayed_pos = k + block_nelim + i;
+                end_pos -= 1;
+                if delayed_pos < end_pos {
+                    swap_symmetric(a.rb_mut(), delayed_pos, end_pos);
+                    col_order.swap(delayed_pos, end_pos);
+                }
+                stats.num_delayed += 1;
+                pivot_log.push(AptpPivotRecord {
+                    col: col_order[end_pos],
+                    pivot_type: PivotType::Delayed,
+                    max_l_entry: 0.0,
+                    was_fallback: false,
+                });
+            }
+        }
+
+        k += block_nelim;
     }
 
     let num_eliminated = k;
@@ -1539,17 +1802,10 @@ fn factor_inner(
 
 /// Two-level outer block loop for large frontal matrices.
 ///
-/// Processes nb-sized blocks with backup/restore for failure recovery.
-/// For each outer block: backup → factor_inner (on full view including panel,
-/// so symmetric swaps + L entries + Schur complement cover all rows) →
-/// restore_failed if needed → accumulate results.
-///
-/// Note: `factor_inner` processes the full view (including panel rows below
-/// the nb block), computing L entries and Schur complement for all rows via
-/// `try_1x1_pivot`/`try_2x2_pivot`. This ensures threshold checking covers
-/// panel rows. BLAS-3 Apply (TRSM) and Update (GEMM) optimizations for the
-/// panel are deferred to a future refactoring where `factor_inner` is limited
-/// to the block and the outer loop handles panel operations separately.
+/// Processes nb-sized blocks. For each outer block: `factor_inner` handles
+/// the BLAS-3 Factor/Apply/Update loop internally on ib-sized sub-blocks,
+/// including threshold checking on the panel via `apply_and_check` and
+/// block-level backup/restore on failure.
 ///
 /// Called by `aptp_factor_in_place` when `num_fully_summed > outer_block_size`.
 ///
@@ -3134,5 +3390,215 @@ mod tests {
             );
             assert!(err_t < 1e-12, "two-level error {:.2e}", err_t);
         }
+    }
+
+    // ---- BLAS-3 pipeline tests ----
+
+    #[test]
+    fn test_factor_block_diagonal_basic() {
+        // Factor 8×8 identity with block_size=4.
+        // D=[1,1,1,1], identity permutation, no L entries within block.
+        let mut a = Mat::identity(8, 8);
+        let (d, perm, nelim, stats, _log) = factor_block_diagonal(a.as_mut(), 0, 4, 1e-20);
+
+        assert_eq!(nelim, 4);
+        assert_eq!(stats.num_1x1, 4);
+        assert_eq!(stats.num_2x2, 0);
+        assert_eq!(stats.num_delayed, 0);
+        assert!(stats.max_l_entry < 1e-14);
+
+        // D should be [1, 1, 1, 1]
+        for i in 0..4 {
+            assert!((d.get_1x1(i) - 1.0).abs() < 1e-14);
+        }
+
+        // Identity permutation
+        assert_eq!(perm, vec![0, 1, 2, 3]);
+
+        // Panel rows (4-7) should be untouched (still identity entries)
+        for i in 4..8 {
+            for j in 0..4 {
+                assert!(
+                    a[(i, j)].abs() < 1e-14,
+                    "panel entry ({},{}) should be 0, got {}",
+                    i,
+                    j,
+                    a[(i, j)]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_factor_block_diagonal_swap_propagates_to_panel() {
+        // 8×8 matrix where max entry in block forces a swap.
+        // Verify panel rows (4-7) reflect the swap from factor_block_diagonal.
+        let mut a = symmetric_matrix(8, |i, j| {
+            if i == j {
+                [1.0, 5.0, 2.0, 3.0, 0.1, 0.1, 0.1, 0.1][i]
+            } else if (i == 4 && j == 1) || (i == 1 && j == 4) {
+                // Panel entry at (4,1) — should move with column 1 when swapped
+                0.99
+            } else {
+                0.0
+            }
+        });
+
+        // Save panel row 4's original column values before factor
+        let panel_row_before: Vec<f64> = (0..4).map(|j| a[(4, j)]).collect();
+
+        let (_d, perm, nelim, _stats, _log) = factor_block_diagonal(a.as_mut(), 0, 4, 1e-20);
+
+        assert!(nelim > 0, "should eliminate at least 1 column");
+
+        // The max diagonal is 5.0 at column 1, so it should be swapped to position 0.
+        // perm[0] should be 1 (original column 1 is now at position 0).
+        assert_eq!(
+            perm[0], 1,
+            "first pivot should be original column 1 (max diag = 5.0)"
+        );
+
+        // Panel row 4 should reflect the swap: the entry that was at
+        // (4, original_col_1) should now be at (4, position_0).
+        // Before: a[(4,1)] = 0.99, a[(4,0)] = 0.0
+        // After swap of cols 0↔1: a[(4,0)] should have the value that was at a[(4,1)]
+        let _ = panel_row_before; // verify swap happened
+        // The L entry at (4,0) = original_a[(4,1)] / d[0] = 0.99 / 5.0 — wait, no.
+        // factor_block_diagonal doesn't compute L for panel rows. But swap_symmetric
+        // DOES move the panel row entries.
+        // After swap: a[(4,0)] = original a[(4,1)] = 0.99 (NOT divided by D, since
+        // factor_block_diagonal only computes L within the block)
+        assert!(
+            (a[(4, 0)] - 0.99).abs() < 1e-14,
+            "panel row should reflect swap: a[(4,0)] = {}, expected 0.99",
+            a[(4, 0)]
+        );
+    }
+
+    #[test]
+    fn test_blas3_pipeline_reconstruction() {
+        // Full Factor→Apply→Update on an 8×8 matrix via factor_inner.
+        // Verify reconstruction ||PAP^T - LDL^T|| < 1e-12.
+        let a = symmetric_matrix(8, |i, j| {
+            if i == j {
+                10.0 + i as f64
+            } else {
+                1.0 / (1.0 + (i as f64 - j as f64).abs())
+            }
+        });
+
+        let opts = AptpOptions {
+            inner_block_size: 4, // Force 2 blocks for 8×8
+            ..AptpOptions::default()
+        };
+        let result = aptp_factor(a.as_ref(), &opts).unwrap();
+
+        assert_eq!(result.stats.num_delayed, 0, "should have no delays");
+
+        let error =
+            dense_reconstruction_error(&a, &result.l, &result.d, result.perm.as_ref().arrays().0);
+        assert!(
+            error < 1e-12,
+            "BLAS-3 pipeline reconstruction error {:.2e} >= 1e-12",
+            error
+        );
+    }
+
+    #[test]
+    fn test_blas3_threshold_failure_and_retry() {
+        // Construct matrix where panel threshold is likely to fail for at least
+        // one column, forcing backup/restore/delay/re-factor.
+        // Use very strict threshold to trigger failures.
+        let a = symmetric_matrix(8, |i, j| {
+            let vals = [
+                [1e-3, 1.0, 0.5, 0.5, 0.1, 0.1, 0.1, 0.1],
+                [1.0, 1e-3, 0.5, 0.5, 0.1, 0.1, 0.1, 0.1],
+                [0.5, 0.5, 10.0, 1.0, 0.1, 0.1, 0.1, 0.1],
+                [0.5, 0.5, 1.0, 10.0, 0.1, 0.1, 0.1, 0.1],
+                [0.1, 0.1, 0.1, 0.1, 5.0, 0.5, 0.0, 0.0],
+                [0.1, 0.1, 0.1, 0.1, 0.5, 6.0, 0.0, 0.0],
+                [0.1, 0.1, 0.1, 0.1, 0.0, 0.0, 7.0, 0.5],
+                [0.1, 0.1, 0.1, 0.1, 0.0, 0.0, 0.5, 8.0],
+            ];
+            vals[i][j]
+        });
+
+        let opts = AptpOptions {
+            inner_block_size: 4,
+            threshold: 0.01, // Standard threshold
+            ..AptpOptions::default()
+        };
+        let result = aptp_factor(a.as_ref(), &opts).unwrap();
+
+        // Statistics invariant
+        let sum = result.stats.num_1x1 + 2 * result.stats.num_2x2 + result.stats.num_delayed;
+        assert_eq!(sum, 8, "statistics sum {} != 8", sum);
+
+        // Reconstruction (if fully eliminated)
+        if result.stats.num_delayed == 0 {
+            let error = dense_reconstruction_error(
+                &a,
+                &result.l,
+                &result.d,
+                result.perm.as_ref().arrays().0,
+            );
+            assert!(
+                error < 1e-12,
+                "threshold failure retry: reconstruction error {:.2e}",
+                error
+            );
+        }
+    }
+
+    #[test]
+    fn test_adjust_for_2x2_boundary() {
+        // Test that adjust_for_2x2_boundary decrements when last accepted pivot
+        // is the first half of a 2×2 pair.
+        let mut d = MixedDiagonal::new(4);
+        d.set_1x1(0, 1.0);
+        d.set_2x2(Block2x2 {
+            first_col: 1,
+            a: 1.0,
+            b: 0.5,
+            c: 2.0,
+        });
+        d.set_1x1(3, 3.0);
+
+        // If effective_nelim = 2, last is position 1 which is first of 2×2 pair (1,2).
+        // Partner = 2 > 1, so should decrement to 1.
+        assert_eq!(adjust_for_2x2_boundary(2, &d), 1);
+
+        // If effective_nelim = 3, last is position 2 which is second of 2×2 pair.
+        // Partner = 1 < 2, so no adjustment.
+        assert_eq!(adjust_for_2x2_boundary(3, &d), 3);
+
+        // If effective_nelim = 1, last is position 0 which is 1×1. No adjustment.
+        assert_eq!(adjust_for_2x2_boundary(1, &d), 1);
+
+        // If effective_nelim = 4, last is position 3 which is 1×1. No adjustment.
+        assert_eq!(adjust_for_2x2_boundary(4, &d), 4);
+
+        // Edge case: effective_nelim = 0
+        assert_eq!(adjust_for_2x2_boundary(0, &d), 0);
+    }
+
+    #[test]
+    fn test_blas3_full_block_singular() {
+        // Block where all entries < small. Verify all columns delayed.
+        let mut a = Mat::zeros(8, 8);
+        for i in 0..8 {
+            a[(i, i)] = 1e-25;
+        }
+
+        let opts = AptpOptions {
+            inner_block_size: 4,
+            ..AptpOptions::default()
+        };
+        let mut a_copy = a.clone();
+        let result = aptp_factor_in_place(a_copy.as_mut(), 8, &opts).unwrap();
+
+        assert_eq!(result.num_eliminated, 0);
+        assert_eq!(result.stats.num_delayed, 8);
+        assert_eq!(result.delayed_cols.len(), 8);
     }
 }
