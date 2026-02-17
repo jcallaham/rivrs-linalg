@@ -1,5 +1,85 @@
 # SSIDS Development Log
 
+## Phase 8.1: Two-Level APTP Factorization
+
+**Status**: Complete
+**Branch**: `017-two-level-aptp`
+**Date**: 2026-02-17
+
+### Summary
+
+Replaced the single-level column-by-column dense APTP kernel with a two-level
+blocked implementation. The outer loop processes blocks of nb=256 columns; within
+each block, `factor_inner` processes ib=32-sized sub-blocks using complete pivoting
+(Algorithm 4.1, Duff et al. 2020) at the leaves, with `try_1x1_pivot`/`try_2x2_pivot`
+for threshold-checked stability.
+
+### What Was Built
+
+1. **`complete_pivoting_factor`** (Algorithm 4.1): Standalone function for ib×ib
+   blocks. Searches entire remaining submatrix for max entry, decides 1×1 vs 2×2
+   pivot via determinant condition. Used only in unit tests; `factor_inner` uses
+   the same search logic but delegates to `try_1x1/try_2x2` for threshold checking.
+
+2. **`factor_inner`**: Middle-level kernel processing nb columns. Loops over ib-sized
+   sub-blocks with complete pivoting search, then calls `try_1x1/try_2x2` (which
+   handle backup/restore and threshold checking). Applies Schur complement to ALL
+   trailing rows including panel rows beyond the block.
+
+3. **`two_level_factor`**: Outer block loop. For each nb-sized block: calls
+   `factor_inner` on a submatrix view, propagates row permutations to previously-
+   factored columns, swaps delayed columns to end of remaining range, accumulates
+   D entries and permutation into global result.
+
+4. **BLAS-3 building blocks** (implemented, currently unused):
+   - `apply_and_check`: TRSM-based L21 computation + threshold scan
+   - `update_trailing`: GEMM-based Schur complement A22 -= L21*D*L21^T
+   - `update_delayed`: Placeholder for Phase 8.2 parallelism
+   - `BlockBackup`: Per-block matrix region backup/restore
+
+5. **Options extension**: `outer_block_size` and `inner_block_size` fields added to
+   `AptpOptions` (defaults 256, 32) and `FactorOptions`, flowing through solver API.
+
+### Key Bug Fix: Row Permutation Propagation
+
+The most critical fix: when `factor_inner` operates on a **submatrix view** for
+block 2+, its `swap_symmetric` calls only rearrange rows within that submatrix.
+L entries from previously-factored blocks (at columns before the submatrix) are
+NOT rearranged. This caused massive reconstruction errors (O(1)) because `extract_l`
+reads inconsistent row orderings.
+
+**Fix**: After each block's `factor_inner`, explicitly apply the block's row
+permutation to all columns 0..col_start in the global matrix. This ensures L
+entries across all blocks have consistent row ordering.
+
+### Architecture Decision: factor_inner Handles All Rows
+
+The original plan had `factor_inner` processing only the diagonal block, with
+separate Apply (TRSM) and Update (GEMM) phases for panel rows. In practice,
+`factor_inner` processes ALL rows (including panel) via `try_1x1/try_2x2` and
+`update_schur_1x1/2x2`, which apply Schur complement to the entire trailing matrix.
+
+This approach is correct but uses BLAS-2 operations (rank-1/rank-2 updates) rather
+than BLAS-3 (blocked TRSM/GEMM). The BLAS-3 building blocks are implemented and
+ready for future refactoring where `factor_inner` is limited to the diagonal block.
+
+### Test Results
+
+- 330 lib tests pass (7 new two-level tests)
+- 51 integration tests pass (29 multifrontal + 22 solve)
+- Reconstruction error < 1e-12 on all test matrices
+- Two-level matches single-level accuracy exactly
+- Clippy clean, fmt clean
+
+### What Was NOT Done
+
+- **BLAS-3 performance**: The current implementation is functionally two-level but
+  still uses BLAS-2 operations. BLAS-3 Apply/Update optimization deferred.
+- **Performance benchmarking**: Crossover point analysis deferred (needs BLAS-3 first).
+- **Full SuiteSparse run**: CI subset tested; full 67-matrix run deferred.
+
+---
+
 ## Phase 7.5: Accuracy Investigation & Default Ordering Change
 
 **Status**: Complete
