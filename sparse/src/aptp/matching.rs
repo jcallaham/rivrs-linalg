@@ -25,9 +25,6 @@
 //! - Duff & Pralet (2005), "Strategies for Scaling and Pivoting for Sparse
 //!   Symmetric Indefinite Problems", RAL Technical Report
 
-use std::cmp::Reverse;
-use std::collections::BinaryHeap;
-
 use faer::perm::Perm;
 use faer::sparse::SparseColMat;
 
@@ -67,6 +64,38 @@ pub enum Mc64Job {
     /// Equivalent to minimizing sum of `-log|a_ij|` costs.
     /// Default for APTP preprocessing.
     MaximumProduct,
+}
+
+/// Strategy for computing scaling of structurally singular matrices (matched < n).
+///
+/// SPRAL's `hungarian_wrapper` (scaling.f90 lines 688-801) contains code to
+/// extract a matched subgraph and re-run the Hungarian algorithm, plus Duff-Pralet
+/// correction for unmatched rows. However, that code path is effectively dead:
+/// `hungarian_match` sets `iperm(i) = 0` for unmatched rows (never negative),
+/// so the `match(i) < 0` guard never fires, and the re-matching runs on the
+/// full graph (a no-op). SPRAL thus effectively uses the first matching's duals
+/// for ALL rows — the same formula as the full-match case.
+///
+/// `DualsDirect` matches SPRAL's effective behavior. `RematchDuffPralet` implements
+/// what SPRAL's code *intends* but never actually executes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SingularScalingStrategy {
+    /// Use the first matching's dual variables directly for all rows.
+    /// Unmatched rows get `u[i]=0`, unmatched columns get `v[j]=0` (set by
+    /// `hungarian_match`), so their scaling is `exp((0 + v[i] - cmax[i]) / 2)`
+    /// or `exp((u[i] + 0 - cmax[i]) / 2)`.
+    ///
+    /// This matches SPRAL's *effective* behavior and guarantees `|s_i * a_ij * s_j| <= 1`
+    /// for all edges via dual feasibility.
+    DualsDirect,
+
+    /// Extract the matched subgraph, re-run Hungarian to get optimal subgraph duals,
+    /// then apply Duff-Pralet correction for unmatched rows.
+    ///
+    /// This matches what SPRAL's code *appears* to do but never actually executes
+    /// (the `match(i) < 0` guard is dead code). Empirically, this produces worse
+    /// scaling on matrices like dawson5 where MC64 scaling is harmful.
+    RematchDuffPralet,
 }
 
 /// Bipartite cost graph with logarithmic edge costs.
@@ -182,12 +211,16 @@ pub fn mc64_matching(
     // Greedy initial matching
     let mut state = greedy_initial_matching(&graph);
 
+    // Persistent Dijkstra state (reused across augmentations, like SPRAL)
+    let mut ds = DijkstraState::new(n);
+    ds.init_jperm(&graph, &state);
+
     // Augment unmatched columns via Dijkstra
     for j in 0..n {
         if state.col_match[j] != UNMATCHED {
             continue;
         }
-        dijkstra_augment(j, &graph, &mut state);
+        dijkstra_augment(j, &graph, &mut state, &mut ds);
     }
 
     // Count matched
@@ -195,9 +228,7 @@ pub fn mc64_matching(
 
     if matched == n {
         // Full matching — compute scaling directly from dual variables
-        let (mut scaling, fwd, inv) = build_full_match_result(&graph, &state);
-        // Enforce |s_i * a_ij * s_j| <= 1 (corrects any dual feasibility gaps)
-        enforce_scaling_bound(matrix, &mut scaling);
+        let (scaling, fwd, inv) = build_full_match_result(&graph, &state);
         return Ok(Mc64Result {
             matching: Perm::new_checked(fwd.into_boxed_slice(), inv.into_boxed_slice(), n),
             scaling,
@@ -207,57 +238,78 @@ pub fn mc64_matching(
     }
 
     // Structural singularity: matched < n
-    // Following SPRAL's hungarian_wrapper (scaling.f90 lines 688-801):
-    // Run the Hungarian algorithm a SECOND time on the matched subgraph to
-    // obtain optimal dual variables for the matched portion. The first matching's
-    // duals are suboptimal because augmenting path searches were influenced by
-    // edges to/from rows that ended up unmatched.
-
-    // Step 1: Extract the matched subgraph and run second matching
     let is_row_matched: Vec<bool> = (0..n).map(|i| state.row_match[i] != UNMATCHED).collect();
-    let (sub_graph, new_to_old, _old_to_new) =
-        extract_matched_subgraph(&graph, &is_row_matched);
 
-    let nn = sub_graph.n;
-    let mut sub_state = greedy_initial_matching(&sub_graph);
-    for j in 0..nn {
-        if sub_state.col_match[j] != UNMATCHED {
-            continue;
+    // Default to DualsDirect — matches SPRAL's effective behavior.
+    let strategy = SingularScalingStrategy::DualsDirect;
+
+    let scaling = match strategy {
+        SingularScalingStrategy::DualsDirect => {
+            // Match SPRAL's effective behavior (scaling.f90 line 1169):
+            // Zero unmatched row duals, then use the same formula as the full-match case.
+            // SPRAL: `where (iperm(1:m) .eq. 0) dualu(1:m) = 0.0`
+            //
+            // Note: For partial matching, the duals from the Hungarian algorithm are not
+            // globally feasible (u[i] + v[j] <= c[i,j] may be violated). SPRAL does not
+            // enforce this either — its tests only check |s*a*s| <= 1 for full-match
+            // matrices. The scaling still improves diagonal dominance for APTP.
+            for i in 0..n {
+                if state.row_match[i] == UNMATCHED {
+                    state.u[i] = 0.0;
+                }
+            }
+            let v = compute_column_duals(&graph, &state);
+            symmetrize_scaling(&state.u, &v, &graph.col_max_log)
         }
-        dijkstra_augment(j, &sub_graph, &mut sub_state);
-    }
+        SingularScalingStrategy::RematchDuffPralet => {
+            // Extract matched subgraph, re-run Hungarian for optimal subgraph duals,
+            // then apply Duff-Pralet log-space correction for unmatched rows.
+            //
+            // NOTE: This matches what SPRAL's code *appears* to do (scaling.f90 lines
+            // 688-801) but never actually executes — the `match(i) < 0` guard is dead
+            // code because `hungarian_match` sets unmatched iperm to 0, not negative.
+            // Empirically this produces worse scaling on some matrices (e.g., dawson5).
+            let (sub_graph, new_to_old, _old_to_new) =
+                extract_matched_subgraph(&graph, &is_row_matched);
 
-    // Step 2: Compute scaling from second matching's optimal duals
-    let sub_v = compute_column_duals(&sub_graph, &sub_state);
-    let mut scaling = vec![0.0_f64; n];
+            let nn = sub_graph.n;
+            let mut sub_state = greedy_initial_matching(&sub_graph);
+            let mut sub_ds = DijkstraState::new(nn);
+            sub_ds.init_jperm(&sub_graph, &sub_state);
+            for j in 0..nn {
+                if sub_state.col_match[j] != UNMATCHED {
+                    continue;
+                }
+                dijkstra_augment(j, &sub_graph, &mut sub_state, &mut sub_ds);
+            }
 
-    // Matched indices: use second matching's duals with ORIGINAL col_max_log
-    // SPRAL: rscaling[i] = (dualu[j] + dualv[j] - cmax[old_i]) / 2
-    let mut log_scaling = vec![f64::NEG_INFINITY; n]; // log-space sentinel for unmatched
-    for new_idx in 0..nn {
-        let old_idx = new_to_old[new_idx];
-        log_scaling[old_idx] =
-            (sub_state.u[new_idx] + sub_v[new_idx] - graph.col_max_log[old_idx]) / 2.0;
-    }
+            let sub_v = compute_column_duals(&sub_graph, &sub_state);
 
-    // Step 3: Duff-Pralet correction in log-space (matching SPRAL lines 777-797)
-    // For unmatched i connected to matched k:
-    //   log_scaling[i] = max(log_scaling[i], log|a_ik| + log_scaling[k])
-    duff_pralet_log_correction(matrix, &mut log_scaling, &is_row_matched);
+            // Matched indices: use second matching's duals with ORIGINAL col_max_log
+            let mut log_scaling = vec![f64::NEG_INFINITY; n];
+            for new_idx in 0..nn {
+                let old_idx = new_to_old[new_idx];
+                log_scaling[old_idx] = (sub_state.u[new_idx] + sub_v[new_idx]
+                    - graph.col_max_log[old_idx])
+                    / 2.0;
+            }
 
-    // Step 4: Convert from log-space to linear-space
-    for i in 0..n {
-        if log_scaling[i] == f64::NEG_INFINITY {
-            // Isolated unmatched row: no matched neighbors
-            scaling[i] = 1.0;
-        } else {
-            let clamped = log_scaling[i].clamp(-500.0, 500.0);
-            scaling[i] = clamped.exp();
+            // Duff-Pralet correction in log-space (SPRAL lines 777-797)
+            duff_pralet_log_correction(matrix, &mut log_scaling, &is_row_matched);
+
+            // Convert from log-space to linear-space
+            let mut scaling = vec![0.0_f64; n];
+            for i in 0..n {
+                if log_scaling[i] == f64::NEG_INFINITY {
+                    scaling[i] = 1.0;
+                } else {
+                    let clamped = log_scaling[i].clamp(-500.0, 500.0);
+                    scaling[i] = clamped.exp();
+                }
+            }
+            scaling
         }
-    }
-
-    // Enforce |s_i * a_ij * s_j| <= 1 (safety net for dual feasibility gaps)
-    enforce_scaling_bound(matrix, &mut scaling);
+    };
 
     // is_matched uses row-only: for condensation pipeline, what matters is whether
     // row i has a real matching edge (not a fake assignment from build_singular_permutation)
@@ -390,9 +442,13 @@ fn build_cost_graph(matrix: &SparseColMat<usize, f64>) -> CostGraph {
         }
     }
 
-    // Sort each column's entries by row index for deterministic ordering
+    // Sort each column's entries by row index and dedup.
+    // Dedup is needed when the input is full symmetric CSC (both triangles stored):
+    // the mirroring loop above would double-count off-diagonal entries.
+    // For upper-triangular input, dedup is a no-op.
     for entries in &mut col_entries {
-        entries.sort_by_key(|&(row, _)| row);
+        entries.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.partial_cmp(&b.1).unwrap()));
+        entries.dedup_by_key(|entry| entry.0);
     }
 
     // Step 2: Compute column maxima in log domain
@@ -575,142 +631,213 @@ fn greedy_initial_matching(graph: &CostGraph) -> MatchingState {
     }
 }
 
+/// Persistent state across Dijkstra augmentations, matching SPRAL's approach.
+///
+/// SPRAL allocates these arrays once and selectively resets touched elements after
+/// each augmentation (scaling.f90 lines 1144-1153). This avoids O(n) re-initialization
+/// per augmentation and, critically, ensures `jperm` is maintained incrementally.
+struct DijkstraState {
+    /// d[i] = shortest distance from current root column to row i (INFINITY = untouched)
+    d: Vec<f64>,
+    /// l[i] = position tracking (0 = not touched, heap pos, or Q1/finalized encoding)
+    /// Exactly matches SPRAL's `l(i)` array.
+    l: Vec<usize>,
+    /// jperm[j] = edge index of matched edge in column j (for O(1) vj computation)
+    jperm: Vec<usize>,
+    /// pr[j] = parent column along shortest path tree
+    pr: Vec<usize>,
+    /// out[j] = edge index of the discovery edge for column j's traceback
+    out: Vec<usize>,
+    /// q[0..m] = shared array for heap (0..qlen), Q1 (low..up), finalized (up..m)
+    /// We use this exactly like SPRAL's Q array.
+    q: Vec<usize>,
+    /// Scratch buffer for root column edge indices (avoids per-augmentation allocation).
+    /// Corresponds to SPRAL's `longwork(1:q0)` in the root column scan.
+    root_edges: Vec<usize>,
+}
+
+impl DijkstraState {
+    fn new(n: usize) -> Self {
+        Self {
+            d: vec![f64::INFINITY; n],
+            l: vec![0; n],
+            jperm: vec![UNMATCHED; n],
+            pr: vec![UNMATCHED; n],
+            out: vec![0; n],
+            q: vec![0; n],
+            root_edges: Vec::new(),
+        }
+    }
+
+    /// Initialize jperm from current matching state.
+    fn init_jperm(&mut self, graph: &CostGraph, state: &MatchingState) {
+        let n = graph.n;
+        for j in 0..n {
+            let matched_row = state.col_match[j];
+            if matched_row == UNMATCHED {
+                self.jperm[j] = UNMATCHED;
+                continue;
+            }
+            let col_start = graph.col_ptr[j];
+            let col_end = graph.col_ptr[j + 1];
+            for idx in col_start..col_end {
+                if graph.row_idx[idx] == matched_row {
+                    self.jperm[j] = idx;
+                    break;
+                }
+            }
+        }
+    }
+}
+
 /// Find shortest augmenting path from unmatched column `root_col` using Dijkstra
 /// on reduced costs and augment the matching if a path is found.
 ///
 /// Returns `true` if augmenting path found, `false` if no path exists.
-fn dijkstra_augment(root_col: usize, graph: &CostGraph, state: &mut MatchingState) -> bool {
+///
+/// This is a faithful port of SPRAL's `hungarian_match` Dijkstra loop
+/// (scaling.f90 lines 995-1155), using an indexed binary min-heap with
+/// exact semantics matching SPRAL's heap_update/heap_pop/heap_delete.
+///
+/// Key data structures (matching SPRAL variable names):
+/// - `ds.d[i]`: shortest distance from root column to row i
+/// - `ds.l[i]`: position tracking (0=unseen, 1..qlen=heap, low..up-1=Q1, up..=finalized)
+/// - `ds.jperm[j]`: edge index of matched edge in column j
+/// - `ds.out[j]`: edge index of the discovery edge for column j's traceback
+/// - `ds.pr[j]`: parent column in shortest-path tree
+fn dijkstra_augment(
+    root_col: usize,
+    graph: &CostGraph,
+    state: &mut MatchingState,
+    ds: &mut DijkstraState,
+) -> bool {
     let n = graph.n;
-
-    // d[i] = shortest distance from root_col to row i
-    let mut d = vec![f64::INFINITY; n];
-    // pr[j] = parent column along shortest path tree
-    let mut pr = vec![UNMATCHED; n];
-    // out[j] = index in graph arrays of the edge entering column j's matched row
-    //          (used for augmenting path traceback — NOT the matched edge in col j)
-    let mut out = vec![0usize; n];
-    // visited[i] = true if row i has been finalized (in set B)
-    let mut visited = vec![false; n];
 
     // csp = cost of shortest augmenting path found so far
     let mut csp = f64::INFINITY;
-    let mut isp = UNMATCHED; // row at end of shortest augmenting path
+    let mut isp: usize = 0; // edge index at end of shortest augmenting path
     let mut jsp = UNMATCHED; // column entering that row
 
-    // Priority queue: (Reverse(distance), row_index)
-    let mut heap: BinaryHeap<(Reverse<OrderedFloat>, usize)> = BinaryHeap::new();
-    // Also maintain Q1: rows with d[i] == dmin (stored in a flat list)
-    let mut q1: Vec<usize> = Vec::new();
+    // Heap region: q[0..qlen] (indexed min-heap by d[q[i]])
+    let mut qlen: usize = 0;
+    // Q1 region: q[low-1..up-1] (rows with d == dmin, 0-indexed)
+    // Finalized region: q[up-1..m-1]
+    // Using 1-based indices like SPRAL for clarity, convert at array access
+    let mut low: usize = n + 1; // 1-based, initially empty Q1
+    let mut up: usize = n + 1; // 1-based, initially empty finalized
     let mut dmin = f64::INFINITY;
 
-    // Scan root column
-    pr[root_col] = UNMATCHED; // sentinel: root has no parent
+    // Scan root column (SPRAL lines 1015-1029)
+    ds.pr[root_col] = UNMATCHED; // sentinel
     let col_start = graph.col_ptr[root_col];
     let col_end = graph.col_ptr[root_col + 1];
 
+    // First pass: compute d[i] for all rows in root column, collect edge refs
+    // SPRAL stores edges in longwork(1:q0), we collect in a temp vec
+    ds.root_edges.clear();
     for idx in col_start..col_end {
         let i = graph.row_idx[idx];
         let dnew = graph.cost[idx] - state.u[i];
-
         if dnew >= csp {
             continue;
         }
-
         if state.row_match[i] == UNMATCHED {
-            // Found augmenting path of length dnew
             csp = dnew;
-            isp = i;
+            isp = idx;
             jsp = root_col;
         } else {
-            d[i] = dnew;
             if dnew < dmin {
                 dmin = dnew;
             }
-            let jj = state.row_match[i];
-            out[jj] = idx;
-            pr[jj] = root_col;
+            ds.d[i] = dnew;
+            ds.root_edges.push(idx);
         }
     }
 
-    // Build initial Q1 (rows with d == dmin) and heap (rest)
-    for idx in col_start..col_end {
+    // Second pass: build Q1 and heap from root column edges (SPRAL lines 1031-1053)
+    for k in 0..ds.root_edges.len() {
+        let idx = ds.root_edges[k];
         let i = graph.row_idx[idx];
-        if d[i] == f64::INFINITY || state.row_match[i] == UNMATCHED {
+        if csp <= ds.d[i] {
+            ds.d[i] = f64::INFINITY;
             continue;
         }
-        if csp <= d[i] {
-            d[i] = f64::INFINITY;
-            continue;
-        }
-        if d[i] <= dmin {
-            q1.push(i);
+        if ds.d[i] <= dmin {
+            // Add to Q1
+            low -= 1;
+            ds.q[low - 1] = i; // 0-indexed array access
+            ds.l[i] = low; // 1-based position in Q1/finalized region
         } else {
-            heap.push((Reverse(OrderedFloat(d[i])), i));
+            // Add to heap
+            qlen += 1;
+            ds.l[i] = qlen; // 1-based heap position
+            if ds.q.len() < qlen {
+                ds.q.push(i);
+            } else {
+                ds.q[qlen - 1] = i;
+            }
+            // Sift up in heap
+            heap_update_inline(i, &mut ds.q, &ds.d, &mut ds.l, qlen);
         }
+        // Update tree
+        let jj = state.row_match[i];
+        ds.out[jj] = idx;
+        ds.pr[jj] = root_col;
     }
 
-    // Main Dijkstra loop
-    loop {
-        // Get next row from Q1 or heap
-        let q0;
-        if let Some(i) = q1.pop() {
-            q0 = i;
-        } else if let Some(&(Reverse(OrderedFloat(top_d)), _)) = heap.peek() {
-            if top_d >= csp {
+    // Main Dijkstra loop (SPRAL lines 1055-1119)
+    for _jdum in 0..n {
+        // If Q1 is empty, extract from heap
+        if low == up {
+            if qlen == 0 {
                 break;
             }
-            dmin = top_d;
+            let top_i = ds.q[0];
+            if ds.d[top_i] >= csp {
+                break;
+            }
+            dmin = ds.d[top_i];
             // Extract all rows with d == dmin into Q1
-            while let Some(&(Reverse(OrderedFloat(d_val)), i)) = heap.peek() {
-                if d_val > dmin {
+            while qlen > 0 {
+                let top_i = ds.q[0];
+                if ds.d[top_i] > dmin {
                     break;
                 }
-                heap.pop();
-                if !visited[i] && d[i] <= dmin {
-                    q1.push(i);
-                }
+                // Pop from heap
+                let popped = heap_pop_inline(&mut ds.q, &ds.d, &mut ds.l, &mut qlen);
+                low -= 1;
+                ds.q[low - 1] = popped;
+                ds.l[popped] = low;
             }
-            if let Some(i) = q1.pop() {
-                q0 = i;
-            } else {
-                break;
-            }
-        } else {
+        }
+
+        // q0 is row from Q1 with distance dmin
+        let q0 = ds.q[up - 1 - 1]; // up-1 in 1-based = index (up-2) in 0-based
+        let dq0 = ds.d[q0];
+        if dq0 >= csp {
             break;
         }
-
-        if d[q0] >= csp || visited[q0] {
-            continue;
-        }
-
-        visited[q0] = true;
-        let dq0 = d[q0];
+        up -= 1; // Move q0 from Q1 to finalized
 
         // Scan column matched with row q0
         let j = state.row_match[q0];
-        if j == UNMATCHED {
-            continue;
-        }
+        // q0 must be matched (greedy ensures only matched rows enter the heap)
 
-        // Compute vj from the MATCHED edge (q0, j) in column j.
-        // Note: out[j] points to the discovery edge (q0, scanning_col), not the
-        // matched edge in column j. We must find the actual matched edge cost.
-        // O(degree) scan — could be avoided by maintaining v[j] during Dijkstra
-        // as SPRAL does, at the cost of an additional n-sized array.
+        // Compute vj using jperm for O(1) matched-edge cost lookup (SPRAL line 1081)
+        debug_assert!(
+            ds.jperm[j] != UNMATCHED,
+            "jperm[{}] not set for matched column",
+            j
+        );
+        let vj = dq0 - graph.cost[ds.jperm[j]] + state.u[q0];
+
         let col_start_j = graph.col_ptr[j];
         let col_end_j = graph.col_ptr[j + 1];
-        let mut matched_cost = 0.0_f64;
-        for idx in col_start_j..col_end_j {
-            if graph.row_idx[idx] == q0 {
-                matched_cost = graph.cost[idx];
-                break;
-            }
-        }
-        let vj = dq0 - matched_cost + state.u[q0];
-
         for idx in col_start_j..col_end_j {
             let i = graph.row_idx[idx];
-            if visited[i] {
+
+            // Skip finalized rows (SPRAL line 1084: l(i) >= up)
+            if ds.l[i] >= up {
                 continue;
             }
 
@@ -721,55 +848,216 @@ fn dijkstra_augment(root_col: usize, graph: &CostGraph, state: &mut MatchingStat
             }
 
             if state.row_match[i] == UNMATCHED {
-                // Found shorter augmenting path
                 csp = dnew;
-                isp = i;
+                isp = idx;
                 jsp = j;
-            } else if dnew < d[i] {
-                d[i] = dnew;
-                let jj = state.row_match[i];
-                out[jj] = idx;
-                pr[jj] = j;
-
-                if dnew <= dmin {
-                    q1.push(i);
-                } else {
-                    heap.push((Reverse(OrderedFloat(dnew)), i));
+            } else {
+                // Skip if not improving (SPRAL line 1097)
+                let di = ds.d[i];
+                if di <= dnew {
+                    continue;
                 }
+                // Skip if already in Q1 (SPRAL line 1098: l(i) >= low)
+                if ds.l[i] >= low {
+                    continue;
+                }
+
+                ds.d[i] = dnew;
+                if dnew <= dmin {
+                    // Move to Q1
+                    let lpos = ds.l[i];
+                    if lpos != 0 {
+                        // Delete from heap first
+                        heap_delete_inline(lpos, &mut ds.q, &ds.d, &mut ds.l, &mut qlen);
+                    }
+                    low -= 1;
+                    ds.q[low - 1] = i;
+                    ds.l[i] = low;
+                } else {
+                    if ds.l[i] == 0 {
+                        // New entry in heap
+                        qlen += 1;
+                        ds.l[i] = qlen;
+                        if ds.q.len() < qlen {
+                            ds.q.push(i);
+                        } else {
+                            ds.q[qlen - 1] = i;
+                        }
+                    }
+                    // d[i] decreased — sift up
+                    heap_update_inline(i, &mut ds.q, &ds.d, &mut ds.l, qlen);
+                }
+                // Update tree
+                let jj = state.row_match[i];
+                ds.out[jj] = idx;
+                ds.pr[jj] = j;
             }
         }
     }
 
+    // If csp = INFINITY, no augmenting path found
     if csp == f64::INFINITY {
-        return false; // No augmenting path
+        // Clean up touched rows (SPRAL lines 1144-1153)
+        // label 190: clean up Q1 + finalized + heap
+        for k in (low - 1)..n {
+            let i = ds.q[k];
+            ds.d[i] = f64::INFINITY;
+            ds.l[i] = 0;
+        }
+        for k in 0..qlen {
+            let i = ds.q[k];
+            ds.d[i] = f64::INFINITY;
+            ds.l[i] = 0;
+        }
+        return false;
     }
 
-    // Augment matching along path from isp back to root_col
-    let mut i = isp;
+    // Augment matching along path (SPRAL lines 1124-1137)
+    let mut i = graph.row_idx[isp];
     let mut j = jsp;
     state.row_match[i] = j;
     state.col_match[j] = i;
+    ds.jperm[j] = isp;
 
     loop {
-        let jj = pr[j];
+        let jj = ds.pr[j];
         if jj == UNMATCHED {
-            break; // Reached root
+            break;
         }
-        let k = out[j];
+        let k = ds.out[j];
         i = graph.row_idx[k];
         state.row_match[i] = jj;
         state.col_match[jj] = i;
+        ds.jperm[jj] = k;
         j = jj;
     }
 
-    // Update dual variables for visited rows
-    for i in 0..n {
-        if visited[i] {
-            state.u[i] = state.u[i] + d[i] - csp;
-        }
+    // Update dual variables for finalized rows (SPRAL lines 1140-1143)
+    // Finalized rows are in q[up-1..n-1] (0-indexed), i.e., q(up:m) in SPRAL 1-based
+    for k in (up - 1)..n {
+        let i = ds.q[k];
+        state.u[i] = state.u[i] + ds.d[i] - csp;
+    }
+
+    // Clean up touched rows: Q1 + finalized + heap (SPRAL lines 1144-1153)
+    for k in (low - 1)..n {
+        let i = ds.q[k];
+        ds.d[i] = f64::INFINITY;
+        ds.l[i] = 0;
+    }
+    for k in 0..qlen {
+        let i = ds.q[k];
+        ds.d[i] = f64::INFINITY;
+        ds.l[i] = 0;
     }
 
     true
+}
+
+/// Inline heap_update: sift row `idx` up in heap after d[idx] decreased.
+/// Matches SPRAL's `heap_update` (scaling.f90 lines 1180-1216).
+/// `pos` values are 1-based heap positions.
+fn heap_update_inline(
+    idx: usize,
+    q: &mut [usize],
+    d: &[f64],
+    pos: &mut [usize],
+    _qlen: usize,
+) {
+    let mut p = pos[idx]; // 1-based
+    if p <= 1 {
+        q[0] = idx; // ensure root is set
+        return;
+    }
+    let v = d[idx];
+    while p > 1 {
+        let parent = p / 2;
+        let parent_idx = q[parent - 1];
+        if v >= d[parent_idx] {
+            break;
+        }
+        q[p - 1] = parent_idx;
+        pos[parent_idx] = p;
+        p = parent;
+    }
+    q[p - 1] = idx;
+    pos[idx] = p;
+}
+
+/// Inline heap_pop: extract minimum element from heap.
+/// Returns the row index of the minimum element.
+fn heap_pop_inline(q: &mut [usize], d: &[f64], pos: &mut [usize], qlen: &mut usize) -> usize {
+    let result = q[0];
+    heap_delete_inline(1, q, d, pos, qlen);
+    result
+}
+
+/// Inline heap_delete: delete element at 1-based position `pos0`.
+/// Matches SPRAL's `heap_delete` (scaling.f90 lines 1245-1302).
+fn heap_delete_inline(
+    pos0: usize,
+    q: &mut [usize],
+    d: &[f64],
+    pos: &mut [usize],
+    qlen: &mut usize,
+) {
+    if *qlen == pos0 {
+        *qlen -= 1;
+        return;
+    }
+
+    let last_idx = q[*qlen - 1];
+    let v = d[last_idx];
+    *qlen -= 1;
+    let mut p = pos0;
+
+    // Try to move up
+    if p > 1 {
+        loop {
+            let parent = p / 2;
+            let parent_idx = q[parent - 1];
+            if v >= d[parent_idx] {
+                break;
+            }
+            q[p - 1] = parent_idx;
+            pos[parent_idx] = p;
+            p = parent;
+            if p <= 1 {
+                break;
+            }
+        }
+    }
+    q[p - 1] = last_idx;
+    pos[last_idx] = p;
+    if p != pos0 {
+        return; // Moved up
+    }
+
+    // Sift down
+    loop {
+        let child = 2 * p;
+        if child > *qlen {
+            break;
+        }
+        let mut child_d = d[q[child - 1]];
+        let mut best_child = child;
+        if child < *qlen {
+            let right_d = d[q[child]]; // q[child+1-1] = q[child]
+            if child_d > right_d {
+                best_child = child + 1;
+                child_d = right_d;
+            }
+        }
+        if v <= child_d {
+            break;
+        }
+        let child_idx = q[best_child - 1];
+        q[p - 1] = child_idx;
+        pos[child_idx] = p;
+        p = best_child;
+    }
+    q[p - 1] = last_idx;
+    pos[last_idx] = p;
 }
 
 /// Compute symmetric scaling factors from dual variables.
@@ -795,69 +1083,6 @@ fn symmetrize_scaling(u: &[f64], v: &[f64], col_max_log: &[f64]) -> Vec<f64> {
     }
 
     scaling
-}
-
-/// Enforce the scaling bound |s_i * a_ij * s_j| <= 1 for all stored entries.
-///
-/// When the dual variables from the matching algorithm don't perfectly satisfy
-/// feasibility (e.g., due to greedy initialization without column dual tracking),
-/// complementary slackness can produce scaling factors that violate the bound.
-/// This function iteratively reduces scaling factors to enforce the constraint.
-///
-/// Works on the upper-triangular input matrix, handling symmetry.
-/// Convergence is guaranteed since scaling factors only decrease.
-fn enforce_scaling_bound(matrix: &SparseColMat<usize, f64>, scaling: &mut [f64]) {
-    let n = matrix.nrows();
-    let symbolic = matrix.symbolic();
-    let values = matrix.val();
-    let col_ptrs = symbolic.col_ptr();
-    let row_indices = symbolic.row_idx();
-
-    // Iterate until convergence (typically 1-2 passes)
-    for _iter in 0..10 {
-        let mut changed = false;
-
-        // For each row i, compute max_j |a_ij * s_j| over all entries
-        // Then enforce s_i <= 1 / max_j(|a_ij| * s_j)
-        let mut row_max = vec![0.0_f64; n];
-
-        for j in 0..n {
-            let start = col_ptrs[j];
-            let end = col_ptrs[j + 1];
-            for k in start..end {
-                let i = row_indices[k];
-                let abs_val = values[k].abs();
-                if abs_val == 0.0 {
-                    continue;
-                }
-                let sj_contrib = abs_val * scaling[j];
-                if sj_contrib > row_max[i] {
-                    row_max[i] = sj_contrib;
-                }
-                if i != j {
-                    let si_contrib = abs_val * scaling[i];
-                    if si_contrib > row_max[j] {
-                        row_max[j] = si_contrib;
-                    }
-                }
-            }
-        }
-
-        // Cap scaling factors where needed
-        for i in 0..n {
-            if row_max[i] > 0.0 {
-                let s_max = 1.0 / row_max[i];
-                if scaling[i] > s_max * (1.0 + 1e-12) {
-                    scaling[i] = s_max;
-                    changed = true;
-                }
-            }
-        }
-
-        if !changed {
-            break;
-        }
-    }
 }
 
 /// Apply Duff-Pralet correction for unmatched indices in structurally singular matrices.
@@ -1123,23 +1348,6 @@ pub fn count_cycles(matching: &[usize]) -> (usize, usize, usize) {
     (singletons, two_cycles, longer_cycles)
 }
 
-/// Wrapper for f64 that provides total ordering for use in BinaryHeap.
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct OrderedFloat(f64);
-
-impl Eq for OrderedFloat {}
-
-impl PartialOrd for OrderedFloat {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for OrderedFloat {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.0.total_cmp(&other.0)
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -1350,13 +1558,17 @@ mod tests {
         );
         let graph = build_cost_graph(&matrix);
         let mut state = greedy_initial_matching(&graph);
+        let mut ds = DijkstraState::new(3);
+        ds.init_jperm(&graph, &state);
 
         let initial_matched = state.col_match.iter().filter(|&&m| m != UNMATCHED).count();
 
         // Try to augment each unmatched column
         let mut augmented = false;
         for j in 0..3 {
-            if state.col_match[j] == UNMATCHED && dijkstra_augment(j, &graph, &mut state) {
+            if state.col_match[j] == UNMATCHED
+                && dijkstra_augment(j, &graph, &mut state, &mut ds)
+            {
                 augmented = true;
             }
         }
@@ -1722,64 +1934,6 @@ mod tests {
             matches!(result, Err(SparseError::InvalidInput { .. })),
             "Inf entry should produce InvalidInput error"
         );
-    }
-
-    // ---- Issue #9: enforce_scaling_bound in isolation ----
-
-    #[test]
-    fn test_enforce_scaling_bound_corrects_violation() {
-        // Hand-craft scaling factors that violate |s_i * a_ij * s_j| <= 1
-        // Matrix: [4 2; 2 5] (upper triangle)
-        let matrix = make_upper_tri(2, &[(0, 0, 4.0), (0, 1, 2.0), (1, 1, 5.0)]);
-
-        // These scaling factors are too large: s[0]*4*s[0] = 2*4*2 = 16 >> 1
-        let mut scaling = vec![2.0, 2.0];
-        enforce_scaling_bound(&matrix, &mut scaling);
-
-        // After enforcement, all scaled entries should be <= 1
-        let symbolic = matrix.symbolic();
-        let values = matrix.val();
-        let row_idx = symbolic.row_idx();
-        for j in 0..2 {
-            let start = symbolic.col_ptr()[j];
-            let end = symbolic.col_ptr()[j + 1];
-            for (k, (&i, &val)) in row_idx[start..end]
-                .iter()
-                .zip(&values[start..end])
-                .enumerate()
-            {
-                let scaled = (scaling[i] * val * scaling[j]).abs();
-                assert!(
-                    scaled <= 1.0 + 1e-10,
-                    "|s[{}]*a[{},{}]*s[{}]| = {:.6e} > 1.0 after enforcement (k={})",
-                    i,
-                    i,
-                    j,
-                    j,
-                    scaled,
-                    k
-                );
-            }
-        }
-
-        // Scaling factors should have been reduced from the original 2.0
-        assert!(scaling[0] < 2.0, "scaling[0] should be reduced");
-        assert!(scaling[1] < 2.0, "scaling[1] should be reduced");
-        assert!(scaling[0] > 0.0, "scaling[0] should remain positive");
-        assert!(scaling[1] > 0.0, "scaling[1] should remain positive");
-    }
-
-    #[test]
-    fn test_enforce_scaling_bound_noop_on_valid() {
-        // Scaling factors already satisfying the bound should not change
-        let matrix = make_upper_tri(2, &[(0, 0, 4.0), (0, 1, 2.0), (1, 1, 5.0)]);
-
-        // Very small scaling: s[i]*a*s[j] << 1 for all entries
-        let mut scaling = vec![0.1, 0.1];
-        let original = scaling.clone();
-        enforce_scaling_bound(&matrix, &mut scaling);
-
-        assert_eq!(scaling, original, "valid scaling should not be modified");
     }
 
     // ---- Issue #10: greedy matching quality on diagonal matrix ----

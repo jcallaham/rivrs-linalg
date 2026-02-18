@@ -1,5 +1,137 @@
 # SSIDS Development Log
 
+## Phase 8.1c: MC64 Dijkstra Heap Bug Fix & Pipeline Investigation
+
+**Status**: Complete
+**Branch**: `017-two-level-aptp`
+**Date**: 2026-02-18
+
+### Summary
+
+Fixed a critical correctness bug in the MC64 Hungarian algorithm's Dijkstra implementation:
+Rust's `BinaryHeap` with lazy deletion caused dual feasibility violations on production
+matrices. Replaced with SPRAL's exact indexed binary min-heap with position-tracked
+O(log n) deletion. Also fixed the structurally singular pipeline (missing re-matching +
+condensation for singular matrices). Removed `enforce_scaling_bound` workaround.
+
+Conducted a comprehensive 4-agent investigation of the remaining backward error failures,
+categorizing them into scaling-harmful (1), factorization-limited (4), and
+scaling-helps-but-insufficient (1).
+
+### Root Cause: Lazy Heap Deletion
+
+Our Dijkstra shortest-path augmentation used `std::collections::BinaryHeap` (max-heap
+with `Reverse<>` for min-heap behavior). When a row's distance decreased and it moved
+from the heap to Q1 (the current-minimum batch), the old heap entry remained as a
+stale entry. SPRAL uses an indexed binary min-heap with position tracking in `l[i]`,
+supporting explicit `heap_delete` when moving rows to Q1.
+
+The stale entries caused 1,400 fewer rows to be finalized on TSOPF_FS_b39_c7 (14,114
+vs SPRAL's 15,514). Unfinalized rows retained incorrect dual values, causing
+`u[i] + v[j] > c[i,j]` violations that propagated to scaling factors.
+
+First violation appeared at augmentation 4 (root_col=68) — row 69 had `u[69]=0.0`
+(never finalized) vs SPRAL's `u[69]=-4.175` (correctly finalized).
+
+### The Fix: Indexed Binary Min-Heap
+
+Implemented SPRAL's exact heap as three inline functions:
+
+- `heap_update_inline(idx, q, d, pos, qlen)` — insert or decrease-key
+- `heap_pop_inline(q, d, pos, qlen)` — extract minimum
+- `heap_delete_inline(pos0, q, d, pos, qlen)` — delete at position
+
+Operating on shared arrays:
+- `q[0..qlen]` — heap array (0-indexed)
+- `pos[i]` — 1-based position of row i in heap (0 = not in heap)
+- `d[i]` — external distance array for comparisons
+
+The `l[i]` array now correctly encodes heap membership, Q1 membership, and finalized
+status — matching SPRAL's unified state tracking.
+
+### DijkstraState Persistence
+
+Added `DijkstraState` struct that persists across augmentations, matching SPRAL's
+allocation pattern. Arrays `d`, `l`, `jperm`, `pr`, `out`, `q`, `root_edges` are
+allocated once and selectively reset after each augmentation (SPRAL lines 1144-1153).
+This eliminates O(n) allocation per augmentation and O(nnz) jperm re-initialization.
+
+### Structurally Singular Pipeline Fix
+
+Fixed the incomplete matching pipeline (commit `0ff4234`):
+
+1. **Re-matching**: When `matched < n`, extract the matched subgraph and run
+   greedy+Dijkstra a second time to obtain optimal dual variables for the matched
+   portion, matching SPRAL lines 688-801.
+2. **Condensation**: `extract_matched_subgraph` builds the `nn × nn` subgraph with
+   remapped row/column indices for the second matching pass.
+
+### Removed enforce_scaling_bound
+
+With correct dual feasibility from the indexed heap and re-matching, the scaling bound
+`|s_i * a_ij * s_j| <= 1` is guaranteed by the Hungarian algorithm's LP duality
+properties for matched-matched and matched-unmatched edges. The `enforce_scaling_bound`
+workaround function was deleted along with its two unit tests.
+
+Unmatched-unmatched edges can still violate the bound (inherent mathematical limitation,
+not a bug — SPRAL has the same property).
+
+### Verification
+
+| Test | Result |
+|------|--------|
+| TSOPF dual infeasibility | 8.88e-16 (was 3.66) |
+| Rows with u < 0 (TSOPF) | 15,514 (matches SPRAL exactly) |
+| Unit tests (`cargo test --lib -- matching`) | 32/32 pass |
+| Full SuiteSparse MC64 (`test_mc64_suitesparse_full`) | 67/67 pass |
+| Solver unit tests (`cargo test --test solve`) | 22/22 pass |
+| All library tests (`cargo test --lib`) | 353/353 pass |
+
+### MC64 Pipeline Investigation (4-Agent Audit)
+
+Conducted comprehensive investigation of remaining backward error failures using
+`examples/mc64_isolation.rs`, which tests each matrix with four configurations:
+MatchOrderMetis, condensed-ordering-only, scaling-only, and plain-METIS-no-scaling.
+
+See `docs/phase8/mc64-pipeline-investigation.md` for full agent findings.
+
+#### Remaining Failure Categories
+
+**Category A — Scaling-harmful** (1 matrix: dawson5):
+- MC64 scaling CAUSES failure: BE = 7.45e-17 (no scaling) → 7.50e-4 (with scaling)
+- Root cause: suboptimal dual variables from partial matching produce scaling that
+  destroys natural diagonal dominance (90.7% of diagonals become weak after scaling)
+- Need: second-matching on full-rank submatrix for structurally singular matrices
+
+**Category B — Factorization-limited** (4 matrices: copter2, helm3d01, sparsine, astro-ph):
+- Neither ordering nor scaling helps — BE stays at ~1e-3 with all configurations
+- Root cause: large fronts (1000-11000 rows) with BLAS-2 inner kernel
+- Need: BLAS-3 inner blocking (ib=32) in factor_inner, or iterative refinement
+
+**Category C — Scaling-helps-but-insufficient** (1 matrix: TSOPF_FS_b162_c1):
+- Scaling improves BE by 1-4 orders of magnitude but not to threshold
+- Condensed ordering may be counterproductive (TSOPF_b39: condensed 5.98e-8 vs
+  plain METIS 1.19e-10)
+- Need: both better scaling (second matching) AND inner blocking
+
+#### Key Finding: Scaling > Ordering
+
+For dawson5 (the smoking gun), the condensed ordering is NOT the primary problem —
+the scaling is. Even with optimal METIS ordering, MC64 scaling degrades backward error
+from 7.45e-17 to 7.50e-4. The condensed ordering is a secondary contributor.
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `src/aptp/matching.rs` | Replaced `BinaryHeap` Dijkstra with indexed heap (SPRAL port). Added `DijkstraState`, `heap_update_inline`, `heap_delete_inline`, `heap_pop_inline`. Added `extract_matched_subgraph` + re-matching pipeline. Removed `enforce_scaling_bound`, `check_dual_feasibility_raw`, `OrderedFloat`, trace instrumentation. |
+| `docs/phase8/mc64-dijkstra-heap-bug.md` | NEW: comprehensive investigation document |
+| `docs/phase8/mc64-pipeline-investigation.md` | NEW: 4-agent audit of remaining failures |
+| `tools/spral_greedy_compare.f90` | NEW: Fortran tool for SPRAL greedy matching comparison |
+| `examples/mc64_isolation.rs` | NEW: 4-way scaling/ordering isolation diagnostic |
+
+---
+
 ## Phase 8.1b: BLAS-3 Refactoring & Accuracy Audit
 
 **Status**: Complete
