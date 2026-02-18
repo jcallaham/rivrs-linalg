@@ -30,13 +30,25 @@ use super::symbolic::AptpSymbolic;
 use crate::error::SparseError;
 
 /// Fill-reducing ordering strategy.
+///
+/// Following SPRAL's approach, the ordering is a user-configurable option
+/// rather than an automatic heuristic. Guidance from Duff, Hogg & Lopez (2020):
+///
+/// - **Easy-indefinite** (structural FEM, thermal, acoustic, model reduction,
+///   quantum chemistry): use [`Metis`](Self::Metis) (the default).
+/// - **Hard-indefinite** (KKT/saddle-point, optimal control, power networks,
+///   mixed FEM / Stokes): use [`MatchOrderMetis`](Self::MatchOrderMetis).
+///
+/// SPRAL equivalent: `options%ordering` (1=METIS default, 2=matching+METIS).
 #[derive(Debug, Clone)]
 pub enum OrderingStrategy {
     /// AMD ordering (faer built-in).
     Amd,
-    /// METIS ordering (via metis-sys).
+    /// METIS ordering (via metis-sys). Default.
+    /// Best for easy-indefinite problems with naturally dominant diagonal.
     Metis,
-    /// MC64 matching + METIS ordering. Default. Produces scaling factors.
+    /// MC64 matching + METIS ordering. Produces scaling factors.
+    /// Best for hard-indefinite problems (KKT, saddle-point, zero diagonal blocks).
     MatchOrderMetis,
     /// User-supplied ordering permutation.
     UserSupplied(Perm<usize>),
@@ -52,7 +64,7 @@ pub struct AnalyzeOptions {
 impl Default for AnalyzeOptions {
     fn default() -> Self {
         Self {
-            ordering: OrderingStrategy::MatchOrderMetis,
+            ordering: OrderingStrategy::Metis,
         }
     }
 }
@@ -95,7 +107,7 @@ pub struct SolverOptions {
 impl Default for SolverOptions {
     fn default() -> Self {
         Self {
-            ordering: OrderingStrategy::MatchOrderMetis,
+            ordering: OrderingStrategy::Metis,
             threshold: 0.01,
             fallback: AptpFallback::BunchKaufman,
         }
@@ -194,11 +206,11 @@ impl SparseLDLT {
                     AptpSymbolic::analyze(matrix, SymmetricOrdering::Custom(perm.as_ref()))?;
                 Ok(Self::new_with_cached_perm(symbolic, None))
             }
-            OrderingStrategy::MatchOrderMetis => Err(SparseError::AnalysisFailure {
-                reason: "MatchOrderMetis requires numeric matrix values; \
-                         use analyze_with_matrix() instead"
-                    .to_string(),
-            }),
+            OrderingStrategy::MatchOrderMetis => {
+                Err(SparseError::AnalysisFailure {
+                    reason: "MatchOrderMetis requires numeric matrix values; use analyze_with_matrix() instead".to_string(),
+                })
+            }
             OrderingStrategy::UserSupplied(perm) => {
                 let symbolic =
                     AptpSymbolic::analyze(matrix, SymmetricOrdering::Custom(perm.as_ref()))?;
@@ -211,7 +223,7 @@ impl SparseLDLT {
     ///
     /// When `MatchOrderMetis` is requested, this method performs MC64
     /// matching on the numeric matrix to compute scaling factors and
-    /// a fill-reducing ordering.
+    /// a fill-reducing ordering. Other orderings delegate to [`analyze`](Self::analyze).
     pub fn analyze_with_matrix(
         matrix: &SparseColMat<usize, f64>,
         options: &AnalyzeOptions,
@@ -219,18 +231,6 @@ impl SparseLDLT {
         let n = matrix.nrows();
 
         match &options.ordering {
-            OrderingStrategy::Amd => {
-                let symbolic = AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Amd)?;
-                Ok(Self::new_with_cached_perm(symbolic, None))
-            }
-            OrderingStrategy::Metis => {
-                let perm = metis_ordering(matrix.symbolic())?;
-                let symbolic = AptpSymbolic::analyze(
-                    matrix.symbolic(),
-                    SymmetricOrdering::Custom(perm.as_ref()),
-                )?;
-                Ok(Self::new_with_cached_perm(symbolic, None))
-            }
             OrderingStrategy::MatchOrderMetis => {
                 let result = match_order_metis(matrix)?;
                 let ordering_perm = result.ordering;
@@ -245,13 +245,8 @@ impl SparseLDLT {
 
                 Ok(Self::new_with_cached_perm(symbolic, Some(elim_scaling)))
             }
-            OrderingStrategy::UserSupplied(perm) => {
-                let symbolic = AptpSymbolic::analyze(
-                    matrix.symbolic(),
-                    SymmetricOrdering::Custom(perm.as_ref()),
-                )?;
-                Ok(Self::new_with_cached_perm(symbolic, None))
-            }
+            // All other orderings don't need numeric values
+            _ => Self::analyze(matrix.symbolic(), options),
         }
     }
 

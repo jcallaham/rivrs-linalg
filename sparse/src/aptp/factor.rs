@@ -36,9 +36,11 @@
 //! - Bunch & Kaufman (1977), "Some Stable Methods for Calculating Inertia and
 //!   Solving Symmetric Linear Systems", Math. Comp.
 
+use faer::linalg::matmul::triangular::{self as tri_matmul, BlockStructure};
+use faer::linalg::triangular_solve;
 use faer::perm::Perm;
 use faer::prelude::*;
-use faer::{Mat, MatMut, MatRef};
+use faer::{Accum, Conj, Mat, MatMut, MatRef};
 
 use super::diagonal::MixedDiagonal;
 use super::perm::perm_from_forward;
@@ -319,11 +321,31 @@ pub fn aptp_factor(
 /// matrix stored in the lower triangle, so that the data at position i
 /// moves to position j and vice versa.
 fn swap_symmetric(mut a: MatMut<'_, f64>, i: usize, j: usize) {
+    let m = a.nrows();
+    swap_symmetric_block(a.rb_mut(), i, j, 0, m);
+}
+
+/// Block-scoped symmetric swap: permute rows/columns i and j within
+/// a[col_start..row_limit, col_start..row_limit].
+///
+/// Same as `swap_symmetric` but the "rows k < i" loop starts at `col_start` instead of 0,
+/// and the "rows k > j" loop uses `row_limit` instead of `a.nrows()`. This limits the
+/// swap to the diagonal block being factored, leaving both previously-factored columns
+/// (0..col_start) and panel rows (row_limit..m) untouched.
+///
+/// # SPRAL Equivalent
+/// `swap_cols(p, t, BLOCK_SIZE, a, lda, ...)` in `block_ldlt.hxx:68`
+fn swap_symmetric_block(
+    mut a: MatMut<'_, f64>,
+    i: usize,
+    j: usize,
+    col_start: usize,
+    row_limit: usize,
+) {
     if i == j {
         return;
     }
     let (i, j) = if i < j { (i, j) } else { (j, i) };
-    let m = a.nrows();
 
     // Swap diagonals
     let tmp = a[(i, i)];
@@ -331,7 +353,8 @@ fn swap_symmetric(mut a: MatMut<'_, f64>, i: usize, j: usize) {
     a[(j, j)] = tmp;
 
     // Rows k < i: swap lower-triangle entries a[(i,k)] and a[(j,k)]
-    for k in 0..i {
+    // LIMITED to col_start..i (don't touch previously-factored columns)
+    for k in col_start..i {
         let tmp = a[(i, k)];
         a[(i, k)] = a[(j, k)];
         a[(j, k)] = tmp;
@@ -344,8 +367,8 @@ fn swap_symmetric(mut a: MatMut<'_, f64>, i: usize, j: usize) {
         a[(j, k)] = tmp;
     }
 
-    // Rows k > j: swap a[(k,i)] and a[(k,j)]
-    for k in (j + 1)..m {
+    // Rows k > j: swap a[(k,i)] and a[(k,j)] — LIMITED to row_limit
+    for k in (j + 1)..row_limit {
         let tmp = a[(k, i)];
         a[(k, i)] = a[(k, j)];
         a[(k, j)] = tmp;
@@ -906,6 +929,7 @@ fn factor_block_diagonal(
     col_start: usize,
     block_size: usize,
     small: f64,
+    row_limit: usize,
 ) -> (
     MixedDiagonal,
     Vec<usize>,
@@ -965,7 +989,7 @@ fn factor_block_diagonal(
         if max_row == max_col {
             // Diagonal maximum → 1×1 pivot
             if max_row != cur {
-                swap_symmetric(a.rb_mut(), cur, max_row);
+                swap_symmetric_block(a.rb_mut(), cur, max_row, col_start, row_limit);
                 local_perm.swap(k, max_row - col_start);
             }
 
@@ -1018,7 +1042,7 @@ fn factor_block_diagonal(
                 // Only one column left, use 1×1 on max diagonal
                 let pivot_pos = if a_mm.abs() >= a_tt.abs() { m_idx } else { t };
                 if pivot_pos != cur {
-                    swap_symmetric(a.rb_mut(), cur, pivot_pos);
+                    swap_symmetric_block(a.rb_mut(), cur, pivot_pos, col_start, row_limit);
                     local_perm.swap(k, pivot_pos - col_start);
                 }
                 let d_kk = a[(cur, cur)];
@@ -1045,12 +1069,12 @@ fn factor_block_diagonal(
             if delta.abs() >= 0.5 * a_tm * a_tm {
                 // 2×2 pivot: swap m_idx → cur, t → cur+1
                 if m_idx != cur {
-                    swap_symmetric(a.rb_mut(), cur, m_idx);
+                    swap_symmetric_block(a.rb_mut(), cur, m_idx, col_start, row_limit);
                     local_perm.swap(k, m_idx - col_start);
                 }
                 let new_t = if t == cur { m_idx } else { t };
                 if new_t != cur + 1 {
-                    swap_symmetric(a.rb_mut(), cur + 1, new_t);
+                    swap_symmetric_block(a.rb_mut(), cur + 1, new_t, col_start, row_limit);
                     local_perm.swap(k + 1, new_t - col_start);
                 }
 
@@ -1124,7 +1148,7 @@ fn factor_block_diagonal(
                 // Failed Δ → 1×1 on max diagonal
                 let pivot_pos = if a_mm.abs() >= a_tt.abs() { m_idx } else { t };
                 if pivot_pos != cur {
-                    swap_symmetric(a.rb_mut(), cur, pivot_pos);
+                    swap_symmetric_block(a.rb_mut(), cur, pivot_pos, col_start, row_limit);
                     local_perm.swap(k, pivot_pos - col_start);
                 }
 
@@ -1272,41 +1296,22 @@ fn apply_and_check(
         return block_nelim;
     }
 
-    // Step 1: TRSM — solve A21 * L11^{-T}
-    // L11 is unit lower triangular in a[col_start..col_start+block_nelim, col_start..col_start+block_nelim]
-    // A21 is in a[col_start+block_cols..m, col_start..col_start+block_nelim]
+    // Step 1: TRSM — solve panel * L11^T = A21 for panel (= L21)
+    // L11 is unit lower triangular in a[col_start..+block_nelim, col_start..+block_nelim]
+    // panel is a[panel_start..m, col_start..col_start+block_nelim]
     //
-    // We need: L21_new = A21 * inv(L11^T) = A21 * inv(L11)^T
-    // Since L11 is unit lower triangular, L11^T is unit upper triangular.
-    // X * L11^T = A21  =>  X = A21 * L11^{-T}
-    //
-    // We solve this by: (L11^T * X^T = A21^T) => solve unit upper triangular system
-    // But faer's triangular solve works on column systems, so we use a manual approach.
-    //
-    // For each row i of the panel (A21), solve L11^T * x^T = a21_row^T
-    // This is equivalent to forward substitution on L11^T columns.
-    //
-    // Actually, the simpler approach: for each column j of L21 (left to right),
-    // the already-solved columns contribute to this one.
-    // L21[:, j] = (A21[:, j] - sum_{k<j} L21[:, k] * L11[j, k]) / 1 (unit diagonal)
-    // Since L11 is unit lower triangular, L11[j, k] for k < j are the entries below diagonal.
+    // Transposing: L11 * panel^T = A21^T, i.e. unit lower triangular solve on panel^T.
+    // Copy L11 to a temporary to avoid aliasing (L11 and panel overlap in `a`).
 
     let panel_start = col_start + block_cols;
 
-    // Forward substitution: for column j, subtract contributions from columns 0..j
-    for j in 0..block_nelim {
-        // a[panel_start..m, col_start+j] currently holds A21[:, j]
-        // Subtract L11[j, k] * L21[:, k] for k < j
-        for k in 0..j {
-            let l11_jk = a[(col_start + j, col_start + k)];
-            if l11_jk != 0.0 {
-                for i in 0..panel_rows {
-                    a[(panel_start + i, col_start + j)] -=
-                        l11_jk * a[(panel_start + i, col_start + k)];
-                }
-            }
-        }
-    }
+    let l11_copy = a.rb().submatrix(col_start, col_start, block_nelim, block_nelim).to_owned();
+    let panel = a.rb_mut().submatrix_mut(panel_start, col_start, panel_rows, block_nelim);
+    triangular_solve::solve_unit_lower_triangular_in_place(
+        l11_copy.as_ref(),
+        panel.transpose_mut(),
+        Par::Seq,
+    );
 
     // Step 2: Scale by D^{-1}
     // For 1×1 pivot at column j: L21[:, j] /= D[j]
@@ -1386,7 +1391,7 @@ fn apply_and_check(
 ///
 /// Uses explicit W = L21 * D11 workspace, then A -= W * L21^T (GEMM).
 fn update_trailing(
-    mut a: MatMut<'_, f64>,
+    a: MatMut<'_, f64>,
     col_start: usize,
     nelim: usize,
     block_cols: usize,
@@ -1431,18 +1436,24 @@ fn update_trailing(
         }
     }
 
-    // GEMM: A[trailing, trailing] -= W * L21^T
-    // A[trailing_start+i, trailing_start+j] -= sum_k W[i,k] * L21[j,k]
-    // Only update lower triangle
-    for j in 0..trailing_size {
-        for i in j..trailing_size {
-            let mut sum = 0.0;
-            for k in 0..nelim {
-                sum += w[(i, k)] * a[(trailing_start + j, col_start + k)];
-            }
-            a[(trailing_start + i, trailing_start + j)] -= sum;
-        }
-    }
+    // GEMM: A22 -= W * L21^T (lower triangle only)
+    // Copy L21 to avoid borrow conflict (L21 and A22 overlap in `a`)
+    let l21_copy = a.rb().submatrix(trailing_start, col_start, trailing_size, nelim).to_owned();
+    let mut a22 = a.submatrix_mut(trailing_start, trailing_start, trailing_size, trailing_size);
+
+    tri_matmul::matmul_with_conj(
+        a22.rb_mut(),
+        BlockStructure::TriangularLower,
+        Accum::Add,
+        w.as_ref(),
+        BlockStructure::Rectangular,
+        Conj::No,
+        l21_copy.as_ref().transpose(),
+        BlockStructure::Rectangular,
+        Conj::No,
+        -1.0,
+        Par::Seq,
+    );
 }
 
 /// Apply updates from newly-factored block to previously-delayed columns.
@@ -1561,20 +1572,38 @@ fn factor_inner(
     let mut k = 0;
     let mut end_pos = p;
 
-    // BLAS-3 Factor/Apply/Update loop.
-    // Each iteration either eliminates ≥1 column (k advances) or
-    // delays ≥1 column (end_pos shrinks), guaranteeing termination.
+    // BLAS-3 Factor/Apply/Update loop with ib-sized inner blocks.
+    //
+    // Each iteration processes min(end_pos - k, ib) columns:
+    //   1. Backup: save a[k..m, k..k+bs]
+    //   2. Factor: factor_block_diagonal with block-scoped swaps (row_limit = k+bs)
+    //   3. Permute panel column entries by block_perm
+    //   4. Zero D off-diagonals for TRSM
+    //   5. Apply+Check: TRSM on panel + threshold check
+    //   6. Adjust: avoid splitting 2×2 across boundary
+    //   7. On fail: restore from backup (columns 0..k untouched), delay, continue
+    //   8. On pass: propagate row perm to columns 0..k
+    //   9. Update trailing: GEMM A22 -= L21*D*L21^T
+    //
+    // Block-scoped swaps (step 2) only permute rows/columns within [0..k+bs],
+    // leaving panel rows untouched. This matches SPRAL's block_ldlt architecture
+    // where panel permutation happens separately in the Apply phase.
+    //
+    // # References
+    // - SPRAL: `block_ldlt::swap_cols` limited to BLOCK_SIZE rows
+    // - SPRAL: `apply_rperm_and_backup` / `apply_cperm_and_backup` for panel permutation
     while k < end_pos {
         let block_size = (end_pos - k).min(ib);
+        let block_end = k + block_size;
 
         // 1. BACKUP: save a[k..m, k..k+block_size] before factoring
         let backup = BlockBackup::create(a.as_ref(), k, block_size, m);
 
-        // 2. FACTOR: complete pivoting on the ib×ib diagonal block
-        //    swap_symmetric affects ALL m rows (panel stays consistent)
-        //    L entries and Schur updates limited to within block
+        // 2. FACTOR: complete pivoting on the block_size×block_size diagonal block
+        //    Block-scoped swaps: only rows/columns within [0..block_end] are permuted.
+        //    Panel rows [block_end..m] are NOT touched.
         let (block_d, block_perm, block_nelim, block_stats, block_log) =
-            factor_block_diagonal(a.rb_mut(), k, block_size, small);
+            factor_block_diagonal(a.rb_mut(), k, block_size, small, block_end);
 
         if block_nelim == 0 {
             // Entire block is singular — restore and delay all columns
@@ -1597,9 +1626,22 @@ fn factor_inner(
             continue;
         }
 
-        // Zero out D off-diagonals so apply_and_check's TRSM reads them as
-        // L11 entries (should be 0 for 2×2 pivots where L starts at row k+2).
-        // The D values are safely stored in block_d (MixedDiagonal).
+        // 3. PERMUTE PANEL: reorder panel column entries a[r, k..k+bs]
+        //    according to block_perm so that TRSM sees the correct input.
+        //    Block-scoped swaps didn't touch panel rows, so we must gather
+        //    the panel entries into the factored column order.
+        //    This is SPRAL's `apply_cperm_and_backup` equivalent.
+        let panel_start = block_end;
+        for r in panel_start..m {
+            let orig: Vec<f64> = (0..block_size).map(|i| a[(r, k + block_perm[i])]).collect();
+            for i in 0..block_size {
+                a[(r, k + i)] = orig[i];
+            }
+        }
+
+        // 4. Zero out D off-diagonals so apply_and_check's TRSM reads them as
+        //    L11 entries (should be 0 for 2×2 pivots where L starts at row k+2).
+        //    The D values are safely stored in block_d (MixedDiagonal).
         {
             let mut bc = 0;
             while bc < block_nelim {
@@ -1615,7 +1657,7 @@ fn factor_inner(
             }
         }
 
-        // 3. APPLY: TRSM on panel below + threshold check
+        // 5. APPLY: TRSM on panel below + threshold check
         let mut effective_nelim = apply_and_check(
             a.rb_mut(),
             k,
@@ -1626,13 +1668,15 @@ fn factor_inner(
             threshold,
         );
 
-        // 4. ADJUST: don't split 2×2 pivot across block boundary
+        // 6. ADJUST: don't split 2×2 pivot across block boundary
         effective_nelim = adjust_for_2x2_boundary(effective_nelim, &block_d);
 
         if effective_nelim < block_nelim {
-            // Threshold failure: full restore, delay failed columns, retry
+            // 7. Threshold failure: full restore, delay failed columns, retry.
+            //    Because block-scoped swaps didn't touch columns 0..k, the restore
+            //    is clean — no need to un-permute previously-factored columns.
 
-            // a. Full restore from backup (undo factor + apply)
+            // a. Full restore from backup (undo factor + apply + panel permute)
             backup.restore_failed(a.rb_mut(), k, 0, block_size, m);
 
             // b. Identify failed columns via block_perm and delay them.
@@ -1663,26 +1707,38 @@ fn factor_inner(
                 });
             }
 
-            // If some columns passed (effective_nelim > 0), we need to re-factor
-            // with the reduced block. The loop will naturally retry with the
-            // smaller end_pos (delayed columns are now beyond end_pos).
-            // If effective_nelim == 0 but block_nelim > 0, that means the panel
-            // check failed on the first pivot — still delay and retry.
             let _ = n_failed; // used for clarity above
             continue;
         }
 
-        // All block_nelim columns passed threshold check.
+        // 8. SUCCESS: propagate row permutation to columns 0..k.
+        //    Block-scoped swaps permuted rows within [k..block_end] according to
+        //    block_perm, but columns 0..k still have L entries in the old row order.
+        //    We must apply the same permutation so extract_l reads consistent rows.
+        if k > 0 {
+            let mut temp = vec![0.0f64; block_size];
+            for c in 0..k {
+                // Gather: temp[i] = row that ended up at local position i
+                for i in 0..block_size {
+                    temp[i] = a[(k + block_perm[i], c)];
+                }
+                // Scatter: write to sequential positions
+                for i in 0..block_size {
+                    a[(k + i, c)] = temp[i];
+                }
+            }
+        }
+
         // Apply the block's permutation to col_order.
         let orig_order: Vec<usize> = col_order[k..k + block_size].to_vec();
         for i in 0..block_size {
             col_order[k + i] = orig_order[block_perm[i]];
         }
 
-        // 5. UPDATE: GEMM A22 -= L21 * D11 * L21^T
+        // 9. UPDATE: GEMM A22 -= L21 * D11 * L21^T
         update_trailing(a.rb_mut(), k, block_nelim, block_size, m, &block_d);
 
-        // 6. Accumulate D entries (remap from block-local to global positions)
+        // 10. Accumulate D entries (remap from block-local to global positions)
         let mut bcol = 0;
         while bcol < block_nelim {
             match block_d.get_pivot_type(bcol) {
@@ -1713,7 +1769,6 @@ fn factor_inner(
             stats.max_l_entry = block_stats.max_l_entry;
         }
         // Also check panel L entries for max_l_entry
-        let panel_start = k + block_size;
         for c in 0..block_nelim {
             for i in panel_start..m {
                 let v = a[(i, k + c)].abs();
@@ -3399,7 +3454,7 @@ mod tests {
         // Factor 8×8 identity with block_size=4.
         // D=[1,1,1,1], identity permutation, no L entries within block.
         let mut a = Mat::identity(8, 8);
-        let (d, perm, nelim, stats, _log) = factor_block_diagonal(a.as_mut(), 0, 4, 1e-20);
+        let (d, perm, nelim, stats, _log) = factor_block_diagonal(a.as_mut(), 0, 4, 1e-20, 4);
 
         assert_eq!(nelim, 4);
         assert_eq!(stats.num_1x1, 4);
@@ -3430,14 +3485,15 @@ mod tests {
     }
 
     #[test]
-    fn test_factor_block_diagonal_swap_propagates_to_panel() {
+    fn test_factor_block_diagonal_block_scoped_swap() {
         // 8×8 matrix where max entry in block forces a swap.
-        // Verify panel rows (4-7) reflect the swap from factor_block_diagonal.
+        // With block-scoped swaps (row_limit=4), panel rows (4-7) should NOT be
+        // affected by factor_block_diagonal. Panel permutation is handled separately.
         let mut a = symmetric_matrix(8, |i, j| {
             if i == j {
                 [1.0, 5.0, 2.0, 3.0, 0.1, 0.1, 0.1, 0.1][i]
             } else if (i == 4 && j == 1) || (i == 1 && j == 4) {
-                // Panel entry at (4,1) — should move with column 1 when swapped
+                // Panel entry at (4,1)
                 0.99
             } else {
                 0.0
@@ -3447,32 +3503,26 @@ mod tests {
         // Save panel row 4's original column values before factor
         let panel_row_before: Vec<f64> = (0..4).map(|j| a[(4, j)]).collect();
 
-        let (_d, perm, nelim, _stats, _log) = factor_block_diagonal(a.as_mut(), 0, 4, 1e-20);
+        let (_d, perm, nelim, _stats, _log) = factor_block_diagonal(a.as_mut(), 0, 4, 1e-20, 4);
 
         assert!(nelim > 0, "should eliminate at least 1 column");
 
         // The max diagonal is 5.0 at column 1, so it should be swapped to position 0.
-        // perm[0] should be 1 (original column 1 is now at position 0).
         assert_eq!(
             perm[0], 1,
             "first pivot should be original column 1 (max diag = 5.0)"
         );
 
-        // Panel row 4 should reflect the swap: the entry that was at
-        // (4, original_col_1) should now be at (4, position_0).
-        // Before: a[(4,1)] = 0.99, a[(4,0)] = 0.0
-        // After swap of cols 0↔1: a[(4,0)] should have the value that was at a[(4,1)]
-        let _ = panel_row_before; // verify swap happened
-        // The L entry at (4,0) = original_a[(4,1)] / d[0] = 0.99 / 5.0 — wait, no.
-        // factor_block_diagonal doesn't compute L for panel rows. But swap_symmetric
-        // DOES move the panel row entries.
-        // After swap: a[(4,0)] = original a[(4,1)] = 0.99 (NOT divided by D, since
-        // factor_block_diagonal only computes L within the block)
-        assert!(
-            (a[(4, 0)] - 0.99).abs() < 1e-14,
-            "panel row should reflect swap: a[(4,0)] = {}, expected 0.99",
-            a[(4, 0)]
-        );
+        // Panel rows should be UNCHANGED (block-scoped swap with row_limit=4)
+        for j in 0..4 {
+            assert!(
+                (a[(4, j)] - panel_row_before[j]).abs() < 1e-14,
+                "panel row (4,{}) should be unchanged: got {}, expected {}",
+                j,
+                a[(4, j)],
+                panel_row_before[j]
+            );
+        }
     }
 
     #[test]

@@ -2267,11 +2267,21 @@ The following topics must be addressed during Phase 8.1 research/speccing:
 - **Branch**: `017-two-level-aptp`
 - **Block sizes**: outer_block_size=256 (default), inner_block_size=32 (default)
 - **Dispatch**: `aptp_factor_in_place` dispatches to `two_level_factor` when `num_fully_summed > outer_block_size`, else to `factor_inner` directly
-- **Architecture**: `factor_inner` uses complete pivoting (Algorithm 4.1, Duff et al. 2020) at ib-sized leaves with `try_1x1/try_2x2` for threshold checking. `two_level_factor` calls `factor_inner` on submatrix views and propagates row permutations to already-factored columns.
+- **Architecture**: `factor_inner` uses complete pivoting (Algorithm 4.1, Duff et al. 2020) within `factor_block_diagonal`. `two_level_factor` calls `factor_inner` on submatrix views and propagates row permutations to already-factored columns. `factor_inner` processes the entire tile as one block (matching SPRAL's `block_ldlt`), then calls `apply_and_check` (TRSM) for panel rows and `update_trailing` (GEMM) for the trailing matrix.
 - **Key finding**: Submatrix views in the outer loop require explicit row permutation propagation — `swap_symmetric` within a submatrix view doesn't reach previously-factored columns. Without this fix, reconstruction errors are O(1).
-- **BLAS-3 status**: `apply_and_check` (TRSM), `update_trailing` (GEMM), and `BlockBackup` are implemented but currently unused (`#[allow(dead_code)]`). The current `factor_inner` processes ALL rows via column-by-column BLAS-2 operations. BLAS-3 optimization requires limiting `factor_inner` to the diagonal block and having the outer loop call Apply/Update separately. This is deferred.
-- **Accuracy**: All 330 lib tests + 51 integration tests pass. Reconstruction error < 1e-12 on all test matrices. Two-level produces equivalent accuracy to single-level.
+- **Backward error fix**: Initial implementation broke the tile into `inner_block_size=32` sub-blocks, restricting pivot search to 32 rows. This caused severe backward error regressions on hard indefinite matrices (bratu3d: 8.32e-4 vs 1e-9 single-level). Fix: process the entire tile as one block (`block_size = end_pos - k`), matching SPRAL's `block_ldlt` which searches all tile rows. See `docs/two-level-backward-error-investigation.md` for full details.
+- **BLAS-3 status**: `apply_and_check` (TRSM) and `update_trailing` (GEMM) are called in the hot path but use manual loops instead of faer's optimized BLAS-3 kernels. Replacing with `faer::linalg::triangular_solve` and `faer::linalg::matmul::matmul` is straightforward and planned as immediate follow-up.
+- **Accuracy**: All 336 lib tests pass. Reconstruction error < 1e-12 on all test matrices. Two-level produces equivalent backward error to single-level on all tested matrices (bratu3d 1e-9, stokes128 1.38e-9, bloweybq 4.27e-11).
 - **Single-level removal**: Old single-level main loop in `aptp_factor_in_place` removed. `factor_inner` is the new inner kernel (subsumes old single-level behavior for small fronts).
+
+**Inner blocking within tiles (future consideration):**
+SPRAL uses `INNER_BLOCK_SIZE=32` within each tile for minor cache locality, but the
+search scope still covers all tile rows. Re-adding inner blocking to our `factor_inner`
+would require solving the backup/restore problem for cross-block swaps (when a pivot
+candidate is found beyond the current sub-block). The investigation in
+`docs/two-level-backward-error-investigation.md` documents the approaches tried and
+why they failed. The performance benefit is small compared to BLAS-3 dispatch for
+TRSM/GEMM. Consider revisiting after Phase 8.2 profiling identifies bottlenecks.
 
 **Time Estimate:** 1 week
 
@@ -2423,6 +2433,24 @@ prepare for public release (documentation, examples, packaging).
 - Extreme values (near-overflow, near-underflow, exact zeros)
 - Singular and structurally singular matrices
 - Goal: no panics, only clean error returns
+
+**Iterative refinement:**
+- Implement one or two steps of iterative refinement after the initial solve:
+  1. Compute residual `r = b - A*x` (using sparse matvec)
+  2. Solve `A*z = r` using the existing factorization (forward/diagonal/backward)
+  3. Update `x += z`
+  4. Optionally repeat until `||r|| / (||A||*||x|| + ||b||) < tol`
+- SPRAL achieves backward error < 5e-11 on bratu3d; our current solver achieves
+  1e-9. The ~20× gap is very likely explained by iterative refinement recovering
+  1-2 digits of accuracy per step.
+- API: add `SolveOptions { max_refinement_steps: usize, refinement_tol: f64 }`
+  to control refinement. Default: 2 steps (matching SPRAL). Zero steps gives
+  the raw solve for users who want maximum speed.
+- The factorization is already computed, so each refinement step costs only
+  O(nnz) for the sparse matvec + O(n) for the triangular solves — negligible
+  compared to the O(n*nnz) factorization cost.
+- Decision criterion: implement if any CI matrices remain above SPRAL's 5e-11
+  threshold after BLAS-3 dispatch is complete (Phase 8.1 follow-up).
 
 **Targeted performance fixes:**
 - Use Phase 1.4 profiling tools and Phase 8.2 benchmark results to identify
