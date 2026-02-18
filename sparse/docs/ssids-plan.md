@@ -2423,6 +2423,11 @@ prepare for public release (documentation, examples, packaging).
 - Peak memory tracking and validation against symbolic predictions
 - Memory usage within 50% of prediction from AptpSymbolic
 
+**SPRAL testing parity:**
+- Perform a comprehensive analysis of SPRAL's test suite
+- Ensure that all SPRAL tests map conceptually to one of our unit tests if feasible
+- Review our test suite for unnecessary or duplicate tests, or tests that were used as part of a TDD protocol but are no longer independently necessary
+
 **Property-based testing (proptest):**
 - Generate random symmetric matrices (varying size, density, definiteness)
 - Verify backward error < tolerance for all solvable systems

@@ -924,10 +924,7 @@ fn test_solve_suitesparse_full() {
     let mut missing = 0usize;
     let mut failed = Vec::new();
 
-    eprintln!(
-        "\n{:<40} {:>8} {:>12}  {}",
-        "Matrix", "n", "BE", "Status"
-    );
+    eprintln!("\n{:<40} {:>8} {:>12}  {}", "Matrix", "n", "BE", "Status");
     eprintln!("{}", "-".repeat(80));
 
     for meta in &suitesparse_meta {
@@ -985,10 +982,7 @@ fn test_solve_suitesparse_full() {
             }
             Err(e) => {
                 failed.push(format!("'{}' (n={}): solve error: {}", meta.name, n, e));
-                eprintln!(
-                    "{:<40} {:>8} {:>12}  SOLVE ERROR: {}",
-                    meta.name, n, "", e
-                );
+                eprintln!("{:<40} {:>8} {:>12}  SOLVE ERROR: {}", meta.name, n, "", e);
             }
         }
         // test_matrix dropped here — frees memory before next iteration

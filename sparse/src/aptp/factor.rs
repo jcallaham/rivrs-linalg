@@ -1260,6 +1260,60 @@ impl BlockBackup {
             }
         }
     }
+
+    /// Restore failed columns of the diagonal block from pre-factor backup,
+    /// applying the block permutation to read from the correct backup positions.
+    ///
+    /// The backup was taken BEFORE factor_block_diagonal permuted columns.
+    /// factor_block_diagonal applied symmetric swaps described by `block_perm`,
+    /// so to restore failed column j (in post-perm ordering), we must read
+    /// from backup position perm[j] (pre-perm ordering).
+    ///
+    /// Restores two regions:
+    /// 1. Diagonal block: a[k+e..k+bs, k+e..k+bs] — symmetric with perm
+    /// 2. Panel below: a[k+bs..m, k+e..k+bs] — column perm only
+    ///
+    /// # SPRAL Equivalent
+    /// `CopyBackup::restore_part_with_sym_perm` (ldlt_app.cxx:562-574)
+    fn restore_diagonal_with_perm(
+        &self,
+        mut a: MatMut<'_, f64>,
+        col_start: usize,
+        nelim: usize,
+        block_cols: usize,
+        m: usize,
+        block_perm: &[usize],
+    ) {
+        // Region 1: Diagonal block — restore a[k+e..k+bs, k+e..k+bs]
+        // with symmetric permutation from backup.
+        // backup[r, c] stored with r >= c (lower triangle).
+        // In backup coordinates: row i, col j.
+        // SPRAL: aval[j*lda+i] = backup[min(r,c)*ldcopy + max(r,c)]
+        for j in nelim..block_cols {
+            let c = block_perm[j]; // pre-perm column
+            for i in nelim..block_cols {
+                let r = block_perm[i]; // pre-perm row
+                // Read from lower triangle of backup (row >= col)
+                let val = if r >= c {
+                    self.data[(r, c)]
+                } else {
+                    self.data[(c, r)]
+                };
+                a[(col_start + i, col_start + j)] = val;
+            }
+        }
+
+        // Region 2: Panel below diagonal block — restore a[k+bs..m, k+e..k+bs]
+        // Only column permutation applies (panel rows were permuted by
+        // apply_cperm step, but we need original values at permuted column).
+        // SPRAL: aval[j*lda+i] = backup[c*ldcopy+i]
+        for j in nelim..block_cols {
+            let c = block_perm[j]; // pre-perm column
+            for i in block_cols..(m - col_start) {
+                a[(col_start + i, col_start + j)] = self.data[(i, c)];
+            }
+        }
+    }
 }
 
 /// Apply factored L11/D11 to the panel below the diagonal block (TRSM),
@@ -1456,90 +1510,160 @@ fn update_trailing(
     );
 }
 
-/// Apply updates from newly-factored block to previously-delayed columns.
+/// Compute W = L * D for a set of rows, where L and D come from the factored block.
 ///
-/// Corresponds to UpdateNT/UpdateTN from Algorithm 3.1 (Duff et al. 2020).
-/// For each previously-delayed column region, applies the rank-nelim
-/// update using the current block's L and D factors.
+/// For 1×1 pivots: W[i, col] = L[i, col] * D[col]
+/// For 2×2 pivots: W[i, col] = L[i,col]*D[col,col] + L[i,col+1]*D[col+1,col]
+///                 W[i, col+1] = L[i,col]*D[col,col+1] + L[i,col+1]*D[col+1,col+1]
 ///
-/// delayed_cols: slice of column indices (absolute positions in matrix) that
-/// were delayed from earlier blocks and need updating from this block's factors.
-#[allow(dead_code)]
-fn update_delayed(
+/// # SPRAL Equivalent
+/// `calcLD<OP_N>` in `spral/src/ssids/cpu/kernels/calc_ld.hxx:41+`
+fn compute_ld(
+    l: MatRef<'_, f64>,
+    d: &MixedDiagonal,
+    nelim: usize,
+) -> Mat<f64> {
+    let nrows = l.nrows();
+    let mut w = Mat::zeros(nrows, nelim);
+    let mut col = 0;
+    while col < nelim {
+        match d.get_pivot_type(col) {
+            PivotType::OneByOne => {
+                let d_val = d.get_1x1(col);
+                for i in 0..nrows {
+                    w[(i, col)] = l[(i, col)] * d_val;
+                }
+                col += 1;
+            }
+            PivotType::TwoByTwo { partner } if partner > col => {
+                let block = d.get_2x2(col);
+                for i in 0..nrows {
+                    let l1 = l[(i, col)];
+                    let l2 = l[(i, col + 1)];
+                    w[(i, col)] = l1 * block.a + l2 * block.b;
+                    w[(i, col + 1)] = l1 * block.b + l2 * block.c;
+                }
+                col += 2;
+            }
+            _ => {
+                col += 1;
+            }
+        }
+    }
+    w
+}
+
+/// Apply Schur complement updates from passed columns to failed and trailing regions.
+///
+/// After factoring `nelim` out of `block_cols` columns, three update regions exist:
+///
+/// 1. **Failed×failed** (diagonal): A[k+e..k+bs, k+e..k+bs] -= W_blk * L_blk^T
+/// 2. **Trailing×failed** (cross-term): A[ts..m, k+e..k+bs] -= W_panel * L_blk^T
+/// 3. **Trailing×trailing**: handled separately by `update_trailing`
+///
+/// where:
+/// - L_blk = a[k+e..k+bs, k..k+e] (within-block L for failed rows)
+/// - L_panel = a[ts..m, k..k+e] (panel L below diagonal block)
+/// - W = L * D (LD product)
+/// - ts = k + bs (trailing start)
+///
+/// # SPRAL Equivalent
+/// `Block::update` with rfrom/cfrom skip (ldlt_app.cxx:1082-1153)
+fn update_cross_terms(
     mut a: MatMut<'_, f64>,
     col_start: usize,
     nelim: usize,
     block_cols: usize,
     m: usize,
-    delayed_cols: &[usize],
     d: &MixedDiagonal,
 ) {
-    if nelim == 0 || delayed_cols.is_empty() {
-        return;
+    if nelim == 0 || nelim >= block_cols {
+        return; // No failed columns → no cross-term updates
     }
 
-    let panel_start = col_start + block_cols;
-    let panel_rows = m - panel_start;
+    let n_failed = block_cols - nelim;
+    let trailing_start = col_start + block_cols;
+    let trailing_size = m - trailing_start;
 
-    // For each delayed column d_col, update:
-    // a[d_col, d_col2] -= sum_k L_factor[d_col, k] * W[d_col2, k]
-    // where L_factor is the L21 panel from this block's factorization
-    // and W = L21 * D11
-    //
-    // But delayed columns are at positions < col_start (from earlier blocks).
-    // The L entries for these positions are in the L21 panel of THIS block.
-    // Wait — that's not right. Delayed columns are at positions AFTER the
-    // eliminated columns (they were swapped to the end). They are in the
-    // current frontal matrix at positions that may be in the "still to process"
-    // region.
-    //
-    // In the two-level algorithm, after block j factors nelim_j columns,
-    // the trailing submatrix (including delayed columns from earlier blocks)
-    // needs the Schur complement update from the newly-factored columns.
-    //
-    // update_trailing already handles the trailing submatrix below block_cols.
-    // But delayed columns from EARLIER blocks are at positions between the
-    // current block's eliminated columns and the trailing submatrix.
-    //
-    // For now, this is handled by the trailing update (which covers everything
-    // after col_start + block_cols). Delayed columns from earlier blocks that
-    // are still in the "to be processed" region ARE part of the trailing
-    // submatrix and will be updated by update_trailing.
-    //
-    // The explicit update_delayed is needed when delayed columns from block j
-    // are at positions within [col_start..col_start+block_cols] but after nelim.
-    // These are "failed columns" from THIS block. They were restored from backup
-    // and already have correct values — no further update needed from their own
-    // block's factors.
-    //
-    // In practice, for a sequential single-threaded implementation, the trailing
-    // update covers all necessary cases. This function is a placeholder for the
-    // parallel case (Phase 8.2) where explicit delayed-column updates are needed.
-    let _ = (
-        a.rb_mut(),
-        col_start,
-        nelim,
-        block_cols,
-        m,
-        delayed_cols,
-        d,
-        panel_start,
-        panel_rows,
-    );
+    // L_blk: the L entries for failed rows within the diagonal block
+    // These are at a[k+e..k+bs, k..k+e]
+    let l_blk = a
+        .rb()
+        .submatrix(col_start + nelim, col_start, n_failed, nelim)
+        .to_owned();
+
+    // W_blk = L_blk * D
+    let w_blk = compute_ld(l_blk.as_ref(), d, nelim);
+
+    // Region 1: Failed×failed diagonal update
+    // A[k+e..k+bs, k+e..k+bs] -= W_blk * L_blk^T (lower triangle only)
+    for j in 0..n_failed {
+        for i in j..n_failed {
+            let mut sum = 0.0;
+            for c in 0..nelim {
+                sum += w_blk[(i, c)] * l_blk[(j, c)];
+            }
+            a[(col_start + nelim + i, col_start + nelim + j)] -= sum;
+        }
+    }
+
+    // Region 2: Trailing×failed cross-term update
+    // A[ts..m, k+e..k+bs] -= W_panel * L_blk^T
+    if trailing_size > 0 {
+        let l_panel = a
+            .rb()
+            .submatrix(trailing_start, col_start, trailing_size, nelim)
+            .to_owned();
+
+        let w_panel = compute_ld(l_panel.as_ref(), d, nelim);
+
+        for j in 0..n_failed {
+            for i in 0..trailing_size {
+                let mut sum = 0.0;
+                for c in 0..nelim {
+                    sum += w_panel[(i, c)] * l_blk[(j, c)];
+                }
+                a[(trailing_start + i, col_start + nelim + j)] -= sum;
+            }
+        }
+    }
 }
 
 /// Factor an nb-sized block using BLAS-3 Factor/Apply/Update loop.
 ///
+/// # Lower-Triangle Convention
+///
+/// This function operates exclusively on the **lower triangle** of the dense
+/// frontal matrix. All reads (pivot search, L extraction) and writes (Schur
+/// updates via `BlockStructure::TriangularLower`, `swap_symmetric`) touch only
+/// entries where `row >= col`. The upper triangle may contain stale values
+/// after column swaps and Schur updates — this is intentional and safe because
+/// no code path reads upper-triangle entries. This convention is consistent
+/// across `factor_block_diagonal`, `apply_and_check`, `update_trailing`,
+/// `update_cross_terms`, and `swap_symmetric_block`.
+///
 /// This is the middle level of the two-level hierarchy. Processes `num_fully_summed`
 /// columns of the block `a[0..m, 0..m]` using ib-sized sub-blocks with the
-/// three-phase BLAS-3 pattern from SPRAL's `run_elim_pivoted`:
+/// three-phase BLAS-3 pattern from SPRAL's `run_elim_pivoted_notasks`:
 ///
 /// 1. **Backup**: Save `a[k..m, k..k+block_size]` before factoring
 /// 2. **Factor**: `factor_block_diagonal` on the ib×ib diagonal block (complete pivoting)
-/// 3. **Apply**: `apply_and_check` — TRSM on panel + threshold check → effective_nelim
-/// 4. **Adjust**: `adjust_for_2x2_boundary` — avoid splitting 2×2 across boundaries
-/// 5. On failure: full restore from backup, swap failed columns to end, retry
-/// 6. **Update**: `update_trailing` — GEMM A22 -= L21*D*L21^T
+/// 3. **Permute panel**: apply block_perm to panel columns
+/// 4. **Zero D off-diagonals**: for TRSM
+/// 5. **Row perm propagation**: apply block_perm to columns 0..k (always, not just on success)
+/// 6. **Update col_order**: by block_perm (always, not just on success)
+/// 7. **Apply+Check**: TRSM on panel + threshold check → effective_nelim
+/// 8. **Adjust**: avoid splitting 2×2 across boundary
+/// 9. **Partial restore** (on failure): restore failed columns with permuted backup
+/// 10. **Schur updates**: trailing×trailing + cross-term updates for failed columns
+/// 11. **Delay** failed columns: swap to end_pos
+/// 12. **Advance**: k += nelim (may be < block_size)
+///
+/// Key difference from the old implementation: on threshold failure we DO NOT
+/// fully restore and retry. Instead we keep the passed columns, partially
+/// restore only the failed columns (using permuted backup), apply Schur updates
+/// from passed to failed+trailing, and advance. This matches SPRAL's
+/// `run_elim_pivoted_notasks` (ldlt_app.cxx:1585-1713).
 ///
 /// # Arguments
 /// - `a`: Dense frontal matrix block (m × m), modified in place
@@ -1547,7 +1671,7 @@ fn update_delayed(
 /// - `options`: APTP configuration (inner_block_size determines ib)
 ///
 /// # References
-/// - SPRAL: `run_elim_pivoted` in `ldlt_app.cxx:1273-1579`
+/// - SPRAL: `run_elim_pivoted_notasks` in `ldlt_app.cxx:1585-1713`
 /// - Duff, Hogg & Lopez (2020), Algorithm 3.1
 fn factor_inner(
     mut a: MatMut<'_, f64>,
@@ -1574,24 +1698,23 @@ fn factor_inner(
 
     // BLAS-3 Factor/Apply/Update loop with ib-sized inner blocks.
     //
-    // Each iteration processes min(end_pos - k, ib) columns:
-    //   1. Backup: save a[k..m, k..k+bs]
-    //   2. Factor: factor_block_diagonal with block-scoped swaps (row_limit = k+bs)
-    //   3. Permute panel column entries by block_perm
+    // Matches SPRAL's `run_elim_pivoted_notasks` architecture:
+    //   1. Backup (pre-factor)
+    //   2. Factor diagonal block (complete pivoting, block-scoped swaps)
+    //   3. Permute panel columns by block_perm
     //   4. Zero D off-diagonals for TRSM
-    //   5. Apply+Check: TRSM on panel + threshold check
-    //   6. Adjust: avoid splitting 2×2 across boundary
-    //   7. On fail: restore from backup (columns 0..k untouched), delay, continue
-    //   8. On pass: propagate row perm to columns 0..k
-    //   9. Update trailing: GEMM A22 -= L21*D*L21^T
+    //   5. Row perm propagation to columns 0..k
+    //   6. Update col_order by block_perm
+    //   7. Apply+Check (TRSM + threshold scan)
+    //   8. Adjust for 2×2 boundary
+    //   9. On failure: partial restore of failed columns (not full restore+retry)
+    //  10. Schur updates (trailing + cross-terms for failed columns)
+    //  11. Delay failed columns (swap to end_pos)
+    //  12. Advance k += effective_nelim
     //
-    // Block-scoped swaps (step 2) only permute rows/columns within [0..k+bs],
-    // leaving panel rows untouched. This matches SPRAL's block_ldlt architecture
-    // where panel permutation happens separately in the Apply phase.
-    //
-    // # References
-    // - SPRAL: `block_ldlt::swap_cols` limited to BLOCK_SIZE rows
-    // - SPRAL: `apply_rperm_and_backup` / `apply_cperm_and_backup` for panel permutation
+    // Steps 5-6 happen BEFORE apply_and_check so the matrix is in a consistent
+    // permuted state regardless of threshold outcome (matching SPRAL where
+    // apply_rperm_and_backup happens before apply_pivot_app).
     while k < end_pos {
         let block_size = (end_pos - k).min(ib);
         let block_end = k + block_size;
@@ -1628,9 +1751,6 @@ fn factor_inner(
 
         // 3. PERMUTE PANEL: reorder panel column entries a[r, k..k+bs]
         //    according to block_perm so that TRSM sees the correct input.
-        //    Block-scoped swaps didn't touch panel rows, so we must gather
-        //    the panel entries into the factored column order.
-        //    This is SPRAL's `apply_cperm_and_backup` equivalent.
         let panel_start = block_end;
         for r in panel_start..m {
             let orig: Vec<f64> = (0..block_size).map(|i| a[(r, k + block_perm[i])]).collect();
@@ -1641,7 +1761,6 @@ fn factor_inner(
 
         // 4. Zero out D off-diagonals so apply_and_check's TRSM reads them as
         //    L11 entries (should be 0 for 2×2 pivots where L starts at row k+2).
-        //    The D values are safely stored in block_d (MixedDiagonal).
         {
             let mut bc = 0;
             while bc < block_nelim {
@@ -1657,7 +1776,29 @@ fn factor_inner(
             }
         }
 
-        // 5. APPLY: TRSM on panel below + threshold check
+        // 5. ROW PERM PROPAGATION: apply block_perm to columns 0..k.
+        //    Done BEFORE apply_and_check (matching SPRAL where apply_rperm_and_backup
+        //    happens before apply_pivot_app). This ensures the matrix is in a
+        //    consistent permuted state regardless of threshold outcome.
+        if k > 0 {
+            let mut temp = vec![0.0f64; block_size];
+            for c in 0..k {
+                for i in 0..block_size {
+                    temp[i] = a[(k + block_perm[i], c)];
+                }
+                for i in 0..block_size {
+                    a[(k + i, c)] = temp[i];
+                }
+            }
+        }
+
+        // 6. UPDATE COL_ORDER by block_perm (always, not just on success).
+        let orig_order: Vec<usize> = col_order[k..k + block_size].to_vec();
+        for i in 0..block_size {
+            col_order[k + i] = orig_order[block_perm[i]];
+        }
+
+        // 7. APPLY: TRSM on panel below + threshold check
         let mut effective_nelim = apply_and_check(
             a.rb_mut(),
             k,
@@ -1668,79 +1809,41 @@ fn factor_inner(
             threshold,
         );
 
-        // 6. ADJUST: don't split 2×2 pivot across block boundary
+        // 8. ADJUST: don't split 2×2 pivot across block boundary
         effective_nelim = adjust_for_2x2_boundary(effective_nelim, &block_d);
 
+        // 9. PARTIAL RESTORE (on failure): restore only failed columns from
+        //    pre-factor backup with permutation applied.
+        //    SPRAL: restore_part_with_sym_perm for diagonal, restore_part for panel.
+        //    We keep passed columns (0..effective_nelim) — their L11, D, L21 are committed.
         if effective_nelim < block_nelim {
-            // 7. Threshold failure: full restore, delay failed columns, retry.
-            //    Because block-scoped swaps didn't touch columns 0..k, the restore
-            //    is clean — no need to un-permute previously-factored columns.
-
-            // a. Full restore from backup (undo factor + apply + panel permute)
-            backup.restore_failed(a.rb_mut(), k, 0, block_size, m);
-
-            // b. Identify failed columns via block_perm and delay them.
-            //    Failed columns are at block_perm positions effective_nelim..block_nelim.
-            //    We also delay any columns that were singular (block_nelim..block_size).
-            let n_failed = block_size - effective_nelim;
-
-            // Collect the absolute positions of failed columns (reverse-sorted
-            // to swap from end first, avoiding positional conflicts)
-            let mut failed_positions: Vec<usize> = (effective_nelim..block_size)
-                .map(|i| k + block_perm[i])
-                .collect();
-            failed_positions.sort_unstable();
-            failed_positions.reverse();
-
-            for &failed_abs in &failed_positions {
-                end_pos -= 1;
-                if failed_abs < end_pos {
-                    swap_symmetric(a.rb_mut(), failed_abs, end_pos);
-                    col_order.swap(failed_abs, end_pos);
-                }
-                stats.num_delayed += 1;
-                pivot_log.push(AptpPivotRecord {
-                    col: col_order[end_pos],
-                    pivot_type: PivotType::Delayed,
-                    max_l_entry: 0.0,
-                    was_fallback: false,
-                });
-            }
-
-            let _ = n_failed; // used for clarity above
-            continue;
+            backup.restore_diagonal_with_perm(
+                a.rb_mut(),
+                k,
+                effective_nelim,
+                block_size,
+                m,
+                &block_perm,
+            );
         }
 
-        // 8. SUCCESS: propagate row permutation to columns 0..k.
-        //    Block-scoped swaps permuted rows within [k..block_end] according to
-        //    block_perm, but columns 0..k still have L entries in the old row order.
-        //    We must apply the same permutation so extract_l reads consistent rows.
-        if k > 0 {
-            let mut temp = vec![0.0f64; block_size];
-            for c in 0..k {
-                // Gather: temp[i] = row that ended up at local position i
-                for i in 0..block_size {
-                    temp[i] = a[(k + block_perm[i], c)];
-                }
-                // Scatter: write to sequential positions
-                for i in 0..block_size {
-                    a[(k + i, c)] = temp[i];
-                }
-            }
+        // Use effective_nelim as the number of passed columns for all subsequent steps.
+        let nelim = effective_nelim;
+
+        // 10. SCHUR UPDATES using only passed columns' L and D.
+        //     Truncate block_d to passed columns for update computations.
+        //     Three regions:
+        //     a. Trailing×trailing: A[ts..m, ts..m] -= L_panel * D * L_panel^T
+        //     b. Failed×failed: A[k+e..k+bs, k+e..k+bs] -= L_blk * D * L_blk^T
+        //     c. Trailing×failed: A[ts..m, k+e..k+bs] -= L_panel * D * L_blk^T
+        if nelim > 0 {
+            update_trailing(a.rb_mut(), k, nelim, block_size, m, &block_d);
+            update_cross_terms(a.rb_mut(), k, nelim, block_size, m, &block_d);
         }
 
-        // Apply the block's permutation to col_order.
-        let orig_order: Vec<usize> = col_order[k..k + block_size].to_vec();
-        for i in 0..block_size {
-            col_order[k + i] = orig_order[block_perm[i]];
-        }
-
-        // 9. UPDATE: GEMM A22 -= L21 * D11 * L21^T
-        update_trailing(a.rb_mut(), k, block_nelim, block_size, m, &block_d);
-
-        // 10. Accumulate D entries (remap from block-local to global positions)
+        // 11. ACCUMULATE D entries for passed columns
         let mut bcol = 0;
-        while bcol < block_nelim {
+        while bcol < nelim {
             match block_d.get_pivot_type(bcol) {
                 PivotType::OneByOne => {
                     d.set_1x1(k + bcol, block_d.get_1x1(bcol));
@@ -1762,14 +1865,32 @@ fn factor_inner(
             }
         }
 
-        // Accumulate stats
-        stats.num_1x1 += block_stats.num_1x1;
-        stats.num_2x2 += block_stats.num_2x2;
+        // Accumulate stats from passed columns only (count from block_d directly)
+        let mut passed_1x1 = 0;
+        let mut passed_2x2 = 0;
+        let mut sc = 0;
+        while sc < nelim {
+            match block_d.get_pivot_type(sc) {
+                PivotType::OneByOne => {
+                    passed_1x1 += 1;
+                    sc += 1;
+                }
+                PivotType::TwoByTwo { partner } if partner > sc => {
+                    passed_2x2 += 1;
+                    sc += 2;
+                }
+                _ => {
+                    sc += 1;
+                }
+            }
+        }
+        stats.num_1x1 += passed_1x1;
+        stats.num_2x2 += passed_2x2;
         if block_stats.max_l_entry > stats.max_l_entry {
             stats.max_l_entry = block_stats.max_l_entry;
         }
-        // Also check panel L entries for max_l_entry
-        for c in 0..block_nelim {
+        // Check panel L entries for max_l_entry (passed columns only)
+        for c in 0..nelim {
             for i in panel_start..m {
                 let v = a[(i, k + c)].abs();
                 if v > stats.max_l_entry {
@@ -1778,10 +1899,9 @@ fn factor_inner(
             }
         }
 
-        // Accumulate pivot log (skip delayed — we handled delays above)
+        // Accumulate pivot log for passed columns
         for record in &block_log {
-            if !matches!(record.pivot_type, PivotType::Delayed) {
-                // Remap col indices from block-local to original via col_order
+            if !matches!(record.pivot_type, PivotType::Delayed) && record.col < nelim {
                 let global_col = col_order[k + record.col];
                 let global_pivot_type = match record.pivot_type {
                     PivotType::TwoByTwo { partner } => PivotType::TwoByTwo {
@@ -1798,11 +1918,11 @@ fn factor_inner(
             }
         }
 
-        // Handle any columns that were singular within the block (block_nelim < block_size)
-        if block_nelim < block_size {
-            let n_block_delayed = block_size - block_nelim;
-            for i in 0..n_block_delayed {
-                let delayed_pos = k + block_nelim + i;
+        // 12. DELAY failed columns (nelim..block_size): swap to end_pos
+        if nelim < block_size {
+            let n_delayed = block_size - nelim;
+            for i in (0..n_delayed).rev() {
+                let delayed_pos = k + nelim + i;
                 end_pos -= 1;
                 if delayed_pos < end_pos {
                     swap_symmetric(a.rb_mut(), delayed_pos, end_pos);
@@ -1818,7 +1938,7 @@ fn factor_inner(
             }
         }
 
-        k += block_nelim;
+        k += nelim;
     }
 
     let num_eliminated = k;
@@ -3650,5 +3770,876 @@ mod tests {
         assert_eq!(result.num_eliminated, 0);
         assert_eq!(result.stats.num_delayed, 8);
         assert_eq!(result.delayed_cols.len(), 8);
+    }
+
+    // ---- Regression test: factor_inner with threshold failures (delays) ----
+
+    /// Generate a deterministic pseudo-random symmetric indefinite matrix.
+    ///
+    /// Uses a simple LCG-based hash for reproducibility without external deps.
+    /// Entries are in [-1, 1] with diagonal scaled by `diag_scale`.
+    fn deterministic_indefinite_matrix(n: usize, seed: u64, diag_scale: f64) -> Mat<f64> {
+        // Pure function of (i,j) — compatible with symmetric_matrix's Fn requirement.
+        let hash = |a: usize, b: usize| -> f64 {
+            let mut s = seed
+                .wrapping_add((a * 10007) as u64)
+                .wrapping_add((b * 7) as u64);
+            s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((s >> 33) as f64) / (u32::MAX as f64 / 2.0) - 1.0
+        };
+
+        symmetric_matrix(n, |i, j| {
+            if i == j {
+                hash(i, i) * diag_scale
+            } else {
+                // Use min/max so (i,j) and (j,i) produce the same value
+                hash(i.min(j), i.max(j) + n)
+            }
+        })
+    }
+
+    /// Apply the "cause_delays" pattern from SPRAL testing: multiply n/8 random
+    /// rows (and corresponding columns, to maintain symmetry) by a large factor.
+    /// This creates large off-diagonal entries that cause L entries to exceed 1/threshold.
+    fn cause_delays(a: &mut Mat<f64>, seed: u64, scale: f64) {
+        let n = a.nrows();
+        let n_scaled = (n / 8).max(1);
+
+        // Deterministically select which rows to scale
+        let mut state = seed;
+        let mut next_idx = || -> usize {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((state >> 33) as usize) % n
+        };
+
+        let mut scaled_rows = Vec::new();
+        while scaled_rows.len() < n_scaled {
+            let idx = next_idx();
+            if !scaled_rows.contains(&idx) {
+                scaled_rows.push(idx);
+            }
+        }
+
+        // Scale rows and columns symmetrically: A -> S * A * S
+        // where S = diag(s_1, ..., s_n) with s_i = scale if i in scaled_rows, else 1
+        for &r in &scaled_rows {
+            for j in 0..n {
+                a[(r, j)] *= scale;
+                a[(j, r)] *= scale;
+            }
+            // Diagonal gets scaled twice (row and column), which is correct for S*A*S
+        }
+    }
+
+    #[test]
+    fn test_factor_inner_with_delays() {
+        // Regression test: factor_inner with threshold failures.
+        //
+        // Constructs matrices using the "cause_delays" pattern (SPRAL testing):
+        // take a random symmetric indefinite matrix, then multiply n/8 random
+        // rows and corresponding columns by 1000. This creates large off-diagonal
+        // entries that cause L entries to exceed 1/threshold, triggering the
+        // backup/restore/delay path in factor_inner.
+        //
+        // Tests multiple (n, ib) combinations to exercise different code paths
+        // in the BLAS-3 Factor/Apply/Update loop.
+
+        struct TestConfig {
+            n: usize,
+            ib: usize,
+            seed: u64,
+            scale: f64,
+        }
+
+        let configs = [
+            // Small: 8x8 with ib=2 (4 blocks)
+            TestConfig { n: 8, ib: 2, seed: 42, scale: 1000.0 },
+            // Small: 8x8 with ib=4 (2 blocks)
+            TestConfig { n: 8, ib: 4, seed: 42, scale: 1000.0 },
+            // Medium: 16x16 with ib=4 (4 blocks)
+            TestConfig { n: 16, ib: 4, seed: 42, scale: 1000.0 },
+            // Medium: 16x16 with ib=2 (8 blocks)
+            TestConfig { n: 16, ib: 2, seed: 42, scale: 1000.0 },
+            // Larger: 32x32 with ib=4
+            TestConfig { n: 32, ib: 4, seed: 42, scale: 1000.0 },
+            // Larger: 32x32 with ib=8
+            TestConfig { n: 32, ib: 8, seed: 42, scale: 1000.0 },
+            // Different seed
+            TestConfig { n: 16, ib: 4, seed: 137, scale: 1000.0 },
+            // Extreme scale
+            TestConfig { n: 16, ib: 4, seed: 42, scale: 1e6 },
+            // 64x64 with ib=8
+            TestConfig { n: 64, ib: 8, seed: 42, scale: 1000.0 },
+            // 64x64 with ib=16
+            TestConfig { n: 64, ib: 16, seed: 42, scale: 1000.0 },
+        ];
+
+        let mut any_delays_found = false;
+        let mut any_failures = false;
+
+        for (idx, config) in configs.iter().enumerate() {
+            let mut a = deterministic_indefinite_matrix(config.n, config.seed, 5.0);
+            cause_delays(&mut a, config.seed + 1000, config.scale);
+
+            let opts = AptpOptions {
+                inner_block_size: config.ib,
+                outer_block_size: config.n.max(config.ib),
+                threshold: 0.01,
+                ..AptpOptions::default()
+            };
+
+            let result = aptp_factor(a.as_ref(), &opts).unwrap();
+
+            let n = config.n;
+            let sum = result.stats.num_1x1
+                + 2 * result.stats.num_2x2
+                + result.stats.num_delayed;
+            assert_eq!(
+                sum, n,
+                "config {}: statistics invariant broken: {} != {}",
+                idx, sum, n
+            );
+
+            if result.stats.num_delayed > 0 {
+                any_delays_found = true;
+                eprintln!(
+                    "config {} (n={}, ib={}, seed={}, scale={:.0e}): {} delayed, {} eliminated",
+                    idx,
+                    config.n,
+                    config.ib,
+                    config.seed,
+                    config.scale,
+                    result.stats.num_delayed,
+                    n - result.stats.num_delayed
+                );
+            }
+
+            // If fully eliminated, check reconstruction error
+            if result.stats.num_delayed == 0 {
+                let error = dense_reconstruction_error(
+                    &a,
+                    &result.l,
+                    &result.d,
+                    result.perm.as_ref().arrays().0,
+                );
+                if error >= 1e-12 {
+                    eprintln!(
+                        "config {} (n={}, ib={}, seed={}, scale={:.0e}): \
+                         reconstruction error {:.2e} >= 1e-12 (NO DELAYS)",
+                        idx,
+                        config.n,
+                        config.ib,
+                        config.seed,
+                        config.scale,
+                        error
+                    );
+                    any_failures = true;
+                }
+                assert!(
+                    error < 1e-10,
+                    "config {} (n={}, ib={}): reconstruction error {:.2e} >= 1e-10 \
+                     (no delays but bad reconstruction indicates factor_inner bug)",
+                    idx,
+                    config.n,
+                    config.ib,
+                    error
+                );
+            }
+        }
+
+        // At least one config should have triggered delays (confirming the
+        // cause_delays pattern works with the threshold).
+        eprintln!("any_delays_found = {}", any_delays_found);
+        // Note: we don't assert any_delays_found because with complete pivoting
+        // the diagonal block never delays — only apply_and_check can reduce
+        // effective_nelim. Whether this triggers depends on the matrix structure.
+
+        assert!(
+            !any_failures,
+            "Some configs had reconstruction error >= 1e-12 without delays. \
+             This indicates a bug in factor_inner's backup/restore/update logic."
+        );
+    }
+
+    #[test]
+    fn test_factor_inner_with_delays_targeted() {
+        // More targeted test: construct a matrix specifically designed to trigger
+        // threshold failure in factor_inner's apply_and_check step.
+        //
+        // Strategy: Create a matrix where complete pivoting on the ib×ib diagonal
+        // block succeeds (all ib columns eliminated within the block), but the
+        // panel entries below the block exceed 1/threshold after TRSM + D scaling.
+        //
+        // Matrix structure (8x8, ib=4):
+        //   Block [0:4, 0:4]: moderate diagonal, small off-diagonal -- complete pivoting
+        //     eliminates all 4 columns within the block with |L_block| <= 4
+        //   Panel [4:8, 0:4]: large entries that exceed 1/threshold after TRSM
+        //     Specifically, panel entries ~ 2.0 with pivots ~ 0.005, so L ~ 400 >> 100
+        //   Block [4:8, 4:8]: moderate diagonal
+        //
+        // Complete pivoting searches only within the ib×ib diagonal block, so panel
+        // entries don't affect pivot selection.
+        //
+        // Also tested with ib=2 to get partial threshold failure (first 2 columns
+        // may pass if their diagonal is large enough).
+        let n = 8;
+
+        for &ib in &[4, 2] {
+            let a = symmetric_matrix(n, |i, j| {
+                match (i, j) {
+                    // Diagonal block [0:4, 0:4]
+                    // Complete pivoting picks largest first: 10.0, 10.0, then 0.005, 0.005
+                    // For ib=4: all 4 eliminated in block, but panel L ~ 2.0/0.005 = 400
+                    // For ib=2: block [0:2,0:2] → pivots 10.0,10.0 → panel L ~ 2.0/10 = 0.2 (OK)
+                    //           block [2:4,2:4] → pivots 0.005,0.005 → panel L ~ 2.0/0.005 = 400 (FAIL)
+                    (0, 0) => 10.0,
+                    (1, 1) => 10.0,
+                    (2, 2) => 0.005,
+                    (3, 3) => 0.005,
+                    (i, j) if i < 4 && j < 4 && i != j => 0.001,
+
+                    // Panel [4:8, 0:4]
+                    (_, j) if j < 4 => 2.0,
+
+                    // Lower-right block [4:8, 4:8]
+                    (i, _) if i == j => 20.0,
+                    (_, _) => 0.5,
+                }
+            });
+
+            let opts = AptpOptions {
+                inner_block_size: ib,
+                outer_block_size: 256,
+                threshold: 0.01,
+                ..AptpOptions::default()
+            };
+
+            let result = aptp_factor(a.as_ref(), &opts).unwrap();
+
+            let sum = result.stats.num_1x1 + 2 * result.stats.num_2x2 + result.stats.num_delayed;
+            assert_eq!(sum, n, "ib={}: statistics invariant: {} != {}", ib, sum, n);
+
+            eprintln!(
+                "targeted (ib={}): 1x1={}, 2x2={}, delayed={}, eliminated={}, max_l={:.2e}",
+                ib,
+                result.stats.num_1x1,
+                result.stats.num_2x2,
+                result.stats.num_delayed,
+                n - result.stats.num_delayed,
+                result.stats.max_l_entry
+            );
+
+            // Check reconstruction if fully eliminated
+            if result.stats.num_delayed == 0 {
+                let error = dense_reconstruction_error(
+                    &a,
+                    &result.l,
+                    &result.d,
+                    result.perm.as_ref().arrays().0,
+                );
+                eprintln!("targeted (ib={}): reconstruction error = {:.2e}", ib, error);
+                assert!(
+                    error < 1e-12,
+                    "targeted (ib={}): reconstruction error {:.2e} >= 1e-12 (no delays)",
+                    ib,
+                    error
+                );
+            }
+
+            // Verify that delays happened (at least for ib=4, columns 2,3 should be
+            // delayed because L panel entries exceed 1/0.01=100)
+            if ib == 4 || ib == 2 {
+                // With small pivots 0.005 and panel entries 2.0:
+                // L = 2.0 / 0.005 = 400, which far exceeds 100
+                // Expect delays for the small-pivot columns
+                assert!(
+                    result.stats.num_delayed > 0,
+                    "ib={}: expected some delays for small-pivot columns",
+                    ib
+                );
+            }
+
+            // Also check partial factorization with contribution block
+            {
+                let p = 6; // Only 6 of 8 fully summed
+                let mut a_copy = a.clone();
+                let opts_partial = AptpOptions {
+                    inner_block_size: ib,
+                    outer_block_size: 256,
+                    threshold: 0.01,
+                    ..AptpOptions::default()
+                };
+                let result_p = aptp_factor_in_place(a_copy.as_mut(), p, &opts_partial).unwrap();
+                let error_p = check_partial_factorization_in_place(&a, &a_copy, &result_p);
+                eprintln!(
+                    "targeted partial (ib={}, p={}): elim={}, delay={}, error={:.2e}",
+                    ib, p, result_p.num_eliminated, result_p.stats.num_delayed, error_p
+                );
+                assert!(
+                    error_p < 1e-10,
+                    "targeted partial (ib={}, p={}): error {:.2e} >= 1e-10",
+                    ib, p, error_p
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_factor_inner_with_delays_aggressive() {
+        // Aggressive test using a Lehmer-like matrix structure with perturbations
+        // designed to trigger many threshold failures.
+        //
+        // The matrix is constructed as: A = Q * diag(d_i) * Q^T where d_i are
+        // alternating +/- with varying magnitudes. Then specific rows are scaled
+        // to create problematic panel entries.
+        //
+        // We test with multiple (n, ib) combos and multiple seeds.
+
+        let test_cases: Vec<(usize, usize, u64)> = vec![
+            (12, 4, 1),
+            (12, 4, 2),
+            (12, 4, 3),
+            (16, 4, 1),
+            (16, 4, 2),
+            (16, 8, 1),
+            (20, 4, 1),
+            (24, 4, 1),
+            (24, 8, 1),
+            (32, 4, 1),
+            (32, 8, 1),
+            (32, 16, 1),
+            (48, 8, 1),
+            (64, 8, 1),
+            (64, 16, 1),
+        ];
+
+        let mut total_delays = 0;
+        let mut max_error = 0.0_f64;
+        let mut worst_config = String::new();
+
+        for &(n, ib, seed) in &test_cases {
+            // Build a random symmetric indefinite matrix
+            let mut a = deterministic_indefinite_matrix(n, seed * 31337, 5.0);
+
+            // Apply cause_delays to create threshold failures
+            cause_delays(&mut a, seed * 31337 + 7919, 1000.0);
+
+            let opts = AptpOptions {
+                inner_block_size: ib,
+                outer_block_size: n.max(ib),
+                threshold: 0.01,
+                ..AptpOptions::default()
+            };
+
+            let result = aptp_factor(a.as_ref(), &opts).unwrap();
+
+            let sum = result.stats.num_1x1
+                + 2 * result.stats.num_2x2
+                + result.stats.num_delayed;
+            assert_eq!(
+                sum, n,
+                "(n={}, ib={}, seed={}): stats invariant {} != {}",
+                n, ib, seed, sum, n
+            );
+
+            total_delays += result.stats.num_delayed;
+
+            if result.stats.num_delayed == 0 {
+                let error = dense_reconstruction_error(
+                    &a,
+                    &result.l,
+                    &result.d,
+                    result.perm.as_ref().arrays().0,
+                );
+                if error > max_error {
+                    max_error = error;
+                    worst_config = format!(
+                        "n={}, ib={}, seed={}: error={:.2e}",
+                        n, ib, seed, error
+                    );
+                }
+                assert!(
+                    error < 1e-10,
+                    "(n={}, ib={}, seed={}): reconstruction error {:.2e} >= 1e-10",
+                    n, ib, seed, error
+                );
+            }
+        }
+
+        eprintln!(
+            "aggressive test: {} total delays across {} configs, worst error: {}",
+            total_delays,
+            test_cases.len(),
+            worst_config
+        );
+    }
+
+    #[test]
+    fn test_factor_inner_cause_delays_then_compare_single_vs_blocked() {
+        // Compare factor_inner (ib > 1) vs ib=n (effectively single-block).
+        // Both should produce reconstruction error < 1e-12 if no delays,
+        // and the same number of eliminations.
+        //
+        // This catches bugs where blocking introduces errors that single-block
+        // factorization does not.
+
+        let seeds = [42u64, 137, 271, 314, 997];
+        let n = 16;
+
+        for &seed in &seeds {
+            let mut a = deterministic_indefinite_matrix(n, seed, 5.0);
+            cause_delays(&mut a, seed + 5000, 500.0);
+
+            // Single-block: ib = n (factor_block_diagonal processes entire matrix)
+            let opts_single = AptpOptions {
+                inner_block_size: n,
+                outer_block_size: n,
+                threshold: 0.01,
+                ..AptpOptions::default()
+            };
+            let result_single = aptp_factor(a.as_ref(), &opts_single).unwrap();
+
+            // Blocked: ib = 4
+            let opts_blocked = AptpOptions {
+                inner_block_size: 4,
+                outer_block_size: n,
+                threshold: 0.01,
+                ..AptpOptions::default()
+            };
+            let result_blocked = aptp_factor(a.as_ref(), &opts_blocked).unwrap();
+
+            eprintln!(
+                "seed={}: single(elim={}, delay={}), blocked(elim={}, delay={})",
+                seed,
+                n - result_single.stats.num_delayed,
+                result_single.stats.num_delayed,
+                n - result_blocked.stats.num_delayed,
+                result_blocked.stats.num_delayed,
+            );
+
+            // Both should achieve good reconstruction when fully eliminated
+            if result_single.stats.num_delayed == 0 {
+                let error_s = dense_reconstruction_error(
+                    &a,
+                    &result_single.l,
+                    &result_single.d,
+                    result_single.perm.as_ref().arrays().0,
+                );
+                assert!(
+                    error_s < 1e-12,
+                    "seed={}: single-block error {:.2e}",
+                    seed,
+                    error_s
+                );
+            }
+
+            if result_blocked.stats.num_delayed == 0 {
+                let error_b = dense_reconstruction_error(
+                    &a,
+                    &result_blocked.l,
+                    &result_blocked.d,
+                    result_blocked.perm.as_ref().arrays().0,
+                );
+                assert!(
+                    error_b < 1e-12,
+                    "seed={}: blocked error {:.2e} >= 1e-12",
+                    seed,
+                    error_b
+                );
+            }
+        }
+    }
+
+    /// Check partial factorization: P^T A P = L D L^T + [0; 0; contribution]
+    ///
+    /// After factor_inner with num_fully_summed = p < m, the matrix contains:
+    /// - L entries in a[0..q, 0..q] (lower triangle, unit diagonal implicit)
+    /// - L panel in a[q..m, 0..q]
+    /// - Schur complement (contribution) in a[q..m, q..m]
+    ///
+    /// where q = num_eliminated <= p.
+    ///
+    /// Correctness condition: for the permuted matrix PAP^T,
+    ///   PAP^T[0..m, 0..m] = L[0..m, 0..q] * D[0..q, 0..q] * L[0..m, 0..q]^T + [0_{q,q} 0; 0 S]
+    /// where S = a[q..m, q..m] after factorization (the Schur complement).
+    fn check_partial_factorization_in_place(
+        original: &Mat<f64>,
+        factored: &Mat<f64>,
+        result: &AptpFactorResult,
+    ) -> f64 {
+        let m = original.nrows();
+        let q = result.num_eliminated;
+        let perm = &result.perm;
+        let d = &result.d;
+
+        // Build PAP^T
+        let mut papt = Mat::zeros(m, m);
+        for i in 0..m {
+            for j in 0..m {
+                papt[(i, j)] = original[(perm[i], perm[j])];
+            }
+        }
+
+        // Extract L (m x q, unit lower triangular in first q columns)
+        let mut l_full = Mat::zeros(m, q);
+        for i in 0..q {
+            l_full[(i, i)] = 1.0;
+        }
+        let mut col = 0;
+        while col < q {
+            match d.get_pivot_type(col) {
+                PivotType::OneByOne => {
+                    for i in (col + 1)..m {
+                        l_full[(i, col)] = factored[(i, col)];
+                    }
+                    col += 1;
+                }
+                PivotType::TwoByTwo { partner } if partner > col => {
+                    // a[(col+1, col)] is D off-diagonal, not L
+                    for i in (col + 2)..m {
+                        l_full[(i, col)] = factored[(i, col)];
+                        l_full[(i, col + 1)] = factored[(i, col + 1)];
+                    }
+                    col += 2;
+                }
+                _ => {
+                    col += 1;
+                }
+            }
+        }
+
+        // Build D (q x q)
+        let mut d_mat = Mat::zeros(q, q);
+        col = 0;
+        while col < q {
+            match d.get_pivot_type(col) {
+                PivotType::OneByOne => {
+                    d_mat[(col, col)] = d.get_1x1(col);
+                    col += 1;
+                }
+                PivotType::TwoByTwo { partner } if partner > col => {
+                    let block = d.get_2x2(col);
+                    d_mat[(col, col)] = block.a;
+                    d_mat[(col, col + 1)] = block.b;
+                    d_mat[(col + 1, col)] = block.b;
+                    d_mat[(col + 1, col + 1)] = block.c;
+                    col += 2;
+                }
+                _ => {
+                    col += 1;
+                }
+            }
+        }
+
+        // Compute L * D * L^T (m x m)
+        // First: W = L * D (m x q)
+        let mut w = Mat::zeros(m, q);
+        for i in 0..m {
+            for j in 0..q {
+                let mut sum = 0.0;
+                for k in 0..q {
+                    sum += l_full[(i, k)] * d_mat[(k, j)];
+                }
+                w[(i, j)] = sum;
+            }
+        }
+        // Then: LDL^T = W * L^T (m x m)
+        let mut ldlt = Mat::zeros(m, m);
+        for i in 0..m {
+            for j in 0..m {
+                let mut sum = 0.0;
+                for k in 0..q {
+                    sum += w[(i, k)] * l_full[(j, k)];
+                }
+                ldlt[(i, j)] = sum;
+            }
+        }
+
+        // Extract Schur complement S = factored[q..m, q..m]
+        // The residual should be: PAP^T - LDL^T = [0 0; 0 S]
+        // So: PAP^T[i,j] - LDL^T[i,j] should be:
+        //   0 if i < q or j < q
+        //   S[i-q, j-q] = factored[i,j] if i >= q and j >= q
+        let mut max_error = 0.0_f64;
+        let mut norm_sq = 0.0_f64;
+        let mut diff_sq = 0.0_f64;
+
+        // Only check lower triangle (i >= j) because swap_symmetric only
+        // maintains the lower triangle of the dense frontal matrix.
+        // Production code (extract_contribution, extend_add) also reads
+        // only the lower triangle.
+        for i in 0..m {
+            for j in 0..=i {
+                // Count lower triangle entries twice for norm (symmetric)
+                let weight = if i == j { 1.0 } else { 2.0 };
+                norm_sq += weight * papt[(i, j)] * papt[(i, j)];
+                let residual = papt[(i, j)] - ldlt[(i, j)];
+                if i >= q && j >= q {
+                    // This should equal factored[i, j] (the Schur complement)
+                    let schur_entry = factored[(i, j)];
+                    let err = (residual - schur_entry).abs();
+                    if err > max_error {
+                        max_error = err;
+                    }
+                    diff_sq += weight * (residual - schur_entry) * (residual - schur_entry);
+                } else {
+                    // Should be zero
+                    diff_sq += weight * residual * residual;
+                    if residual.abs() > max_error {
+                        max_error = residual.abs();
+                    }
+                }
+            }
+        }
+
+        if norm_sq == 0.0 {
+            diff_sq.sqrt()
+        } else {
+            (diff_sq / norm_sq).sqrt()
+        }
+    }
+
+    #[test]
+    fn test_factor_inner_partial_with_delays_schur_check() {
+        // This test exercises factor_inner on frontal matrices where
+        // num_fully_summed < m (partial factorization with contribution block),
+        // AND delays occur. This is exactly the scenario in multifrontal
+        // factorization where the bug was observed.
+        //
+        // The test verifies that:
+        //   PAP^T = L * D * L^T + [0 0; 0 S]
+        // where S is the Schur complement stored in the lower-right of the
+        // factored matrix.
+        //
+        // If backup/restore/update_cross_terms is wrong, S will be corrupted.
+
+        struct PartialConfig {
+            m: usize,   // total matrix dimension
+            p: usize,   // num_fully_summed
+            ib: usize,  // inner block size
+            seed: u64,
+            scale: f64,
+        }
+
+        let configs = [
+            // Small cases: 12x12 with p=8, ib=4 (2 inner blocks, 4 contribution rows)
+            PartialConfig { m: 12, p: 8, ib: 4, seed: 42, scale: 1000.0 },
+            PartialConfig { m: 12, p: 8, ib: 4, seed: 137, scale: 1000.0 },
+            PartialConfig { m: 12, p: 8, ib: 2, seed: 42, scale: 1000.0 },
+            // Medium: 16x12 (p=12 of 16), ib=4
+            PartialConfig { m: 16, p: 12, ib: 4, seed: 42, scale: 1000.0 },
+            PartialConfig { m: 16, p: 12, ib: 4, seed: 271, scale: 1000.0 },
+            // 20x16, ib=4
+            PartialConfig { m: 20, p: 16, ib: 4, seed: 42, scale: 1000.0 },
+            PartialConfig { m: 20, p: 16, ib: 8, seed: 42, scale: 1000.0 },
+            // Larger: 32x24, ib=8
+            PartialConfig { m: 32, p: 24, ib: 8, seed: 42, scale: 1000.0 },
+            PartialConfig { m: 32, p: 24, ib: 4, seed: 42, scale: 1000.0 },
+            // 48x32, ib=8
+            PartialConfig { m: 48, p: 32, ib: 8, seed: 42, scale: 1000.0 },
+            // Extreme scale
+            PartialConfig { m: 16, p: 12, ib: 4, seed: 42, scale: 1e6 },
+            // More seeds
+            PartialConfig { m: 16, p: 12, ib: 4, seed: 314, scale: 1000.0 },
+            PartialConfig { m: 16, p: 12, ib: 4, seed: 997, scale: 1000.0 },
+        ];
+
+        let mut any_delays = false;
+        let mut worst_error = 0.0_f64;
+        let mut worst_config = String::new();
+
+        for (idx, config) in configs.iter().enumerate() {
+            let mut a = deterministic_indefinite_matrix(config.m, config.seed, 5.0);
+            cause_delays(&mut a, config.seed + 1000, config.scale);
+
+            let opts = AptpOptions {
+                inner_block_size: config.ib,
+                outer_block_size: config.m.max(config.ib),
+                threshold: 0.01,
+                ..AptpOptions::default()
+            };
+
+            let original = a.clone();
+            let result = aptp_factor_in_place(a.as_mut(), config.p, &opts).unwrap();
+
+            let sum = result.stats.num_1x1
+                + 2 * result.stats.num_2x2
+                + result.stats.num_delayed;
+            assert_eq!(
+                sum, config.p,
+                "config {} (m={}, p={}, ib={}): stats invariant {} != {}",
+                idx, config.m, config.p, config.ib, sum, config.p
+            );
+
+            if result.stats.num_delayed > 0 {
+                any_delays = true;
+            }
+
+            // Check partial factorization correctness (PAP^T = LDL^T + [0;S])
+            let error = check_partial_factorization_in_place(&original, &a, &result);
+
+            eprintln!(
+                "config {} (m={}, p={}, ib={}, seed={}, scale={:.0e}): \
+                 elim={}, delay={}, partial_error={:.2e}",
+                idx,
+                config.m,
+                config.p,
+                config.ib,
+                config.seed,
+                config.scale,
+                result.num_eliminated,
+                result.stats.num_delayed,
+                error
+            );
+
+            if error > worst_error {
+                worst_error = error;
+                worst_config = format!(
+                    "config {} (m={}, p={}, ib={}, seed={})",
+                    idx, config.m, config.p, config.ib, config.seed
+                );
+            }
+
+            if error >= 1e-10 {
+                eprintln!(
+                    "  *** FAILURE: config {} (m={}, p={}, ib={}, seed={}): \
+                     partial factorization error {:.2e} >= 1e-10",
+                    idx, config.m, config.p, config.ib, config.seed, error
+                );
+            }
+        }
+
+        eprintln!(
+            "partial factorization test: any_delays={}, worst_error: {} at {}",
+            any_delays, worst_error, worst_config
+        );
+
+        assert!(
+            any_delays,
+            "No configurations triggered threshold delays. \
+             Adjust scale or matrix construction to create delays."
+        );
+
+        assert!(
+            worst_error < 1e-10,
+            "Worst partial factorization error: {:.2e} at {}\n\
+             This indicates corrupted Schur complement — bug in \
+             backup/restore/update_cross_terms logic in factor_inner.",
+            worst_error,
+            worst_config
+        );
+    }
+
+    #[test]
+    fn debug_partial_factor_config1() {
+        // Config 1: m=12, p=8, ib=4, seed=137, scale=1e3
+        // Expected: elim=4, delay=4
+        let mut a = deterministic_indefinite_matrix(12, 137, 5.0);
+        cause_delays(&mut a, 137 + 1000, 1000.0);
+
+        let original = a.clone();
+        let opts = AptpOptions {
+            inner_block_size: 4,
+            outer_block_size: 12,
+            threshold: 0.01,
+            ..AptpOptions::default()
+        };
+
+        let result = aptp_factor_in_place(a.as_mut(), 8, &opts).unwrap();
+        let q = result.num_eliminated;
+        eprintln!("q={}, delays={}, 1x1={}, 2x2={}", q, result.stats.num_delayed, result.stats.num_1x1, result.stats.num_2x2);
+        eprintln!("perm = {:?}", &result.perm);
+
+        let error = check_partial_factorization_in_place(&original, &a, &result);
+        eprintln!("partial error = {:.2e}", error);
+
+        let m = 12;
+        let perm = &result.perm;
+        let d = &result.d;
+
+        let mut papt = Mat::zeros(m, m);
+        for i in 0..m {
+            for j in 0..m {
+                papt[(i, j)] = original[(perm[i], perm[j])];
+            }
+        }
+
+        let mut l_full = Mat::zeros(m, q);
+        for i in 0..q {
+            l_full[(i, i)] = 1.0;
+        }
+        let mut col = 0;
+        while col < q {
+            match d.get_pivot_type(col) {
+                PivotType::OneByOne => {
+                    for i in (col + 1)..m {
+                        l_full[(i, col)] = a[(i, col)];
+                    }
+                    col += 1;
+                }
+                PivotType::TwoByTwo { partner } if partner > col => {
+                    for i in (col + 2)..m {
+                        l_full[(i, col)] = a[(i, col)];
+                        l_full[(i, col + 1)] = a[(i, col + 1)];
+                    }
+                    col += 2;
+                }
+                _ => { col += 1; }
+            }
+        }
+
+        let mut d_mat = Mat::zeros(q, q);
+        col = 0;
+        while col < q {
+            match d.get_pivot_type(col) {
+                PivotType::OneByOne => {
+                    d_mat[(col, col)] = d.get_1x1(col);
+                    col += 1;
+                }
+                PivotType::TwoByTwo { partner } if partner > col => {
+                    let blk = d.get_2x2(col);
+                    d_mat[(col, col)] = blk.a;
+                    d_mat[(col, col + 1)] = blk.b;
+                    d_mat[(col + 1, col)] = blk.b;
+                    d_mat[(col + 1, col + 1)] = blk.c;
+                    col += 2;
+                }
+                _ => { col += 1; }
+            }
+        }
+
+        let w = &l_full * &d_mat;
+        let ldlt = &w * l_full.transpose();
+
+        let mut max_err_elim = 0.0_f64;
+        let mut max_err_schur = 0.0_f64;
+        let mut max_err_cross = 0.0_f64;
+
+        for i in 0..m {
+            for j in 0..m {
+                let residual = papt[(i, j)] - ldlt[(i, j)];
+                if i < q && j < q {
+                    max_err_elim = max_err_elim.max(residual.abs());
+                } else if i >= q && j >= q {
+                    let schur_entry = a[(i, j)];
+                    let err = (residual - schur_entry).abs();
+                    if err > max_err_schur {
+                        max_err_schur = err;
+                        eprintln!("  Schur error at ({},{}) = {:.6e}: residual={:.6e}, factored={:.6e}",
+                            i, j, err, residual, schur_entry);
+                    }
+                } else {
+                    if residual.abs() > max_err_cross {
+                        max_err_cross = residual.abs();
+                        eprintln!("  Cross error at ({},{}) = {:.6e}", i, j, residual.abs());
+                    }
+                }
+            }
+        }
+
+        eprintln!("max_err_elim  = {:.2e}", max_err_elim);
+        eprintln!("max_err_cross = {:.2e}", max_err_cross);
+        eprintln!("max_err_schur = {:.2e}", max_err_schur);
     }
 }

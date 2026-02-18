@@ -326,63 +326,161 @@ as an option at the SparseLDLT level.
 Run with: `cargo run --example diagnose_failures --release`
 
 
-## After implementing auto-detection ordering heuristic:
+## Before audit
+
+Partial result on `test_solve_suitesparse_full` using the Duff et al (2020) protocol (`MatchOrderMetis` for hard-indefinite, otherwise plain METIS):
 
 ```
 Matrix                                          n           BE  Status
 --------------------------------------------------------------------------------
-BenElechi/BenElechi1                       245874     6.79e-19  PASS
-Koutsovasilis/F2                            71505     1.54e-18  PASS
-PARSEC/H2O                                  67024     4.69e-18  PASS
-PARSEC/Si10H16                              17077     1.31e-17  PASS
-PARSEC/Si5H12                               19896     8.07e-18  PASS
-PARSEC/SiNa                                  5743     9.85e-18  PASS
-Newman/astro-ph                             16706      1.71e-3  FAIL
-Boeing/bcsstk39                             46772     1.11e-18  PASS
+BenElechi/BenElechi1                       245874     6.80e-19  PASS
+Koutsovasilis/F2                            71505     1.45e-18  PASS
+PARSEC/H2O                                  67024     4.66e-18  PASS
+PARSEC/Si10H16                              17077     3.00e-17  PASS
+PARSEC/Si5H12                               19896     7.82e-18  PASS
+PARSEC/SiNa                                  5743     9.56e-18  PASS
+Newman/astro-ph                             16706      1.68e-3  FAIL
+Boeing/bcsstk39                             46772     1.15e-18  PASS
 GHS_indef/bloweybq                          10001     3.26e-11  PASS
-GHS_indef/copter2                           55476      1.12e-3  FAIL
-Boeing/crystk02                             13965      6.05e-5  FAIL
-Boeing/crystk03                             24696      7.15e-5  FAIL
-GHS_indef/dawson5                           51537      2.21e-3  FAIL
+GHS_indef/copter2                           55476      1.47e-3  FAIL
+Boeing/crystk02                             13965      1.40e-5  FAIL
+Boeing/crystk03                             24696      1.98e-6  FAIL
+GHS_indef/dawson5                           51537      2.61e-3  FAIL
 GHS_indef/dixmaanl                          60000     4.89e-18  PASS
-Oberwolfach/filter3D                       106437     1.07e-18  PASS
-Oberwolfach/gas_sensor                      66917     1.15e-18  PASS
-GHS_indef/helm3d01                          32226      2.14e-3  FAIL
+Oberwolfach/filter3D                       106437     1.05e-18  PASS
+Oberwolfach/gas_sensor                      66917     1.12e-18  PASS
+GHS_indef/helm3d01                          32226      3.41e-3  FAIL
 GHS_indef/linverse                          11999     6.47e-18  PASS
-INPRO/msdoor                               415863     4.76e-19  PASS
+INPRO/msdoor                               415863     4.83e-19  PASS
 ND/nd3k                                      9000     1.30e-17  PASS
-Boeing/pwtk                                217918      1.39e-4  FAIL
-Cunningham/qa8fk                            66127     1.93e-18  PASS
+Boeing/pwtk                                217918      1.38e-4  FAIL
+Cunningham/qa8fk                            66127     1.86e-18  PASS
 Oberwolfach/rail_79841                      79841     7.34e-19  PASS
-GHS_indef/sparsine                          50000      1.73e-3  FAIL
+GHS_indef/sparsine                          50000      3.03e-3  FAIL
 GHS_indef/spmsrtls                          29995      1.72e-6  FAIL
 Oberwolfach/t2dal                            4257     2.66e-18  PASS
-Oberwolfach/t3dh                            79171     1.45e-18  PASS
-Cote/vibrobox                               12328      2.92e-5  FAIL
-TSOPF/TSOPF_FS_b162_c1                      10798      4.40e-7  FAIL
-TSOPF/TSOPF_FS_b39_c7                       28216      2.94e-6  FAIL
+Oberwolfach/t3dh                            79171     1.52e-18  PASS
+Cote/vibrobox                               12328      1.55e-5  FAIL
+TSOPF/TSOPF_FS_b162_c1                      10798      3.90e-7  FAIL
+TSOPF/TSOPF_FS_b39_c7                       28216      4.55e-6  FAIL
 GHS_indef/aug3dcqp                          35543     3.45e-10  RELAXED
 GHS_indef/blockqp1                          60012     1.11e-13  PASS
-GHS_indef/bratu3d                           27792      1.00e-9  RELAXED
-GHS_indef/c-71                              76638      1.33e-6  FAIL
-Schenk_IBMNA/c-big                         345241      5.07e-3  FAIL
-GHS_indef/cont-201                          80595     6.79e-19  PASS
-GHS_indef/cont-300                         180895      7.44e-6  FAIL
-GHS_indef/cvxqp3                            17500      1.98e-7  FAIL
-GHS_indef/d_pretok                         182730      2.85e-6  FAIL
-GHS_indef/mario001                          38434     2.56e-18  PASS
-GHS_indef/ncvxqp1                           12111     8.86e-14  PASS
-GHS_indef/ncvxqp3                           75000      1.58e-7  FAIL
-GHS_indef/ncvxqp5                           62500      1.45e-7  FAIL
-GHS_indef/ncvxqp7                           87500      1.42e-7  FAIL
-GHS_indef/stokes128                         49666      1.38e-9  RELAXED
-GHS_indef/turon_m                          189924      1.26e-3  FAIL
-AMD/G3_circuit                            1585478     1.39e-19  PASS
-Schenk_AFE/af_0_k101                       503625     4.73e-19  PASS
-Schenk_AFE/af_shell7                       504855     4.16e-19  PASS
-GHS_psdef/apache2                          715176     1.46e-19  PASS
-GHS_psdef/bmwcra_1                         148770     1.01e-18  PASS
-Oberwolfach/boneS01                        127224     1.16e-18  PASS
-Rothberg/cfd2                              123440     8.25e-19  PASS
-GHS_psdef/crankseg_1                        52804     1.90e-17  PASS
+GHS_indef/bratu3d                           27792      7.76e-4  FAIL
+GHS_indef/c-71                              76638      1.76e-5  FAIL
 ```
+
+Result with `MatchOrderMetis` only:
+
+```
+Matrix                                          n           BE  Status
+--------------------------------------------------------------------------------
+BenElechi/BenElechi1                       245874     7.17e-19  PASS
+Koutsovasilis/F2                            71505     1.51e-18  PASS
+PARSEC/H2O                                  67024     4.72e-18  PASS
+PARSEC/Si10H16                              17077     2.62e-17  PASS
+PARSEC/Si5H12                               19896     8.10e-18  PASS
+PARSEC/SiNa                                  5743     8.82e-18  PASS
+Newman/astro-ph                             16706      2.65e-3  FAIL
+Boeing/bcsstk39                             46772     1.24e-18  PASS
+GHS_indef/bloweybq                          10001     4.27e-11  PASS
+GHS_indef/copter2                           55476      1.26e-3  FAIL
+Boeing/crystk02                             13965     3.42e-18  PASS
+Boeing/crystk03                             24696     1.48e-18  PASS
+GHS_indef/dawson5                           51537      1.13e-3  FAIL
+GHS_indef/dixmaanl                          60000     3.39e-18  PASS
+Oberwolfach/filter3D                       106437     1.09e-18  PASS
+Oberwolfach/gas_sensor                      66917     1.24e-18  PASS
+GHS_indef/helm3d01                          32226      1.86e-3  FAIL
+GHS_indef/linverse                          11999      1.11e-5  FAIL
+INPRO/msdoor                               415863     4.99e-19  PASS
+ND/nd3k                                      9000     1.26e-17  PASS
+Boeing/pwtk                                217918      1.48e-4  FAIL
+Cunningham/qa8fk                            66127     1.81e-18  PASS
+Oberwolfach/rail_79841                      79841     8.21e-19  PASS
+```
+
+
+Result with plain METIS only:
+
+```
+Matrix                                          n           BE  Status
+--------------------------------------------------------------------------------
+BenElechi/BenElechi1                       245874     6.80e-19  PASS
+Koutsovasilis/F2                            71505     1.45e-18  PASS
+PARSEC/H2O                                  67024     4.66e-18  PASS
+PARSEC/Si10H16                              17077     3.00e-17  PASS
+PARSEC/Si5H12                               19896     7.82e-18  PASS
+PARSEC/SiNa                                  5743     9.56e-18  PASS
+Newman/astro-ph                             16706      1.68e-3  FAIL
+Boeing/bcsstk39                             46772     1.15e-18  PASS
+GHS_indef/bloweybq                          10001     3.26e-11  PASS
+GHS_indef/copter2                           55476      1.47e-3  FAIL
+Boeing/crystk02                             13965      1.40e-5  FAIL
+Boeing/crystk03                             24696      1.98e-6  FAIL
+GHS_indef/dawson5                           51537      2.61e-3  FAIL
+GHS_indef/dixmaanl                          60000     4.89e-18  PASS
+Oberwolfach/filter3D                       106437     1.05e-18  PASS
+Oberwolfach/gas_sensor                      66917     1.12e-18  PASS
+GHS_indef/helm3d01                          32226      3.41e-3  FAIL
+GHS_indef/linverse                          11999     6.47e-18  PASS
+INPRO/msdoor                               415863     4.83e-19  PASS
+ND/nd3k                                      9000     1.30e-17  PASS
+Boeing/pwtk                                217918      1.38e-4  FAIL
+Cunningham/qa8fk                            66127     1.86e-18  PASS
+Oberwolfach/rail_79841                      79841     7.34e-19  PASS
+GHS_indef/sparsine                          50000      3.03e-3  FAIL
+GHS_indef/spmsrtls                          29995      1.72e-6  FAIL
+Oberwolfach/t2dal                            4257     2.66e-18  PASS
+Oberwolfach/t3dh                            79171     1.52e-18  PASS
+Cote/vibrobox                               12328      1.55e-5  FAIL
+TSOPF/TSOPF_FS_b162_c1                      10798      9.54e-8  FAIL
+TSOPF/TSOPF_FS_b39_c7                       28216      7.78e-6  FAIL
+GHS_indef/aug3dcqp                          35543     2.21e-10  RELAXED
+GHS_indef/blockqp1                          60012     1.75e-14  PASS
+GHS_indef/bratu3d                           27792      6.15e-3  FAIL
+GHS_indef/c-71                              76638      1.33e-6  FAIL
+```
+
+
+## After `extract_front_factors` fix
+
+
+```
+Matrix                                          n           BE  Status
+--------------------------------------------------------------------------------
+BenElechi/BenElechi1                       245874     6.80e-19  PASS
+Koutsovasilis/F2                            71505     1.45e-18  PASS
+PARSEC/H2O                                  67024     4.66e-18  PASS
+PARSEC/Si10H16                              17077     3.00e-17  PASS
+PARSEC/Si5H12                               19896     7.82e-18  PASS
+PARSEC/SiNa                                  5743     9.56e-18  PASS
+Newman/astro-ph                             16706      2.79e-3  FAIL
+Boeing/bcsstk39                             46772     1.15e-18  PASS
+GHS_indef/bloweybq                          10001     2.68e-18  PASS
+GHS_indef/copter2                           55476      6.87e-4  FAIL
+Boeing/crystk02                             13965      1.40e-5  FAIL
+Boeing/crystk03                             24696      1.98e-6  FAIL
+GHS_indef/dawson5                           51537     7.45e-17  PASS
+GHS_indef/dixmaanl                          60000     4.89e-18  PASS
+Oberwolfach/filter3D                       106437     1.05e-18  PASS
+Oberwolfach/gas_sensor                      66917     1.12e-18  PASS
+GHS_indef/helm3d01                          32226      1.24e-3  FAIL
+GHS_indef/linverse                          11999     6.47e-18  PASS
+INPRO/msdoor                               415863     4.83e-19  PASS
+ND/nd3k                                      9000     1.30e-17  PASS
+Boeing/pwtk                                217918     6.55e-19  PASS
+Cunningham/qa8fk                            66127     1.86e-18  PASS
+Oberwolfach/rail_79841                      79841     7.34e-19  PASS
+GHS_indef/sparsine                          50000      2.18e-3  FAIL
+GHS_indef/spmsrtls                          29995     1.30e-17  PASS
+Oberwolfach/t2dal                            4257     2.66e-18  PASS
+Oberwolfach/t3dh                            79171     1.52e-18  PASS
+Cote/vibrobox                               12328      4.22e-4  FAIL
+TSOPF/TSOPF_FS_b162_c1                      10798      2.34e-7  FAIL
+TSOPF/TSOPF_FS_b39_c7                       28216      5.98e-8  FAIL
+GHS_indef/aug3dcqp                          35543     7.00e-19  PASS
+GHS_indef/blockqp1                          60012     1.11e-13  PASS
+GHS_indef/bratu3d                           27792     2.56e-18  PASS
+```
+
+`MatchOrderMetis` only

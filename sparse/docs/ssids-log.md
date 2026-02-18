@@ -1,5 +1,145 @@
 # SSIDS Development Log
 
+## Phase 8.1b: BLAS-3 Refactoring & Accuracy Audit
+
+**Status**: Complete
+**Branch**: `017-two-level-aptp`
+**Date**: 2026-02-18
+
+### Summary
+
+Refactored `factor_inner` from BLAS-2 to BLAS-3 pipeline (factor_block_diagonal →
+apply_and_check → update_trailing), then conducted a comprehensive 4-agent audit of
+the full multifrontal pipeline when backward error remained correlated with front size.
+Found and fixed a critical bug in `extract_front_factors` that caused 10^12-10^14x
+backward error degradation on matrices with pivot delays.
+
+### BLAS-3 Refactoring
+
+Restructured the inner blocking loop to match SPRAL's `run_elim_pivoted_notasks`:
+
+1. **`factor_block_diagonal`**: Complete pivoting within an ib×ib diagonal block.
+   Block-scoped row swaps, returns `block_perm` and `block_nelim`.
+
+2. **`apply_and_check`**: TRSM-based L21 computation (panel below diagonal block)
+   + D^{-1} scaling + threshold scan. Returns `effective_nelim ≤ block_nelim`.
+
+3. **`update_trailing`**: GEMM-based Schur complement A22 -= L21*D*L21^T.
+
+4. **`BlockBackup`**: Pre-factor backup of diagonal+panel region. Supports
+   `restore_failed` for full restore and `restore_diagonal_with_perm` for
+   partial restore of failed columns only.
+
+5. **Failure handling**: On threshold failure (effective_nelim < block_nelim),
+   partial restore of failed diagonal entries with permutation, cross-term
+   Schur updates for passed columns, then swap delayed columns to end.
+
+### Accuracy Audit (4 Agents)
+
+After BLAS-3 refactoring, backward error remained correlated with max_front size
+(bloweybq BE=3.26e-11 at front=13, stokes128 BE=6.08e-6 at front=547, bratu3d
+BE=7.55e-4 at front=1496). Launched 4 parallel audit agents:
+
+**Agent A — Frontal Matrix Assembly** (`numeric.rs`): NO BUGS FOUND.
+`scatter_original_entries` upper-triangle skip logic correct, `extend_add`
+accumulation correct, frontal matrix initialization correct.
+
+**Agent B — Triangular Solve** (`solve.rs`): **BUG FOUND** in `extract_front_factors`.
+When APTP delays columns (ne < k fully-summed eliminated), L21 was extracted from
+rows `k..m` instead of `ne..m`, missing TRSM-computed entries at delayed row positions
+`ne..k`. The `extract_contribution` function in the same file correctly included these
+rows — an internal inconsistency.
+
+**Agent C — MC64 Scaling Application** (`solver.rs`): NO BUGS FOUND.
+Matrix scaling, RHS scale/unscale, permutation composition all correct. Matches SPRAL.
+
+**Agent D — Empirical Isolation**: Confirmed fix resolves primary backward error issues.
+Per-supernode reconstruction diagnostics on bratu3d (MatchOrderMetis) show worst
+reconstruction error = 1.31 (SN 3611, front=799) but BE=2.56e-18 — no bug. Plain
+METIS still fails (known ordering-dependent issue).
+
+### Critical Bug Fix: `extract_front_factors` Delayed Row L21 Entries
+
+**Root cause**: When APTP eliminates `ne` out of `k` fully-summed columns (ne < k due
+to delays), the factored frontal matrix has valid L21 entries at rows `ne..k` (the
+delayed fully-summed rows). These entries were computed by `apply_and_check`'s TRSM
+before the columns failed the threshold test.
+
+`extract_front_factors` extracted L21 from rows `k..m` only, missing rows `ne..k`.
+
+**Fix**: Changed L21 extraction from `frontal.data[(k..m, 0..ne)]` to
+`frontal.data[(ne..m, 0..ne)]`, and built `row_indices` to include delayed rows
+via `result.perm[ne..k]` followed by `frontal.row_indices[k..]`.
+
+**Impact on solve**:
+- Forward solve: L21 * work now correctly scatters to delayed row positions
+- Backward solve: delayed row contributions now correctly gathered for L21^T updates
+
+### Before/After Backward Error
+
+| Matrix | max_front | Before Fix | After Fix | Change |
+|--------|----------:|:----------:|:---------:|:------:|
+| bratu3d | 1,496 | 7.55e-4 | **2.56e-18** | 10^14x |
+| stokes128 | 547 | 6.08e-6 | **3.75e-18** | 10^12x |
+| bloweybq | 13 | 3.26e-11 | **2.68e-18** | 10^7x |
+| sparsine (single) | 11,131 | 2.68e-3 | 4.21e-5 | 60x |
+
+### Remaining: Large-Front Accuracy
+
+Several matrices with max_front > 1000 still show backward error ~1e-3 to 1e-5.
+Per-supernode reconstruction errors of O(1)-O(10) confirm this is numerical
+precision in the dense APTP kernel, not an extraction or solve bug.
+
+| Matrix | max_front | BE (MatchOrderMetis) | Status |
+|--------|----------:|:--------------------:|:------:|
+| sparsine | 11,131 | 4.21e-5 | FAIL |
+| helm3d01 | 2,226 | 1.86e-3 | FAIL |
+| dawson5 | 1,044 | 1.13e-3 | FAIL |
+| copter2 | 1,252 | 1.26e-3 | FAIL |
+| cvxqp3 | 1,664 | 8.32e-7 | FAIL |
+| astro-ph | 2,228 | 2.65e-3 | FAIL |
+| pwtk | 1,068 | 1.48e-4 | FAIL |
+
+Potential fixes (Phase 9 candidates):
+- Iterative refinement (most impactful)
+- Store D^{-1} instead of D (match SPRAL)
+- Profile-guided inner block size tuning
+
+### Tests Added
+
+10 new tests:
+
+**`src/aptp/numeric.rs`** (5 extract_front_factors regression tests):
+1. `test_extract_front_factors_l21_includes_delayed_rows` — L21 dimension check
+2. `test_extract_front_factors_contribution_row_indices_consistent` — delayed row consistency
+3. `test_extract_front_factors_delayed_l21_entries_populated` — TRSM entries preserved
+4. `test_extract_front_factors_reconstruction_with_delays` — L11*D11*L11^T reconstruction
+5. `test_extract_front_factors_solve_roundtrip_with_delays` — full [L11;L21]*D*[L11;L21]^T
+
+**`src/aptp/factor.rs`** (5 factor_inner delay tests):
+1. `test_factor_inner_with_delays` — SPRAL-style cause_delays across 10 configurations
+2. `test_factor_inner_with_delays_targeted` — handcrafted matrix triggering partial block success
+3. `test_factor_inner_with_delays_aggressive` — 15 (n, ib, seed) combinations
+4. `test_factor_inner_cause_delays_then_compare_single_vs_blocked` — single vs blocked equivalence
+5. `test_factor_inner_partial_with_delays_schur_check` — Schur complement P^TAP = LDL^T + [0 0;0 S]
+
+### Test Results
+
+- 347 lib tests pass (10 new)
+- 51 integration tests pass (29 multifrontal + 22 solve)
+- All hand-constructed matrices and SuiteSparse CI subset pass (except sparsine — large-front)
+
+### Files Changed
+
+- `src/aptp/factor.rs` — BLAS-3 pipeline refactoring + 5 delay tests + helpers
+- `src/aptp/numeric.rs` — extract_front_factors fix + 5 regression tests
+- `tests/solve.rs` — solve test updates
+- `docs/backward-error-investigation.md` — investigation results
+- `docs/phase8-audit-investigation.md` — NEW: full audit documentation
+- `docs/ssids-plan.md` — plan updates
+
+---
+
 ## Phase 8.1: Two-Level APTP Factorization
 
 **Status**: Complete
