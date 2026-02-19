@@ -430,6 +430,11 @@ impl SparseLDLT {
         self.numeric.as_ref().map(|n| n.stats())
     }
 
+    /// Get per-supernode diagnostic statistics from the most recent factorization.
+    pub fn per_supernode_stats(&self) -> Option<&[super::numeric::PerSupernodeStats]> {
+        self.numeric.as_ref().map(|n| n.per_supernode_stats())
+    }
+
     /// Matrix dimension (from symbolic analysis).
     pub fn n(&self) -> usize {
         self.symbolic.nrows()

@@ -187,6 +187,31 @@ impl FrontFactors {
     }
 }
 
+/// Per-supernode diagnostic statistics.
+///
+/// Collected during [`AptpNumeric::factor`] for each supernode processed.
+/// Provides visibility into per-front behavior for debugging and comparison
+/// with reference solvers (e.g., SPRAL).
+#[derive(Debug, Clone)]
+pub struct PerSupernodeStats {
+    /// Supernode index in postorder.
+    pub snode_id: usize,
+    /// Frontal matrix dimension (m).
+    pub front_size: usize,
+    /// Number of fully-summed rows/columns (k = supernode cols + delayed from children).
+    pub num_fully_summed: usize,
+    /// Number of columns successfully eliminated (ne <= k).
+    pub num_eliminated: usize,
+    /// Number of delayed columns (k - ne).
+    pub num_delayed: usize,
+    /// Number of 1x1 pivots accepted at this supernode.
+    pub num_1x1: usize,
+    /// Number of 2x2 pivot pairs accepted at this supernode.
+    pub num_2x2: usize,
+    /// Maximum absolute L entry at this supernode (stability metric).
+    pub max_l_entry: f64,
+}
+
 /// Aggregate statistics from multifrontal factorization.
 ///
 /// Reports pivot counts, delay events, and front sizes across all supernodes.
@@ -235,6 +260,8 @@ pub struct AptpNumeric {
     front_factors: Vec<FrontFactors>,
     /// Aggregate factorization statistics.
     stats: FactorizationStats,
+    /// Per-supernode diagnostic statistics (same order as `front_factors`).
+    per_supernode_stats: Vec<PerSupernodeStats>,
     /// Matrix dimension.
     n: usize,
 }
@@ -248,6 +275,13 @@ impl AptpNumeric {
     /// Aggregate factorization statistics.
     pub fn stats(&self) -> &FactorizationStats {
         &self.stats
+    }
+
+    /// Per-supernode diagnostic statistics.
+    ///
+    /// One entry per supernode in postorder, matching [`front_factors`](Self::front_factors).
+    pub fn per_supernode_stats(&self) -> &[PerSupernodeStats] {
+        &self.per_supernode_stats
     }
 
     /// Matrix dimension.
@@ -317,6 +351,7 @@ impl AptpNumeric {
         let mut contributions: Vec<Option<ContributionBlock>> =
             (0..n_supernodes).map(|_| None).collect();
         let mut front_factors_vec = Vec::with_capacity(n_supernodes);
+        let mut per_sn_stats = Vec::with_capacity(n_supernodes);
         let mut stats = FactorizationStats {
             total_1x1_pivots: 0,
             total_2x2_pivots: 0,
@@ -392,6 +427,18 @@ impl AptpNumeric {
             stats.total_2x2_pivots += result.stats.num_2x2;
             stats.total_delayed += result.stats.num_delayed;
 
+            // 6b. Record per-supernode diagnostics
+            per_sn_stats.push(PerSupernodeStats {
+                snode_id: s,
+                front_size: m,
+                num_fully_summed: k,
+                num_eliminated: ne,
+                num_delayed: k - ne,
+                num_1x1: result.stats.num_1x1,
+                num_2x2: result.stats.num_2x2,
+                max_l_entry: result.stats.max_l_entry,
+            });
+
             // 7. Extract and store front factors
             let ff = extract_front_factors(&frontal, &result);
             front_factors_vec.push(ff);
@@ -417,8 +464,158 @@ impl AptpNumeric {
         Ok(AptpNumeric {
             front_factors: front_factors_vec,
             stats,
+            per_supernode_stats: per_sn_stats,
             n,
         })
+    }
+
+    /// Export the assembled (pre-factorization) frontal matrix for a specific supernode.
+    ///
+    /// Runs the multifrontal assembly up to the target supernode, factoring all
+    /// preceding supernodes to generate their contributions, then returns the
+    /// assembled frontal matrix for the target **before** APTP factoring.
+    ///
+    /// Returns `(frontal_data, m, k, row_indices)` where:
+    /// - `frontal_data` is the m x m dense frontal matrix (lower triangle populated)
+    /// - `m` is the total front size
+    /// - `k` is the number of fully-summed columns
+    /// - `row_indices` are the global permuted column indices for each local row
+    ///
+    /// # Selecting the Target Supernode
+    ///
+    /// If `target_snode` is `None`, the supernode with the largest front size is used.
+    /// Otherwise, the specified supernode index is used.
+    ///
+    /// # Use Case
+    ///
+    /// This is a diagnostic tool for comparing our APTP dense kernel with SPRAL's
+    /// `ldlt_app_factor` on the same assembled input. The exported matrix can be
+    /// written to a file and fed to a SPRAL driver.
+    pub fn export_assembled_frontal(
+        symbolic: &AptpSymbolic,
+        matrix: &SparseColMat<usize, f64>,
+        options: &AptpOptions,
+        scaling: Option<&[f64]>,
+        target_snode: Option<usize>,
+    ) -> Result<(Mat<f64>, usize, usize, Vec<usize>), SparseError> {
+        let n = symbolic.nrows();
+
+        if matrix.nrows() != n || matrix.ncols() != n {
+            return Err(SparseError::DimensionMismatch {
+                expected: (n, n),
+                got: (matrix.nrows(), matrix.ncols()),
+                context: "Matrix dimensions must match symbolic analysis".to_string(),
+            });
+        }
+
+        let supernodes = build_supernode_info(symbolic);
+        let n_supernodes = supernodes.len();
+        let children = build_children_map(&supernodes);
+        let (perm_fwd, perm_inv) = symbolic.perm_vecs();
+
+        // Determine target supernode
+        let target = match target_snode {
+            Some(t) => {
+                if t >= n_supernodes {
+                    return Err(SparseError::AnalysisFailure {
+                        reason: format!(
+                            "Target supernode {} out of range (n_supernodes={})",
+                            t, n_supernodes
+                        ),
+                    });
+                }
+                t
+            }
+            None => {
+                // Find supernode with largest front
+                let mut best = 0;
+                let mut best_m = 0;
+                for (s, sn) in supernodes.iter().enumerate() {
+                    let sn_ncols = sn.col_end - sn.col_begin;
+                    // Approximate: delayed cols not counted here, just pattern + cols
+                    let m_approx = sn_ncols + sn.pattern.len();
+                    if m_approx > best_m {
+                        best_m = m_approx;
+                        best = s;
+                    }
+                }
+                best
+            }
+        };
+
+        let mut global_to_local = vec![usize::MAX; n];
+        let mut contributions: Vec<Option<ContributionBlock>> =
+            (0..n_supernodes).map(|_| None).collect();
+
+        // Process supernodes in postorder up to and including target
+        for s in 0..=target {
+            let sn = &supernodes[s];
+
+            // 1. Collect delayed columns from children
+            let mut delayed_cols: Vec<usize> = Vec::new();
+            for &c in &children[s] {
+                if let Some(ref cb) = contributions[c] {
+                    delayed_cols.extend_from_slice(&cb.row_indices[..cb.num_delayed]);
+                }
+            }
+
+            // 2. Compute frontal matrix structure
+            let sn_cols: Vec<usize> = (sn.col_begin..sn.col_end).collect();
+            let k = sn_cols.len() + delayed_cols.len();
+            let mut frontal_rows: Vec<usize> = Vec::with_capacity(k + sn.pattern.len());
+            frontal_rows.extend_from_slice(&sn_cols);
+            frontal_rows.extend_from_slice(&delayed_cols);
+            frontal_rows.extend_from_slice(&sn.pattern);
+            let m = frontal_rows.len();
+
+            // 3. Build global-to-local mapping
+            for (i, &global) in frontal_rows.iter().enumerate() {
+                global_to_local[global] = i;
+            }
+
+            // 4. Assemble frontal matrix
+            let mut frontal = FrontalMatrix {
+                data: Mat::zeros(m, m),
+                row_indices: frontal_rows.clone(),
+                num_fully_summed: k,
+            };
+
+            scatter_original_entries(
+                &mut frontal, matrix, &perm_fwd, &perm_inv,
+                &global_to_local, sn.col_begin..sn.col_end, scaling,
+            );
+
+            for &c in &children[s] {
+                if let Some(cb) = contributions[c].take() {
+                    extend_add(&mut frontal, &cb, &global_to_local);
+                }
+            }
+
+            if s == target {
+                // Return the assembled frontal matrix BEFORE factoring
+                // Clean up global_to_local
+                for &global in &frontal_rows {
+                    global_to_local[global] = usize::MAX;
+                }
+                return Ok((frontal.data, m, k, frontal_rows));
+            }
+
+            // Factor this supernode (needed for contribution propagation)
+            let result = aptp_factor_in_place(frontal.data.as_mut(), k, options)?;
+            let ne = result.num_eliminated;
+
+            if sn.parent.is_some() && ne < m {
+                contributions[s] = Some(extract_contribution(&frontal, &result));
+            }
+
+            // Cleanup
+            for &global in &frontal_rows {
+                global_to_local[global] = usize::MAX;
+            }
+        }
+
+        // Should not reach here — we return inside the loop at s == target
+        unreachable!("Target supernode {} not reached in postorder loop", target)
     }
 }
 
