@@ -9,7 +9,7 @@
 
 use faer::Col;
 use rivrs_sparse::aptp::{
-    AnalyzeOptions, FactorOptions, OrderingStrategy, SparseLDLT,
+    AnalyzeOptions, FactorOptions, OrderingStrategy, SparseLDLT, match_order_metis,
 };
 use rivrs_sparse::io::registry::{self, MatrixMetadata};
 use rivrs_sparse::validate::sparse_backward_error;
@@ -94,6 +94,61 @@ fn solve_with_block_size(
     );
 }
 
+/// Diagnostic: use MatchOrderMetis ordering but WITHOUT scaling.
+/// This isolates whether the condensation ordering or the scaling is the problem.
+fn solve_mo_ordering_no_scaling(
+    a: &faer::sparse::SparseColMat<usize, f64>,
+    b: &Col<f64>,
+    outer_block_size: usize,
+) {
+    // Get MatchOrderMetis ordering + scaling
+    let mo_result = match_order_metis(a).expect("match_order_metis");
+
+    // Use the ordering as UserSupplied (this bypasses scaling storage)
+    let analyze_opts = AnalyzeOptions {
+        ordering: OrderingStrategy::UserSupplied(mo_result.ordering),
+    };
+    let mut solver = SparseLDLT::analyze(a.symbolic(), &analyze_opts).expect("analyze");
+
+    let factor_opts = FactorOptions {
+        outer_block_size,
+        ..FactorOptions::default()
+    };
+    solver.factor(a, &factor_opts).expect("factor");
+
+    let scratch = solver.solve_scratch(1);
+    let mut mem = faer::dyn_stack::MemBuffer::new(scratch);
+    let stack = faer::dyn_stack::MemStack::new(&mut mem);
+    let x = solver.solve(b, stack).expect("solve");
+
+    let be = sparse_backward_error(a, &x, b);
+    let stats = solver.stats().unwrap();
+
+    let status = if be < SPRAL_BE_THRESHOLD {
+        "PASS"
+    } else if be < RELAXED_BE_THRESHOLD {
+        "RELAXED"
+    } else {
+        "FAIL"
+    };
+
+    println!(
+        "  {:<20} nb={:<6} BE={:.2e} ({:<7})  1x1={:<6} 2x2={:<6} delay={:<6} max_front={}",
+        "MO-ord, no scale",
+        if outer_block_size == usize::MAX {
+            "MAX".to_string()
+        } else {
+            outer_block_size.to_string()
+        },
+        be,
+        status,
+        stats.total_1x1_pivots,
+        stats.total_2x2_pivots,
+        stats.total_delayed,
+        stats.max_front_size,
+    );
+}
+
 fn run_matrix(meta: &MatrixMetadata) {
     let test = match registry::load_test_matrix_from_entry(meta) {
         Ok(Some(t)) => t,
@@ -115,7 +170,8 @@ fn run_matrix(meta: &MatrixMetadata) {
     let b = Col::from_fn(n, |i| b_vec[i]);
 
     // Same category-dependent ordering as test_solve_suitesparse_full
-    let ordering = ordering_for_category(&meta.category);
+    //     let ordering = ordering_for_category(&meta.category);
+    let ordering = OrderingStrategy::MatchOrderMetis;
 
     println!(
         "{}  (n={}, nnz={}, category={}, ordering={:?}):",
@@ -133,6 +189,11 @@ fn run_matrix(meta: &MatrixMetadata) {
         solve_with_block_size("two-level", a, &b, &ordering, nb);
     }
 
+    // Diagnostic: MatchOrder ordering WITHOUT scaling
+    println!("  --- Diagnostic: isolate ordering vs scaling ---");
+    solve_mo_ordering_no_scaling(a, &b, usize::MAX);
+    solve_mo_ordering_no_scaling(a, &b, 256);
+
     println!();
 }
 
@@ -140,10 +201,11 @@ fn main() {
     let all = registry::load_registry().expect("registry");
 
     let targets = [
+        "GHS_indef/dawson5",
         "GHS_indef/bratu3d",
         "GHS_indef/stokes128",
         "GHS_indef/bloweybq",
-        "GHS_indef/sparsine",
+        // "GHS_indef/sparsine",
     ];
 
     for target in &targets {

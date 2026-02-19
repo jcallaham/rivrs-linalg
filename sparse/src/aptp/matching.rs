@@ -228,6 +228,8 @@ pub fn mc64_matching(
 
     if matched == n {
         // Full matching — compute scaling directly from dual variables
+        #[cfg(debug_assertions)]
+        assert_dual_feasibility(&graph, &state);
         let (scaling, fwd, inv) = build_full_match_result(&graph, &state);
         return Ok(Mc64Result {
             matching: Perm::new_checked(fwd.into_boxed_slice(), inv.into_boxed_slice(), n),
@@ -239,6 +241,10 @@ pub fn mc64_matching(
 
     // Structural singularity: matched < n
     let is_row_matched: Vec<bool> = (0..n).map(|i| state.row_match[i] != UNMATCHED).collect();
+
+    // Check dual feasibility for matched rows before modifying duals
+    #[cfg(debug_assertions)]
+    assert_dual_feasibility(&graph, &state);
 
     // Default to DualsDirect — matches SPRAL's effective behavior.
     let strategy = SingularScalingStrategy::DualsDirect;
@@ -348,6 +354,40 @@ fn compute_column_duals(graph: &CostGraph, state: &MatchingState) -> Vec<f64> {
         }
     }
     v
+}
+
+/// Verify dual feasibility: `u[i] + v[j] <= c[i,j] + eps` for all edges.
+///
+/// This is a mathematical invariant of the Hungarian algorithm. Violations
+/// indicate a bug in the Dijkstra augmentation or dual update logic.
+/// Only runs in debug builds to avoid overhead in release.
+#[cfg(debug_assertions)]
+fn assert_dual_feasibility(graph: &CostGraph, state: &MatchingState) {
+    let eps = 1e-10;
+    let v = compute_column_duals(graph, state);
+    let n = graph.n;
+
+    for j in 0..n {
+        let col_start = graph.col_ptr[j];
+        let col_end = graph.col_ptr[j + 1];
+        for idx in col_start..col_end {
+            let i = graph.row_idx[idx];
+            // Only check matched rows — unmatched rows have uninitialized duals
+            if state.row_match[i] == UNMATCHED {
+                continue;
+            }
+            let slack = graph.cost[idx] - state.u[i] - v[j];
+            debug_assert!(
+                slack >= -eps,
+                "dual infeasibility: u[{}] + v[{}] - c[{},{}] = {:.6e} > eps",
+                i,
+                j,
+                i,
+                j,
+                -slack,
+            );
+        }
+    }
 }
 
 /// Build scaling, forward and inverse permutation for a full matching result.

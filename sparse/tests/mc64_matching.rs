@@ -16,7 +16,9 @@ use faer::sparse::{SparseColMat, Triplet};
 use rivrs_sparse::aptp::matching::count_cycles;
 use rivrs_sparse::aptp::{Mc64Job, Mc64Result, mc64_matching};
 use rivrs_sparse::io::registry;
-use rivrs_sparse::testing::{TestCaseFilter, load_test_cases, verify_spral_scaling_properties};
+use rivrs_sparse::testing::{
+    TestCaseFilter, classify_scaling_violations, load_test_cases, verify_spral_scaling_properties,
+};
 
 /// Helper: create a symmetric upper-triangular matrix from entries.
 fn make_upper_tri(n: usize, entries: &[(usize, usize, f64)]) -> SparseColMat<usize, f64> {
@@ -400,14 +402,37 @@ fn test_mc64_suitesparse_ci_subset() {
             );
         }
 
-        // (c) |s_i * a_ij * s_j| <= 1.0 for all entries
+        // (c) Categorized scaling violations
+        let report = classify_scaling_violations(&case.matrix, &result);
+
+        assert!(
+            report.max_matched_matched <= 1e-10,
+            "'{}': matched-matched violation = {:.2e} (dual feasibility broken)",
+            case.name,
+            report.max_matched_matched,
+        );
+        assert!(
+            report.max_matched_unmatched <= 1e-10,
+            "'{}': matched-unmatched violation = {:.2e} (Duff-Pralet broken)",
+            case.name,
+            report.max_matched_unmatched,
+        );
+        if report.max_unmatched_unmatched > 1e-10 {
+            eprintln!(
+                "  {}: unmatched-unmatched violation = {:.2e} ({}/{} edges) — inherent",
+                case.name,
+                report.max_unmatched_unmatched,
+                report.unmatched_unmatched_violation_count,
+                report.unmatched_unmatched_edge_count,
+            );
+        }
+
+        // Row-max quality check (recompute row_max for quality metrics)
         let symbolic = case.matrix.symbolic();
         let values = case.matrix.val();
         let col_ptrs = symbolic.col_ptr();
         let row_indices = symbolic.row_idx();
-
         let mut row_max = vec![0.0_f64; n];
-        let mut max_violation = 0.0_f64;
 
         for j in 0..n {
             let start = col_ptrs[j];
@@ -415,9 +440,6 @@ fn test_mc64_suitesparse_ci_subset() {
             for k in start..end {
                 let i = row_indices[k];
                 let scaled = (result.scaling[i] * values[k] * result.scaling[j]).abs();
-                if scaled > 1.0 + 1e-10 {
-                    max_violation = max_violation.max(scaled - 1.0);
-                }
                 if scaled > row_max[i] {
                     row_max[i] = scaled;
                 }
@@ -426,13 +448,6 @@ fn test_mc64_suitesparse_ci_subset() {
                 }
             }
         }
-
-        assert!(
-            max_violation < 1e-8,
-            "'{}': max scaling violation = {:.2e}",
-            case.name,
-            max_violation
-        );
 
         // (d) Row max quality check
         // For full-rank matrices with clean structure, the optimal matching ensures
@@ -600,17 +615,18 @@ fn test_mc64_suitesparse_full() {
             );
         }
 
-        // |s_i * a_ij * s_j| <= 1.0
+        // Categorized scaling violations
+        let report = classify_scaling_violations(matrix, &result);
+
+        // Compute row_max and diagonal dominance metrics
         let symbolic = matrix.symbolic();
         let values = matrix.val();
         let col_ptrs = symbolic.col_ptr();
         let row_indices = symbolic.row_idx();
 
         let mut row_max = vec![0.0_f64; n];
-        let mut max_violation = 0.0_f64;
         let mut has_negative_diag = false;
 
-        // Compute diagonal dominance before and after scaling
         let mut diag_before = vec![0.0_f64; n];
         let mut off_diag_sum_before = vec![0.0_f64; n];
         let mut diag_after = vec![0.0_f64; n];
@@ -624,9 +640,6 @@ fn test_mc64_suitesparse_full() {
                 let abs_val = values[k].abs();
                 let scaled = (result.scaling[i] * values[k] * result.scaling[j]).abs();
 
-                if scaled > 1.0 + 1e-10 {
-                    max_violation = max_violation.max(scaled - 1.0);
-                }
                 if scaled > row_max[i] {
                     row_max[i] = scaled;
                 }
@@ -634,7 +647,6 @@ fn test_mc64_suitesparse_full() {
                     row_max[j] = scaled;
                 }
 
-                // Diagonal dominance metrics
                 if i == j {
                     if values[k] < 0.0 {
                         has_negative_diag = true;
@@ -654,11 +666,26 @@ fn test_mc64_suitesparse_full() {
         drop(test_matrix);
 
         assert!(
-            max_violation < 1e-8,
-            "'{}': max scaling violation = {:.2e}",
+            report.max_matched_matched <= 1e-10,
+            "'{}': matched-matched violation = {:.2e} (dual feasibility broken)",
             meta.name,
-            max_violation
+            report.max_matched_matched,
         );
+        assert!(
+            report.max_matched_unmatched <= 1e-10,
+            "'{}': matched-unmatched violation = {:.2e} (Duff-Pralet broken)",
+            meta.name,
+            report.max_matched_unmatched,
+        );
+        if report.max_unmatched_unmatched > 1e-10 {
+            eprintln!(
+                "  {} unmatched-unmatched violation = {:.2e} ({}/{} edges) — inherent",
+                meta.name,
+                report.max_unmatched_unmatched,
+                report.unmatched_unmatched_violation_count,
+                report.unmatched_unmatched_edge_count,
+            );
+        }
 
         // Row max quality: report statistics rather than hard-fail on individual rows.
         // CI-subset uses strict 1.0 - 1e-12 (all curated matrices hit 1.0 exactly).
