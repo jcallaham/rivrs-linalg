@@ -2055,6 +2055,22 @@ fn two_level_factor(
             }
         }
 
+        // Update col_order BEFORE delay swap: factor_inner may have permuted
+        // columns within the block. We must capture the pre-swap col_order so
+        // that orig_order[block_perm[i]] reads the correct original column index.
+        // If we swapped first, delayed positions would contain post-swap values,
+        // corrupting the mapping for eliminated columns.
+        {
+            let block_perm = &block_result.perm;
+            let orig_order: Vec<usize> =
+                col_order[col_start..col_start + block_cols].to_vec();
+            for i in 0..block_cols {
+                if block_perm[i] < block_cols {
+                    col_order[col_start + i] = orig_order[block_perm[i]];
+                }
+            }
+        }
+
         // ADJUST delayed columns: swap them to end of unprocessed region
         // so the next outer block processes fresh columns first.
         if block_nelim < block_cols {
@@ -2092,15 +2108,6 @@ fn two_level_factor(
                 _ => {
                     bcol += 1;
                 }
-            }
-        }
-
-        // Update col_order: factor_inner may have permuted columns within the block
-        let block_perm = &block_result.perm;
-        let orig_order: Vec<usize> = col_order[col_start..col_start + block_cols].to_vec();
-        for i in 0..block_cols {
-            if block_perm[i] < block_cols {
-                col_order[col_start + i] = orig_order[block_perm[i]];
             }
         }
 
@@ -3565,6 +3572,85 @@ mod tests {
             );
             assert!(err_t < 1e-12, "two-level error {:.2e}", err_t);
         }
+    }
+
+    #[test]
+    fn test_two_level_vs_unblocked_reconstruction() {
+        // Regression test for Bug 2: col_order tracking corruption in two_level_factor.
+        //
+        // When delay swaps happened BEFORE block_perm was applied to col_order,
+        // the permutation mapping was corrupted, causing massive reconstruction
+        // errors with small outer_block_size. This test verifies that both
+        // two-level (ob=128, forcing 4 outer iterations) and unblocked (ob=huge)
+        // paths produce equivalent, accurate reconstruction.
+        let n = 512;
+
+        // Build a symmetric indefinite matrix with small diagonal entries to force
+        // 2x2 pivots and some delays. Seed = golden ratio hash for reproducibility.
+        let a = symmetric_matrix(n, |i, j| {
+            let seed = (i * 997 + j * 1013 + 42) as f64;
+            let val = (seed * 0.618033988749).fract() * 2.0 - 1.0;
+            if i == j {
+                // Small diagonal → more 2x2 pivots and delays
+                val * 0.5
+            } else {
+                val
+            }
+        });
+
+        // Unblocked: outer_block_size >= n → single factor_inner call
+        let opts_unblocked = AptpOptions {
+            outer_block_size: 100_000,
+            inner_block_size: 32,
+            ..AptpOptions::default()
+        };
+        let result_unblocked = aptp_factor(a.as_ref(), &opts_unblocked).unwrap();
+        let err_unblocked = dense_reconstruction_error(
+            &a,
+            &result_unblocked.l,
+            &result_unblocked.d,
+            result_unblocked.perm.as_ref().arrays().0,
+        );
+        assert!(
+            err_unblocked < 1e-12,
+            "unblocked reconstruction error {:.2e} exceeds 1e-12",
+            err_unblocked,
+        );
+
+        // Two-level: outer_block_size=128 → ~4 outer iterations
+        let opts_two_level = AptpOptions {
+            outer_block_size: 128,
+            inner_block_size: 32,
+            ..AptpOptions::default()
+        };
+        let result_two_level = aptp_factor(a.as_ref(), &opts_two_level).unwrap();
+        let err_two_level = dense_reconstruction_error(
+            &a,
+            &result_two_level.l,
+            &result_two_level.d,
+            result_two_level.perm.as_ref().arrays().0,
+        );
+        assert!(
+            err_two_level < 1e-12,
+            "two-level reconstruction error {:.2e} exceeds 1e-12 \
+             (unblocked was {:.2e})",
+            err_two_level,
+            err_unblocked,
+        );
+
+        // Two-level error should be within 10x of unblocked
+        let ratio = if err_unblocked > 0.0 {
+            err_two_level / err_unblocked
+        } else {
+            1.0
+        };
+        assert!(
+            ratio < 10.0,
+            "two-level error ({:.2e}) is {:.1}x worse than unblocked ({:.2e})",
+            err_two_level,
+            ratio,
+            err_unblocked,
+        );
     }
 
     // ---- BLAS-3 pipeline tests ----

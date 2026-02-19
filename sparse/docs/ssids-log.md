@@ -1,5 +1,88 @@
 # SSIDS Development Log
 
+## Phase 8.1d: Fix col_order Tracking Bug in two_level_factor
+
+**Status**: Complete
+**Branch**: `017-two-level-aptp`
+**Date**: 2026-02-19
+
+### Summary
+
+Fixed a col_order tracking bug in `two_level_factor` where the delay swap and
+block_perm update operations were in the wrong order. When `factor_inner` delayed
+some columns, the delay swap modified `col_order` entries before the block_perm
+update could read them, corrupting the permutation mapping for eliminated columns.
+
+This fix resolves the discrepancy where the two-level path (ob=256) produced worse
+backward error than the unblocked path (ob=huge) on certain matrices.
+
+### Root Cause
+
+In each outer-block iteration, three operations happen when columns are delayed:
+
+1. **Row perm propagation** — propagate factor_inner's row permutation to committed L columns
+2. **Delay swap** — swap delayed columns to end of remaining range (modifies `col_order`)
+3. **Block perm update** — apply factor_inner's permutation to `col_order`
+
+Step 3 read `col_order[col_start..col_start+block_cols]` into `orig_order` AFTER
+step 2 had already modified entries via `col_order.swap(failed_pos, end)`. This meant
+`orig_order[block_perm[i]]` for eliminated columns at a previously-delayed position
+read the WRONG original column index.
+
+### The Fix
+
+Moved the block_perm update (step 3) to BEFORE the delay swap (step 2). Now
+`orig_order` captures pre-swap values, ensuring correct permutation mapping.
+
+### Results
+
+Full SuiteSparse suite (65 matrices): **52 strict pass, 3 relaxed, 10 fail**
+
+Key matrices improved by this fix:
+
+| Matrix | Before | After | Status |
+|--------|--------|-------|--------|
+| thread (n=29736) | FAIL | 2.53e-18 | PASS |
+| dawson5 (n=51537) | FAIL | 7.45e-17 | PASS |
+| stokes128 (n=49666) | FAIL | 3.74e-18 | PASS |
+| bratu3d (n=27792) | FAIL | 2.56e-18 | PASS |
+| bloweybq (n=10001) | FAIL | 2.68e-18 | PASS |
+| ncvxqp5 (n=62500) | FAIL | 7.08e-10 | RELAXED |
+| ncvxqp3 (n=75000) | FAIL | 4.52e-10 | RELAXED |
+
+Remaining 10 failures (copter2, helm3d01, astro-ph, sparsine at ~1e-5; cont-300,
+vibrobox, d_pretok, shipsec1/5/8 at ~1e-8 to 1e-6) are separate issues — see
+Remaining Failures below.
+
+### Remaining Failure Analysis
+
+The 10 remaining failures are NOT caused by two_level_factor bugs — they reproduce
+identically with the unblocked path (ob=huge). They fall into two categories:
+
+**Category A — Factorization-limited** (~1e-5 BE: copter2, helm3d01, sparsine, astro-ph):
+Large fronts (1000-11000 rows) where the APTP threshold-pivoting strategy produces
+suboptimal pivot sequences. Likely needs TPP (Threshold Partial Pivoting) fallback
+for fronts exceeding a size threshold, matching SPRAL's hybrid approach.
+
+**Category B — Moderate accuracy gap** (~1e-8 BE: cont-300, vibrobox, d_pretok, shipsec1/5/8):
+Close to threshold but not passing. May benefit from iterative refinement or
+improved pivot selection.
+
+### Regression Test
+
+Added `test_two_level_vs_unblocked_reconstruction`: 512x512 dense symmetric indefinite
+matrix with small diagonal (forcing 2x2 pivots and delays), verifying both ob=128
+(two-level, 4 outer iterations) and ob=huge (unblocked) achieve reconstruction error
+< 1e-12 and are within 10x of each other.
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `src/aptp/factor.rs` | Moved block_perm update before delay swap in `two_level_factor`. Added `test_two_level_vs_unblocked_reconstruction` regression test. |
+
+---
+
 ## Phase 8.1c: MC64 Dijkstra Heap Bug Fix & Pipeline Investigation
 
 **Status**: Complete
