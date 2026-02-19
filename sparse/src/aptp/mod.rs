@@ -38,7 +38,7 @@ pub use symbolic::{AptpSymbolic, SymbolicStatistics};
 
 pub use factor::{
     AptpFactorResult, AptpFactorization, AptpFallback, AptpOptions, AptpPivotRecord,
-    AptpStatistics, aptp_factor, aptp_factor_in_place,
+    AptpStatistics, FailedPivotMethod, aptp_factor, aptp_factor_in_place,
 };
 
 pub use numeric::{AptpNumeric, FactorizationStats, FrontFactors};

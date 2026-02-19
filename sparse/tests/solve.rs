@@ -270,7 +270,18 @@ fn test_solve_suitesparse_ci() {
         let b_vec = sparse_matvec(a, &x_vec);
         let b = Col::from_fn(n, |i| b_vec[i]);
 
-        let result = SparseLDLT::solve_full(a, &b, &SolverOptions::default());
+        // Follow Duff et al (2020) experimental protocol:
+        // hard-indefinite → MC64+METIS, otherwise → plain METIS
+        let ordering = if meta.category == "hard-indefinite" {
+            OrderingStrategy::MatchOrderMetis
+        } else {
+            OrderingStrategy::Metis
+        };
+        let opts = SolverOptions {
+            ordering,
+            ..SolverOptions::default()
+        };
+        let result = SparseLDLT::solve_full(a, &b, &opts);
         match result {
             Ok(x) => {
                 let be = sparse_backward_error(a, &x, &b);

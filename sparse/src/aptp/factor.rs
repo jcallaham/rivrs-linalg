@@ -92,6 +92,8 @@ pub struct AptpOptions {
     /// Inner block size (ib) for two-level APTP. Default: 32.
     /// Must be > 0 and <= outer_block_size.
     pub inner_block_size: usize,
+    /// Strategy for columns that APTP fails to eliminate. Default: Tpp.
+    pub failed_pivot_method: FailedPivotMethod,
 }
 
 impl Default for AptpOptions {
@@ -102,6 +104,7 @@ impl Default for AptpOptions {
             fallback: AptpFallback::BunchKaufman,
             outer_block_size: 256,
             inner_block_size: 32,
+            failed_pivot_method: FailedPivotMethod::Tpp,
         }
     }
 }
@@ -117,6 +120,26 @@ pub enum AptpFallback {
     BunchKaufman,
     /// Immediately delay the column without attempting 2x2.
     Delay,
+}
+
+/// Strategy for handling columns that APTP fails to eliminate.
+///
+/// When APTP's block-scoped search cannot find acceptable pivots for some
+/// columns, the `FailedPivotMethod` controls what happens next.
+///
+/// # References
+///
+/// - Duff, Hogg & Lopez (2020), Section 3: TPP fallback after APTP
+/// - SPRAL `options%failed_pivot_method`: 0 = pass, 1 = tpp (default)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FailedPivotMethod {
+    /// Retry failed columns with serial Threshold Partial Pivoting (default).
+    ///
+    /// TPP searches ALL remaining columns for acceptable pivots, which
+    /// succeeds where APTP's block-scoped search fails.
+    Tpp,
+    /// Pass failed columns directly to parent as delays (no retry).
+    Pass,
 }
 
 // ---------------------------------------------------------------------------
@@ -219,7 +242,7 @@ pub struct AptpPivotRecord {
 /// Implements the APTP strategy from Duff, Hogg & Lopez (2020).
 /// Single-level (column-by-column) variant.
 pub fn aptp_factor_in_place(
-    a: MatMut<'_, f64>,
+    mut a: MatMut<'_, f64>,
     num_fully_summed: usize,
     options: &AptpOptions,
 ) -> Result<AptpFactorResult, SparseError> {
@@ -266,12 +289,42 @@ pub fn aptp_factor_in_place(
         });
     }
 
-    // Dispatch: two-level for large fronts, factor_inner for small ones
-    if num_fully_summed > options.outer_block_size {
-        two_level_factor(a, num_fully_summed, options)
+    // Primary: APTP (two-level for large fronts, factor_inner for small ones)
+    let mut result = if num_fully_summed > options.outer_block_size {
+        two_level_factor(a.rb_mut(), num_fully_summed, options)?
     } else {
-        factor_inner(a, num_fully_summed, options)
+        factor_inner(a.rb_mut(), num_fully_summed, options)?
+    };
+
+    // Fallback: TPP on remaining columns
+    if result.num_eliminated < num_fully_summed
+        && options.failed_pivot_method == FailedPivotMethod::Tpp
+    {
+        let q = result.num_eliminated;
+
+        // Grow D to accommodate TPP's writes at positions q..num_fully_summed
+        result.d.grow(num_fully_summed);
+
+        let additional = tpp_factor(
+            a.rb_mut(),
+            q,
+            num_fully_summed,
+            &mut result.perm,
+            &mut result.d,
+            &mut result.stats,
+            &mut result.pivot_log,
+            options,
+        );
+
+        result.num_eliminated = q + additional;
+        result.d.truncate(result.num_eliminated);
+        result.delayed_cols = (result.num_eliminated..num_fully_summed)
+            .map(|i| result.perm[i])
+            .collect();
+        result.stats.num_delayed = num_fully_summed - result.num_eliminated;
     }
+
+    Ok(result)
 }
 
 /// Factor a dense symmetric matrix using APTP, returning extracted L factor.
@@ -2172,6 +2225,432 @@ fn two_level_factor(
     })
 }
 
+// ---------------------------------------------------------------------------
+// TPP (Threshold Partial Pivoting) fallback
+// ---------------------------------------------------------------------------
+
+/// Check if all entries in row/column `idx` within the uneliminated region are
+/// smaller than `small` in absolute value.
+///
+/// Scans row entries `a[(idx, c)]` for `c in from..idx` and column entries
+/// `a[(r, idx)]` for `r in idx..to`.
+///
+/// # SPRAL Equivalent
+/// `check_col_small()` in `spral/src/ssids/cpu/kernels/ldlt_tpp.cxx`
+fn tpp_is_col_small(a: MatRef<'_, f64>, idx: usize, from: usize, to: usize, small: f64) -> bool {
+    // Row entries: a[(idx, c)] for c < idx (lower triangle: idx > c)
+    for c in from..idx {
+        if a[(idx, c)].abs() >= small {
+            return false;
+        }
+    }
+    // Column entries: a[(r, idx)] for r >= idx (lower triangle: r >= idx)
+    for r in idx..to {
+        if a[(r, idx)].abs() >= small {
+            return false;
+        }
+    }
+    true
+}
+
+/// Find the column index with largest absolute entry in row `p`, scanning
+/// columns `from..to`.
+///
+/// For `c < p`: reads `a[(p, c)]` (lower triangle).
+/// For `c == p`: reads `a[(p, p)]` (diagonal).
+/// For `c > p`: reads `a[(c, p)]` (symmetric entry via lower triangle).
+///
+/// Returns the column index of the maximum. Returns `from` if `from >= to`.
+///
+/// # SPRAL Equivalent
+/// `find_row_abs_max()` in `spral/src/ssids/cpu/kernels/ldlt_tpp.cxx`
+fn tpp_find_row_abs_max(a: MatRef<'_, f64>, p: usize, from: usize, to: usize) -> usize {
+    if from >= to {
+        return from;
+    }
+    let mut best_idx = from;
+    let mut best_val = tpp_sym_entry(a, p, from).abs();
+    for c in (from + 1)..to {
+        let v = tpp_sym_entry(a, p, c).abs();
+        if v > best_val {
+            best_idx = c;
+            best_val = v;
+        }
+    }
+    best_idx
+}
+
+/// Read symmetric entry `a(row, col)` from lower triangle storage.
+#[inline]
+fn tpp_sym_entry(a: MatRef<'_, f64>, row: usize, col: usize) -> f64 {
+    if row >= col {
+        a[(row, col)]
+    } else {
+        a[(col, row)]
+    }
+}
+
+/// Find the maximum absolute value in row/column `col` among uneliminated
+/// positions, excluding one index and the diagonal.
+///
+/// Scans both the row (columns `nelim..col`) and the column (rows `col+1..m`),
+/// skipping index `exclude` (use `usize::MAX` to exclude nothing).
+///
+/// # SPRAL Equivalent
+/// `find_rc_abs_max_exclude()` in `spral/src/ssids/cpu/kernels/ldlt_tpp.cxx`
+fn tpp_find_rc_abs_max_exclude(
+    a: MatRef<'_, f64>,
+    col: usize,
+    nelim: usize,
+    m: usize,
+    exclude: usize,
+) -> f64 {
+    let mut best = 0.0_f64;
+    // Row part: a[(col, c)] for c in nelim..col
+    for c in nelim..col {
+        if c == exclude {
+            continue;
+        }
+        best = best.max(a[(col, c)].abs());
+    }
+    // Column part: a[(r, col)] for r in col+1..m
+    for r in (col + 1)..m {
+        if r == exclude {
+            continue;
+        }
+        best = best.max(a[(r, col)].abs());
+    }
+    best
+}
+
+/// Test if `(t, p)` with `t < p` form a good 2x2 pivot.
+///
+/// Three checks (matching SPRAL):
+/// 1. Non-zero pivot block: max(|a11|, |a21|, |a22|) >= small
+/// 2. Non-singular determinant with cancellation guard
+/// 3. Threshold: u * max(|D^{-1}_{11}|*maxt + |D^{-1}_{12}|*maxp,
+///    |D^{-1}_{12}|*maxt + |D^{-1}_{22}|*maxp) < 1
+///
+/// Returns `Some((a11, a21, a22))` (D values, NOT D^{-1}) on success.
+///
+/// # SPRAL Equivalent
+/// `test_2x2()` in `spral/src/ssids/cpu/kernels/ldlt_tpp.cxx`
+fn tpp_test_2x2(
+    a: MatRef<'_, f64>,
+    t: usize,
+    p: usize,
+    maxt: f64,
+    maxp: f64,
+    u: f64,
+    small: f64,
+) -> Option<(f64, f64, f64)> {
+    debug_assert!(t < p, "tpp_test_2x2 requires t < p");
+
+    let a11 = a[(t, t)];
+    let a21 = a[(p, t)]; // lower triangle: p > t
+    let a22 = a[(p, p)];
+
+    // 1. Non-zero pivot block
+    let maxpiv = a11.abs().max(a21.abs()).max(a22.abs());
+    if maxpiv < small {
+        return None;
+    }
+
+    // 2. Cancellation guard on determinant
+    let detscale = 1.0 / maxpiv;
+    let detpiv0 = (a11 * detscale) * a22;
+    let detpiv1 = (a21 * detscale) * a21;
+    let detpiv = detpiv0 - detpiv1;
+    if detpiv.abs() < small.max((detpiv0 / 2.0).abs()).max((detpiv1 / 2.0).abs()) {
+        return None;
+    }
+
+    // 3. Threshold test using D^{-1}
+    let d_inv_11 = (a22 * detscale) / detpiv;
+    let d_inv_12 = (-a21 * detscale) / detpiv;
+    let d_inv_22 = (a11 * detscale) / detpiv;
+
+    if maxt.max(maxp) < small {
+        // Rest of column is small — accept
+        return Some((a11, a21, a22));
+    }
+
+    let x1 = d_inv_11.abs() * maxt + d_inv_12.abs() * maxp;
+    let x2 = d_inv_12.abs() * maxt + d_inv_22.abs() * maxp;
+    if u * x1.max(x2) < 1.0 {
+        Some((a11, a21, a22))
+    } else {
+        None
+    }
+}
+
+/// Apply 1x1 pivot elimination at position `nelim`.
+///
+/// Computes L entries (divides column by D), then performs rank-1 Schur
+/// complement update on the entire lower triangle (including the contribution
+/// block beyond the fully-summed region).
+///
+/// Returns the maximum absolute L entry.
+fn tpp_apply_1x1(mut a: MatMut<'_, f64>, nelim: usize, m: usize) -> f64 {
+    let d = a[(nelim, nelim)];
+    let inv_d = 1.0 / d;
+
+    // Compute L entries
+    let mut max_l = 0.0_f64;
+    for i in (nelim + 1)..m {
+        let l_ik = a[(i, nelim)] * inv_d;
+        a[(i, nelim)] = l_ik;
+        max_l = max_l.max(l_ik.abs());
+    }
+
+    // Rank-1 Schur complement update (lower triangle only, including contribution block)
+    // a[(i,j)] -= L[i] * d * L[j] for j in (nelim+1)..m, i in j..m
+    for j in (nelim + 1)..m {
+        let ldlj = a[(j, nelim)] * d;
+        for i in j..m {
+            a[(i, j)] -= a[(i, nelim)] * ldlj;
+        }
+    }
+
+    max_l
+}
+
+/// Apply 2x2 pivot elimination at positions `(nelim, nelim+1)`.
+///
+/// Computes L entries using D^{-1}, then performs rank-2 Schur complement
+/// update on the entire lower triangle (including the contribution block).
+/// Sets `a[(nelim+1, nelim)] = 0.0` to match the APTP convention for
+/// `extract_front_factors`.
+///
+/// Returns the maximum absolute L entry.
+fn tpp_apply_2x2(mut a: MatMut<'_, f64>, nelim: usize, m: usize) -> f64 {
+    let a11 = a[(nelim, nelim)];
+    let a21 = a[(nelim + 1, nelim)];
+    let a22 = a[(nelim + 1, nelim + 1)];
+    let det = a11 * a22 - a21 * a21;
+    let inv_det = 1.0 / det;
+
+    // Compute L entries for rows below the 2x2 block
+    let mut max_l = 0.0_f64;
+    let start = nelim + 2;
+    for i in start..m {
+        let ai1 = a[(i, nelim)];
+        let ai2 = a[(i, nelim + 1)];
+        let l_i1 = (ai1 * a22 - ai2 * a21) * inv_det;
+        let l_i2 = (ai2 * a11 - ai1 * a21) * inv_det;
+        a[(i, nelim)] = l_i1;
+        a[(i, nelim + 1)] = l_i2;
+        max_l = max_l.max(l_i1.abs()).max(l_i2.abs());
+    }
+
+    // Rank-2 Schur complement update (lower triangle only, including contribution block)
+    // a[(i,j)] -= L[i,:] * D * L[j,:]^T
+    for j in start..m {
+        let wj1 = a[(j, nelim)] * a11 + a[(j, nelim + 1)] * a21;
+        let wj2 = a[(j, nelim)] * a21 + a[(j, nelim + 1)] * a22;
+        for i in j..m {
+            a[(i, j)] -= a[(i, nelim)] * wj1 + a[(i, nelim + 1)] * wj2;
+        }
+    }
+
+    // Zero D off-diagonal for extract_front_factors convention
+    a[(nelim + 1, nelim)] = 0.0;
+
+    max_l
+}
+
+/// TPP fallback: serial column-by-column factorization on APTP's remaining columns.
+///
+/// Operates on the partially-factored matrix `a` where columns `0..start_col`
+/// have been eliminated by APTP. Searches all remaining fully-summed columns
+/// (`start_col..num_fully_summed`) for acceptable pivots using threshold partial
+/// pivoting.
+///
+/// Uses full-matrix `swap_symmetric` which correctly propagates row swaps to
+/// already-factored L columns (matching SPRAL's `aleft` parameter).
+///
+/// Returns the number of additional columns eliminated.
+///
+/// # References
+///
+/// - SPRAL `ldlt_tpp_factor()` in `spral/src/ssids/cpu/kernels/ldlt_tpp.cxx` (BSD-3)
+/// - Duff, Hogg & Lopez (2020), Section 3: TPP as fallback after APTP
+#[allow(clippy::too_many_arguments)]
+fn tpp_factor(
+    mut a: MatMut<'_, f64>,
+    start_col: usize,
+    num_fully_summed: usize,
+    col_order: &mut [usize],
+    global_d: &mut MixedDiagonal,
+    stats: &mut AptpStatistics,
+    pivot_log: &mut Vec<AptpPivotRecord>,
+    options: &AptpOptions,
+) -> usize {
+    let m = a.nrows();
+    let n = num_fully_summed;
+    let u = options.threshold;
+    let small = options.small;
+
+    let mut nelim = start_col;
+
+    while nelim < n {
+        // Check if current column is effectively zero
+        if tpp_is_col_small(a.as_ref(), nelim, nelim, m, small) {
+            // Zero pivot: record and advance
+            global_d.set_1x1(nelim, 0.0);
+            stats.num_1x1 += 1;
+            pivot_log.push(AptpPivotRecord {
+                col: col_order[nelim],
+                pivot_type: PivotType::OneByOne,
+                max_l_entry: 0.0,
+                was_fallback: true,
+            });
+            // Zero the column entries
+            for r in (nelim + 1)..m {
+                a[(r, nelim)] = 0.0;
+            }
+            nelim += 1;
+            continue;
+        }
+
+        // Search columns p = nelim+1..n-1 for acceptable pivot
+        let mut found = false;
+        for p in (nelim + 1)..n {
+            // Check if column p is effectively zero
+            if tpp_is_col_small(a.as_ref(), p, nelim, m, small) {
+                // Swap zero column to front and record zero pivot
+                if p != nelim {
+                    swap_symmetric(a.rb_mut(), p, nelim);
+                    col_order.swap(p, nelim);
+                }
+                global_d.set_1x1(nelim, 0.0);
+                stats.num_1x1 += 1;
+                pivot_log.push(AptpPivotRecord {
+                    col: col_order[nelim],
+                    pivot_type: PivotType::OneByOne,
+                    max_l_entry: 0.0,
+                    was_fallback: true,
+                });
+                for r in (nelim + 1)..m {
+                    a[(r, nelim)] = 0.0;
+                }
+                nelim += 1;
+                found = true;
+                break;
+            }
+
+            // Find column index t of largest |a(p, c)| for c in nelim..p
+            let t = tpp_find_row_abs_max(a.as_ref(), p, nelim, p);
+
+            // Try (t, p) as 2x2 pivot (requires t < p)
+            let maxt = tpp_find_rc_abs_max_exclude(a.as_ref(), t, nelim, m, p);
+            let maxp = tpp_find_rc_abs_max_exclude(a.as_ref(), p, nelim, m, t);
+            if tpp_test_2x2(a.as_ref(), t, p, maxt, maxp, u, small)
+                .is_some()
+            {
+                // Accept 2x2 pivot: swap t→nelim, p→nelim+1
+                if t != nelim {
+                    swap_symmetric(a.rb_mut(), t, nelim);
+                    col_order.swap(t, nelim);
+                }
+                // After first swap, p may have moved
+                let new_p = if p == nelim { t } else { p };
+                if new_p != nelim + 1 {
+                    swap_symmetric(a.rb_mut(), new_p, nelim + 1);
+                    col_order.swap(new_p, nelim + 1);
+                }
+
+                // Re-read D values after swap
+                let d11 = a[(nelim, nelim)];
+                let d21 = a[(nelim + 1, nelim)];
+                let d22 = a[(nelim + 1, nelim + 1)];
+
+                // Apply elimination and Schur update
+                let max_l = tpp_apply_2x2(a.rb_mut(), nelim, m);
+
+                // Record pivot
+                global_d.set_2x2(Block2x2 {
+                    first_col: nelim,
+                    a: d11,
+                    b: d21,
+                    c: d22,
+                });
+                stats.num_2x2 += 1;
+                stats.max_l_entry = stats.max_l_entry.max(max_l);
+                pivot_log.push(AptpPivotRecord {
+                    col: col_order[nelim],
+                    pivot_type: PivotType::TwoByTwo {
+                        partner: col_order[nelim + 1],
+                    },
+                    max_l_entry: max_l,
+                    was_fallback: true,
+                });
+                pivot_log.push(AptpPivotRecord {
+                    col: col_order[nelim + 1],
+                    pivot_type: PivotType::TwoByTwo {
+                        partner: col_order[nelim],
+                    },
+                    max_l_entry: max_l,
+                    was_fallback: true,
+                });
+                nelim += 2;
+                found = true;
+                break;
+            }
+
+            // Try p as 1x1 pivot
+            // maxp should include |a(p, t)| (SPRAL line 225)
+            let maxp_with_t = maxp.max(a[(p, t)].abs());
+            if a[(p, p)].abs() >= u * maxp_with_t {
+                // Accept 1x1 pivot: swap p→nelim
+                if p != nelim {
+                    swap_symmetric(a.rb_mut(), p, nelim);
+                    col_order.swap(p, nelim);
+                }
+
+                let max_l = tpp_apply_1x1(a.rb_mut(), nelim, m);
+
+                global_d.set_1x1(nelim, a[(nelim, nelim)]);
+                stats.num_1x1 += 1;
+                stats.max_l_entry = stats.max_l_entry.max(max_l);
+                pivot_log.push(AptpPivotRecord {
+                    col: col_order[nelim],
+                    pivot_type: PivotType::OneByOne,
+                    max_l_entry: max_l,
+                    was_fallback: true,
+                });
+                nelim += 1;
+                found = true;
+                break;
+            }
+        }
+
+        if !found {
+            // Last resort: try column nelim as 1x1 (we started searching at nelim+1)
+            let maxp = tpp_find_rc_abs_max_exclude(a.as_ref(), nelim, nelim, m, usize::MAX);
+            if a[(nelim, nelim)].abs() >= u * maxp {
+                let max_l = tpp_apply_1x1(a.rb_mut(), nelim, m);
+
+                global_d.set_1x1(nelim, a[(nelim, nelim)]);
+                stats.num_1x1 += 1;
+                stats.max_l_entry = stats.max_l_entry.max(max_l);
+                pivot_log.push(AptpPivotRecord {
+                    col: col_order[nelim],
+                    pivot_type: PivotType::OneByOne,
+                    max_l_entry: max_l,
+                    was_fallback: true,
+                });
+                nelim += 1;
+            } else {
+                // No more pivots can be found
+                break;
+            }
+        }
+    }
+
+    nelim - start_col
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2549,7 +3028,10 @@ mod tests {
         let n = 4;
         let a = Mat::zeros(n, n);
 
-        let opts = AptpOptions::default();
+        let opts = AptpOptions {
+            failed_pivot_method: FailedPivotMethod::Pass,
+            ..AptpOptions::default()
+        };
         let result = aptp_factor(a.as_ref(), &opts).unwrap();
 
         assert_eq!(result.stats.num_1x1, 0);
@@ -2564,6 +3046,7 @@ mod tests {
 
         let opts = AptpOptions {
             fallback: AptpFallback::Delay,
+            failed_pivot_method: FailedPivotMethod::Pass,
             ..AptpOptions::default()
         };
         let result = aptp_factor(a.as_ref(), &opts).unwrap();
@@ -3848,6 +4331,7 @@ mod tests {
 
         let opts = AptpOptions {
             inner_block_size: 4,
+            failed_pivot_method: FailedPivotMethod::Pass,
             ..AptpOptions::default()
         };
         let mut a_copy = a.clone();
@@ -4094,14 +4578,16 @@ mod tests {
                 }
             });
 
-            let opts = AptpOptions {
+            // Test APTP delay behavior (TPP disabled so we can observe delays)
+            let opts_pass = AptpOptions {
                 inner_block_size: ib,
                 outer_block_size: 256,
                 threshold: 0.01,
+                failed_pivot_method: FailedPivotMethod::Pass,
                 ..AptpOptions::default()
             };
 
-            let result = aptp_factor(a.as_ref(), &opts).unwrap();
+            let result = aptp_factor(a.as_ref(), &opts_pass).unwrap();
 
             let sum = result.stats.num_1x1 + 2 * result.stats.num_2x2 + result.stats.num_delayed;
             assert_eq!(sum, n, "ib={}: statistics invariant: {} != {}", ib, sum, n);
@@ -4154,6 +4640,7 @@ mod tests {
                     inner_block_size: ib,
                     outer_block_size: 256,
                     threshold: 0.01,
+                    failed_pivot_method: FailedPivotMethod::Pass,
                     ..AptpOptions::default()
                 };
                 let result_p = aptp_factor_in_place(a_copy.as_mut(), p, &opts_partial).unwrap();
@@ -4543,6 +5030,7 @@ mod tests {
                 inner_block_size: config.ib,
                 outer_block_size: config.m.max(config.ib),
                 threshold: 0.01,
+                failed_pivot_method: FailedPivotMethod::Pass,
                 ..AptpOptions::default()
             };
 
@@ -4727,5 +5215,315 @@ mod tests {
         eprintln!("max_err_elim  = {:.2e}", max_err_elim);
         eprintln!("max_err_cross = {:.2e}", max_err_cross);
         eprintln!("max_err_schur = {:.2e}", max_err_schur);
+    }
+
+    // ---- TPP (Threshold Partial Pivoting) fallback tests ----
+
+    #[test]
+    fn test_tpp_helpers() {
+        // 4x4 lower triangle:
+        //  [  4.0   .    .    .  ]
+        //  [  0.5  -3.0  .    .  ]
+        //  [  0.1   0.2  5.0  .  ]
+        //  [  0.3  -0.4  0.6  2.0]
+        let a = symmetric_matrix(4, |i, j| {
+            let vals = [
+                [4.0, 0.5, 0.1, 0.3],
+                [0.5, -3.0, 0.2, -0.4],
+                [0.1, 0.2, 5.0, 0.6],
+                [0.3, -0.4, 0.6, 2.0],
+            ];
+            vals[i][j]
+        });
+
+        // tpp_is_col_small: col 0, from=0, to=4, small=5.0 → true (all entries < 5.0)
+        assert!(tpp_is_col_small(a.as_ref(), 0, 0, 4, 5.0));
+        // With small=0.01 → false (0.5, 0.1, 0.3 ≥ 0.01 and diag 4.0 ≥ 0.01)
+        assert!(!tpp_is_col_small(a.as_ref(), 0, 0, 4, 0.01));
+
+        // Zero column → true
+        let z = Mat::zeros(4, 4);
+        assert!(tpp_is_col_small(z.as_ref(), 0, 0, 4, 1e-20));
+
+        // tpp_find_row_abs_max: row 3, cols 0..3
+        // a[(3,0)]=0.3, a[(3,1)]=-0.4, a[(3,2)]=0.6 → max at col 2
+        let t = tpp_find_row_abs_max(a.as_ref(), 3, 0, 3);
+        assert_eq!(t, 2, "expected col 2, got {}", t);
+
+        // tpp_find_rc_abs_max_exclude: col 1, nelim=0, m=4, exclude=3
+        // row part: a[(1,0)]=0.5
+        // col part: a[(2,1)]=0.2 (excluding row 3)
+        // max = 0.5
+        let max_exc = tpp_find_rc_abs_max_exclude(a.as_ref(), 1, 0, 4, 3);
+        assert!((max_exc - 0.5).abs() < 1e-15, "expected 0.5, got {}", max_exc);
+
+        // tpp_test_2x2: (0, 1) with a11=4, a21=0.5, a22=-3
+        // det = 4*(-3) - 0.25 = -12.25 → non-singular
+        // With small=1e-20, u=0.01
+        let result = tpp_test_2x2(a.as_ref(), 0, 1, 0.6, 0.6, 0.01, 1e-20);
+        assert!(result.is_some(), "2x2 pivot (0,1) should pass");
+        let (d11, d12, d22) = result.unwrap();
+        assert!((d11 - 4.0).abs() < 1e-15);
+        assert!((d12 - 0.5).abs() < 1e-15);
+        assert!((d22 - (-3.0)).abs() < 1e-15);
+
+        // tpp_test_2x2 with near-singular block
+        let tiny = symmetric_matrix(2, |_, _| 1e-25);
+        assert!(tpp_test_2x2(tiny.as_ref(), 0, 1, 1e-25, 1e-25, 0.01, 1e-20).is_none());
+    }
+
+    #[test]
+    fn test_tpp_basic_1x1() {
+        // 4x4 diagonal-dominant matrix: all diagonals are acceptable 1x1 pivots
+        let a = symmetric_matrix(4, |i, j| {
+            if i == j {
+                [10.0, -8.0, 5.0, 7.0][i]
+            } else {
+                0.1
+            }
+        });
+
+        let opts = AptpOptions::default();
+        let result = aptp_factor(a.as_ref(), &opts).unwrap();
+
+        assert_eq!(result.stats.num_delayed, 0);
+        assert_eq!(result.stats.num_1x1 + 2 * result.stats.num_2x2, 4);
+
+        let error =
+            dense_reconstruction_error(&a, &result.l, &result.d, result.perm.as_ref().arrays().0);
+        assert!(error < 1e-12, "reconstruction error {:.2e}", error);
+    }
+
+    #[test]
+    fn test_tpp_basic_2x2() {
+        // 4x4 matrix where diagonal entries are small (fail 1x1 threshold)
+        // but off-diagonal entries create good 2x2 pivots.
+        let a = symmetric_matrix(4, |i, j| {
+            let vals = [
+                [0.001, 5.0, 0.01, 0.01],
+                [5.0, 0.001, 0.01, 0.01],
+                [0.01, 0.01, 0.001, 5.0],
+                [0.01, 0.01, 5.0, 0.001],
+            ];
+            vals[i][j]
+        });
+
+        let opts = AptpOptions::default();
+        let result = aptp_factor(a.as_ref(), &opts).unwrap();
+
+        assert_eq!(result.stats.num_delayed, 0);
+
+        let error =
+            dense_reconstruction_error(&a, &result.l, &result.d, result.perm.as_ref().arrays().0);
+        assert!(error < 1e-12, "reconstruction error {:.2e}", error);
+    }
+
+    #[test]
+    fn test_tpp_fallback_after_aptp() {
+        // 16x16 matrix designed so APTP delays columns that TPP recovers.
+        // Small inner block size forces many ib-scoped searches that fail,
+        // but TPP's exhaustive search finds pivots.
+        //
+        // Matrix structure:
+        //   Block [0:8, 0:8]: diagonal 10.0, small off-diag → easy APTP pivots
+        //   Block [8:12, 8:12]: diagonal 0.005, large off-diag → APTP delays
+        //   Block [12:16, 12:16]: diagonal 20.0 → easy pivots
+        //   Cross [8:12, 0:8]: large entries → panel L exceeds threshold
+        let n = 16;
+        let a = symmetric_matrix(n, |i, j| {
+            match (i, j) {
+                // Top-left 8x8: easy pivots
+                (i, j) if i < 8 && j < 8 => {
+                    if i == j { 10.0 } else { 0.01 }
+                }
+                // Middle 4x4: hard pivots (small diag, large off-diag)
+                (i, j) if i >= 8 && i < 12 && j >= 8 && j < 12 => {
+                    if i == j { 0.005 } else { 2.0 }
+                }
+                // Bottom-right 4x4: easy pivots
+                (i, j) if i >= 12 && j >= 12 => {
+                    if i == j { 20.0 } else { 0.1 }
+                }
+                // Cross terms: large
+                (i, j) if (8..12).contains(&i) && j < 8 => 3.0,
+                (i, j) if i < 8 && (8..12).contains(&j) => 3.0,
+                // Small cross terms elsewhere
+                _ => 0.01,
+            }
+        });
+
+        // With TPP disabled: APTP delays some columns
+        let opts_pass = AptpOptions {
+            inner_block_size: 4,
+            failed_pivot_method: FailedPivotMethod::Pass,
+            ..AptpOptions::default()
+        };
+        let result_pass = aptp_factor(a.as_ref(), &opts_pass).unwrap();
+
+        // With TPP enabled: should eliminate more columns
+        let opts_tpp = AptpOptions {
+            inner_block_size: 4,
+            failed_pivot_method: FailedPivotMethod::Tpp,
+            ..AptpOptions::default()
+        };
+        let result_tpp = aptp_factor(a.as_ref(), &opts_tpp).unwrap();
+
+        eprintln!(
+            "APTP only: elim={}, delayed={}",
+            n - result_pass.stats.num_delayed,
+            result_pass.stats.num_delayed
+        );
+        eprintln!(
+            "APTP+TPP:  elim={}, delayed={}",
+            n - result_tpp.stats.num_delayed,
+            result_tpp.stats.num_delayed
+        );
+
+        // TPP should recover at least some of APTP's delays
+        assert!(
+            result_tpp.stats.num_delayed <= result_pass.stats.num_delayed,
+            "TPP should not increase delays"
+        );
+
+        // If fully eliminated, check reconstruction
+        if result_tpp.stats.num_delayed == 0 {
+            let error = dense_reconstruction_error(
+                &a,
+                &result_tpp.l,
+                &result_tpp.d,
+                result_tpp.perm.as_ref().arrays().0,
+            );
+            assert!(
+                error < 1e-12,
+                "TPP reconstruction error {:.2e} >= 1e-12",
+                error
+            );
+        }
+    }
+
+    #[test]
+    fn test_tpp_reconstruction_stress() {
+        // 256x256 random indefinite matrix. Factor with TPP and verify reconstruction.
+        use rand::SeedableRng;
+        use rand::rngs::StdRng;
+        use rand_distr::{Distribution, Uniform};
+
+        let n = 256;
+        let mut rng = StdRng::seed_from_u64(42);
+        let dist = Uniform::new(-1.0f64, 1.0);
+
+        let mut a = Mat::zeros(n, n);
+        for i in 0..n {
+            for j in 0..=i {
+                let v: f64 = dist.sample(&mut rng);
+                a[(i, j)] = v;
+                a[(j, i)] = v;
+            }
+            // Strengthen diagonal to avoid excessive delays
+            let sign = if i % 3 == 0 { -1.0 } else { 1.0 };
+            a[(i, i)] = sign * (5.0 + dist.sample(&mut rng).abs());
+        }
+
+        let opts = AptpOptions {
+            failed_pivot_method: FailedPivotMethod::Tpp,
+            ..AptpOptions::default()
+        };
+        let result = aptp_factor(a.as_ref(), &opts).unwrap();
+
+        eprintln!(
+            "stress: n={}, 1x1={}, 2x2={}, delayed={}, max_l={:.2e}",
+            n,
+            result.stats.num_1x1,
+            result.stats.num_2x2,
+            result.stats.num_delayed,
+            result.stats.max_l_entry
+        );
+
+        if result.stats.num_delayed == 0 {
+            let error = dense_reconstruction_error(
+                &a,
+                &result.l,
+                &result.d,
+                result.perm.as_ref().arrays().0,
+            );
+            assert!(
+                error < 1e-10,
+                "stress reconstruction error {:.2e} >= 1e-10",
+                error
+            );
+        }
+
+        // Invariant check
+        let sum = result.stats.num_1x1 + 2 * result.stats.num_2x2 + result.stats.num_delayed;
+        assert_eq!(sum, n, "statistics invariant: {} != {}", sum, n);
+    }
+
+    #[test]
+    fn test_failed_pivot_method_pass() {
+        // Verify FailedPivotMethod::Pass skips TPP and preserves delays.
+        // Use a matrix that APTP cannot fully factor (small diag, large off-diag).
+        let n = 4;
+        let a = symmetric_matrix(n, |i, j| {
+            let vals = [
+                [0.001, 5.0, 0.01, 0.01],
+                [5.0, 0.001, 0.01, 0.01],
+                [0.01, 0.01, 0.001, 5.0],
+                [0.01, 0.01, 5.0, 0.001],
+            ];
+            vals[i][j]
+        });
+
+        // With Pass: APTP's complete pivoting on ib-blocks should still handle
+        // this via 2x2 pivots. But with a very small block size, it might delay.
+        let opts_pass = AptpOptions {
+            inner_block_size: 2,
+            failed_pivot_method: FailedPivotMethod::Pass,
+            ..AptpOptions::default()
+        };
+        let result_pass = aptp_factor(a.as_ref(), &opts_pass).unwrap();
+
+        let opts_tpp = AptpOptions {
+            inner_block_size: 2,
+            failed_pivot_method: FailedPivotMethod::Tpp,
+            ..AptpOptions::default()
+        };
+        let result_tpp = aptp_factor(a.as_ref(), &opts_tpp).unwrap();
+
+        // TPP should not have more delays than Pass
+        assert!(
+            result_tpp.stats.num_delayed <= result_pass.stats.num_delayed,
+            "TPP delays {} > Pass delays {}",
+            result_tpp.stats.num_delayed,
+            result_pass.stats.num_delayed
+        );
+
+        // Both must satisfy invariant
+        let sum_pass =
+            result_pass.stats.num_1x1 + 2 * result_pass.stats.num_2x2 + result_pass.stats.num_delayed;
+        let sum_tpp =
+            result_tpp.stats.num_1x1 + 2 * result_tpp.stats.num_2x2 + result_tpp.stats.num_delayed;
+        assert_eq!(sum_pass, n);
+        assert_eq!(sum_tpp, n);
+    }
+
+    #[test]
+    fn test_tpp_zero_pivot_handling() {
+        // Matrix with some zero columns — TPP should handle gracefully.
+        let n = 4;
+        let a = symmetric_matrix(n, |i, j| {
+            if i == j { [5.0, 0.0, 0.0, 3.0][i] }
+            else if (i == 0 && j == 3) || (i == 3 && j == 0) { 0.1 }
+            else { 0.0 }
+        });
+
+        let opts = AptpOptions {
+            failed_pivot_method: FailedPivotMethod::Tpp,
+            ..AptpOptions::default()
+        };
+        let result = aptp_factor(a.as_ref(), &opts).unwrap();
+
+        // Should handle zero pivots (columns 1, 2) as zero 1x1 pivots
+        let sum = result.stats.num_1x1 + 2 * result.stats.num_2x2 + result.stats.num_delayed;
+        assert_eq!(sum, n, "invariant: {} != {}", sum, n);
     }
 }

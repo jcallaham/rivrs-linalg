@@ -186,6 +186,30 @@ impl MixedDiagonal {
             .count()
     }
 
+    /// Extend to accommodate `new_n` entries. New entries are initialized as Delayed.
+    pub fn grow(&mut self, new_n: usize) {
+        if new_n > self.n {
+            self.pivot_map.resize(new_n, PivotType::Delayed);
+            self.diag.resize(new_n, 0.0);
+            self.off_diag.resize(new_n, 0.0);
+            self.n = new_n;
+        }
+    }
+
+    /// Shrink to `new_n` entries, discarding trailing entries.
+    pub fn truncate(&mut self, new_n: usize) {
+        debug_assert!(
+            new_n <= self.n,
+            "truncate: new_n {} > current n {}",
+            new_n,
+            self.n
+        );
+        self.pivot_map.truncate(new_n);
+        self.diag.truncate(new_n);
+        self.off_diag.truncate(new_n);
+        self.n = new_n;
+    }
+
     /// Number of 2x2 pivot pairs.
     pub fn num_2x2_pairs(&self) -> usize {
         self.pivot_map
