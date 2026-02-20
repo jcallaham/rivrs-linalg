@@ -37,7 +37,7 @@ use faer::Mat;
 use faer::sparse::SparseColMat;
 use faer::sparse::linalg::cholesky::SymbolicCholeskyRaw;
 
-use super::diagonal::MixedDiagonal;
+use super::diagonal::{MixedDiagonal, PivotEntry};
 use super::factor::{AptpFactorResult, AptpOptions, aptp_factor_in_place};
 use super::pivot::{Block2x2, PivotType};
 use super::symbolic::AptpSymbolic;
@@ -442,6 +442,16 @@ impl AptpNumeric {
             stats.total_1x1_pivots += result.stats.num_1x1;
             stats.total_2x2_pivots += result.stats.num_2x2;
             stats.total_delayed += result.stats.num_delayed;
+
+            // Count zero-valued 1x1 pivots (TPP accepts zero columns as 1x1 with D=0
+            // rather than delaying them, so we detect them here).
+            for (_, entry) in result.d.iter_pivots() {
+                if let PivotEntry::OneByOne(val) = entry {
+                    if val == 0.0 {
+                        stats.zero_pivots += 1;
+                    }
+                }
+            }
 
             // 6b. Record per-supernode diagnostics
             per_sn_stats.push(PerSupernodeStats {
