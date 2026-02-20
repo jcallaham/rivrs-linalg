@@ -1390,11 +1390,11 @@ mod tests {
         condensed_order[c_unmatched] = 0;
         // Fill remaining positions
         let mut pos = 1i32;
-        for cnode in 0..cdim {
+        for (cnode, order) in condensed_order.iter_mut().enumerate().take(cdim) {
             if cnode == c_unmatched {
                 continue;
             }
-            condensed_order[cnode] = pos;
+            *order = pos;
             pos += 1;
         }
 

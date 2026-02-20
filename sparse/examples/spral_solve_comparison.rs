@@ -89,8 +89,8 @@ fn format_spral_input(
     out.push_str(&format!("{} {}\n", n, nnz));
 
     // Column pointers (1-indexed)
-    for i in 0..=n {
-        out.push_str(&format!("{}\n", lower_ptr[i]));
+    for &ptr in &lower_ptr[..=n] {
+        out.push_str(&format!("{}\n", ptr));
     }
 
     // Row indices and values

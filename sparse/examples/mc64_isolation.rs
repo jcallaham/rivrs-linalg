@@ -279,10 +279,8 @@ fn experiment_mc64_diagnostics(_name: &str, a: &faer::sparse::SparseColMat<usize
             if i == j {
                 diag_val = scaled;
                 has_diag = true;
-            } else {
-                if scaled > offdiag_max {
-                    offdiag_max = scaled;
-                }
+            } else if scaled > offdiag_max {
+                offdiag_max = scaled;
             }
         }
         if !has_diag {

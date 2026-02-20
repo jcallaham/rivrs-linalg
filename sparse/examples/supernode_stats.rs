@@ -40,15 +40,7 @@ fn main() {
 
     // Print TSV header (stdout for piping)
     println!(
-        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-        "snode_id",
-        "front_size",
-        "num_fully_summed",
-        "num_eliminated",
-        "num_delayed",
-        "num_1x1",
-        "num_2x2",
-        "max_l_entry"
+        "snode_id\tfront_size\tnum_fully_summed\tnum_eliminated\tnum_delayed\tnum_1x1\tnum_2x2\tmax_l_entry"
     );
 
     for s in per_sn {

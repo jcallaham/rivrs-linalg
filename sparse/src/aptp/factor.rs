@@ -5117,7 +5117,7 @@ mod tests {
                     }
                 }
                 // Middle 4x4: hard pivots (small diag, large off-diag)
-                (i, j) if i >= 8 && i < 12 && j >= 8 && j < 12 => {
+                (i, j) if (8..12).contains(&i) && (8..12).contains(&j) => {
                     if i == j {
                         0.005
                     } else {

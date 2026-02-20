@@ -1818,10 +1818,10 @@ mod tests {
             // Only check matched indices 0..4
             let start = symbolic.col_ptr()[j];
             let end = symbolic.col_ptr()[j + 1];
-            for k in start..end {
-                let i = symbolic.row_idx()[k];
+            for (k, &row) in symbolic.row_idx()[start..end].iter().enumerate() {
+                let i = row;
                 if i == j {
-                    let scaled = result.scaling[i] * values[k].abs() * result.scaling[j];
+                    let scaled = result.scaling[i] * values[start + k].abs() * result.scaling[j];
                     assert!(
                         scaled <= 1.0 + 1e-10,
                         "scaled diagonal ({},{}) = {:.6e} should be <= 1",
@@ -1849,11 +1849,11 @@ mod tests {
         // Verify is_matched consistency: if is_matched[i] is true, row i must
         // have a real matching edge
         let (fwd, _) = result.matching.as_ref().arrays();
-        for i in 0..4 {
+        for (i, &fi) in fwd.iter().enumerate().take(4) {
             if result.is_matched[i] {
                 // Row i claims to be matched — fwd[i] should point to a column
                 // that was actually matched to row i (not an arbitrary assignment)
-                let j = fwd[i];
+                let j = fi;
                 assert!(
                     j < 4,
                     "matched row {} should map to valid column, got {}",

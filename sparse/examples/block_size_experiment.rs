@@ -48,7 +48,7 @@ fn solve_with_options(
     outer_bs: usize,
     inner_bs: usize,
 ) -> Result<f64, Box<dyn std::error::Error>> {
-    let n = matrix.nrows();
+    let _n = matrix.nrows();
     let analyze_opts = AnalyzeOptions {
         ordering: OrderingStrategy::MatchOrderMetis,
     };

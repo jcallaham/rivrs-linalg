@@ -45,7 +45,7 @@ fn main() {
         }
         let options = AptpOptions {
             inner_block_size: ib.min(100000),
-            outer_block_size: ib.min(100000).max(256),
+            outer_block_size: ib.clamp(256, 100000),
             ..AptpOptions::default()
         };
 

@@ -935,7 +935,7 @@ fn test_solve_suitesparse_full() {
     let mut missing = 0usize;
     let mut failed = Vec::new();
 
-    eprintln!("\n{:<40} {:>8} {:>12}  {}", "Matrix", "n", "BE", "Status");
+    eprintln!("\n{:<40} {:>8} {:>12}  Status", "Matrix", "n", "BE");
     eprintln!("{}", "-".repeat(80));
 
     for meta in &suitesparse_meta {
