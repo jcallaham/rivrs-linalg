@@ -34,5 +34,7 @@ pub use generators::{
     generate_tridiagonal,
 };
 pub use harness::{MetricResult, MockSolver, SolverTest, TestResult};
-pub use mc64_validation::verify_spral_scaling_properties;
+pub use mc64_validation::{
+    ScalingViolationReport, classify_scaling_violations, verify_spral_scaling_properties,
+};
 pub use validator::NumericalValidator;

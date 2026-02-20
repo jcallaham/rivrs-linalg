@@ -1,5 +1,678 @@
 # SSIDS Development Log
 
+## Phase 8.1f: TPP as Primary for Small Fronts (65/65 SuiteSparse Pass)
+
+**Status**: Complete
+**Branch**: `017-two-level-aptp`
+**Date**: 2026-02-19
+
+### Summary
+
+Used TPP (Threshold Partial Pivoting) as the primary factorization method for small
+fronts (num_fully_summed < inner_block_size), matching SPRAL's dispatch logic. This was
+the root cause of d_pretok being the sole remaining failure (64/65 → **65/65** pass).
+
+### Root Cause
+
+After TPP fallback (Phase 8.1e), d_pretok (n=182,269) remained the only failing matrix:
+backward error 2.50e-6 vs SPRAL's 1.30e-18. The key discrepancy was 2x2 pivot count:
+29,336 (ours) vs 77,468 (SPRAL).
+
+**Per-supernode statistics** revealed d_pretok has ~50,900 supernodes, overwhelmingly
+small (k=1-4). SPRAL's `Block::factor()` (ldlt_app.cxx:994-1020) dispatches based on
+block size:
+
+```cpp
+if(ncol() < INNER_BLOCK_SIZE || !is_aligned(aval_)) {
+    cdata_[i_].nelim = ldlt_tpp_factor(nrow(), ncol(), ...);  // TPP
+} else {
+    block_ldlt<T, INNER_BLOCK_SIZE>(...);  // complete pivoting
+}
+```
+
+For d_pretok, SPRAL uses TPP for the vast majority of supernodes. We used complete
+pivoting (`factor_block_diagonal`) for ALL blocks regardless of size.
+
+**The behavioral difference**:
+- **Complete pivoting** (`block_ldlt`/`factor_block_diagonal`): Find global max entry
+  first. If on diagonal → take 1x1 pivot (no 2x2 attempted). Only tries 2x2 when the
+  off-diagonal is the global maximum.
+- **TPP** (`ldlt_tpp_factor`): Iterate columns, try 2x2 FIRST for each column →
+  accepts 2x2 pivots whenever the determinant test passes, even when a good 1x1 exists.
+
+For indefinite matrices, 2x2 pivots pair positive/negative eigenvalues and produce
+better-conditioned factors. TPP finds more 2x2 pivots because it proactively tries
+2x2 on every column search.
+
+### The Fix
+
+Added `tpp_factor_as_primary()` and modified `aptp_factor_in_place` dispatch:
+
+```rust
+let mut result = if num_fully_summed < options.inner_block_size {
+    tpp_factor_as_primary(a.rb_mut(), num_fully_summed, options)?
+} else if num_fully_summed > options.outer_block_size {
+    two_level_factor(a.rb_mut(), num_fully_summed, options)?
+} else {
+    factor_inner(a.rb_mut(), num_fully_summed, options)?
+};
+```
+
+Also added `PerSupernodeStats` diagnostic struct and `export_assembled_frontal` method
+for future dense kernel comparison with SPRAL.
+
+### Results
+
+| Metric | Before | After | SPRAL |
+|--------|--------|-------|-------|
+| d_pretok backward error | 2.50e-6 | **7.21e-19** | 1.30e-18 |
+| d_pretok 2x2 pivots | 29,336 | 64,993 | 77,468 |
+| d_pretok delays | 403 | 0 | 27 |
+| SuiteSparse pass rate | 64/65 | **65/65** | — |
+
+The remaining gap in 2x2 count (65K vs 77K) is from large fronts (k >= 32) where we
+still use complete pivoting for sub-blocks within `factor_inner`. SPRAL also uses TPP
+for partial blocks within its two-level loop. Not needed for correctness but could be
+a future optimization.
+
+### Unit Test Updates
+
+Six unit tests updated to accommodate TPP's different pivot selection for small matrices.
+Tests now check total elimination count (`num_1x1 + 2*num_2x2 == n`) and reconstruction
+error rather than specific 1x1/2x2 pivot counts, since TPP finds valid 2x2 pivots even
+on positive definite matrices.
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `src/aptp/factor.rs` | Added `tpp_factor_as_primary()`. Modified dispatch in `aptp_factor_in_place`. Updated 6 unit tests. |
+| `src/aptp/numeric.rs` | Added `PerSupernodeStats`, `per_supernode_stats` field, `export_assembled_frontal()`. |
+| `src/aptp/mod.rs` | Re-exported `PerSupernodeStats`. |
+| `src/aptp/solver.rs` | Added `per_supernode_stats()` accessor on `SparseLDLT`. |
+| `docs/phase8/d_pretok-investigation.md` | NEW: investigation log with root cause and results. |
+
+---
+
+## Phase 8.1e: TPP Fallback for APTP Failed Columns
+
+**Status**: Complete
+**Branch**: `017-two-level-aptp`
+**Date**: 2026-02-19
+
+### Summary
+
+Implemented SPRAL's TPP (Threshold Partial Pivoting) fallback strategy: when APTP's
+block-scoped search cannot find acceptable pivots, TPP retries with an exhaustive serial
+column-by-column search across ALL remaining fully-summed columns. This matches SPRAL's
+default `failed_pivot_method=tpp` (Duff, Hogg & Lopez 2020, Section 3).
+
+Previously, columns that failed APTP's threshold check were unconditionally delayed to
+the parent supernode. TPP recovers many of these by searching the entire remaining column
+space for 1x1 or 2x2 pivots that APTP's limited block scope missed.
+
+### What Was Built
+
+**`FailedPivotMethod` enum** (`src/aptp/factor.rs`):
+- `Tpp` (default) — retry failed columns with serial TPP
+- `Pass` — delay failed columns immediately (old behavior, for testing)
+
+**6 TPP helper functions** (matching SPRAL's `ldlt_tpp.cxx`, BSD-3):
+1. `tpp_is_col_small()` — check if column entries are all < small threshold
+2. `tpp_find_row_abs_max()` — find row with largest |entry| in a column
+3. `tpp_find_rc_abs_max_exclude()` — max |entry| in row/column excluding one index
+4. `tpp_test_2x2()` — test (t,p) as 2x2 pivot: determinant + threshold + cancellation
+5. `tpp_apply_1x1()` — 1x1 elimination with rank-1 Schur update
+6. `tpp_apply_2x2()` — 2x2 elimination with rank-2 Schur update
+
+**`tpp_factor()`** — main TPP loop: serial column-by-column search over `start_col..
+num_fully_summed`, trying 2x2 first, then 1x1, with last-resort fallback. Uses
+existing `swap_symmetric()` for row/column permutations.
+
+**`MixedDiagonal::grow()`/`truncate()`** — resize D between APTP (truncated to
+`num_eliminated`) and TPP (needs to write at positions beyond that).
+
+**6 new tests**: TPP helpers, basic 1x1/2x2, APTP+TPP fallback, reconstruction stress,
+and `FailedPivotMethod::Pass` backward-compatibility.
+
+### Integration
+
+After APTP dispatch in `aptp_factor_in_place`:
+
+```rust
+if result.num_eliminated < num_fully_summed
+    && options.failed_pivot_method == FailedPivotMethod::Tpp
+{
+    let additional = tpp_factor(a.rb_mut(), result.num_eliminated, ...);
+    result.num_eliminated += additional;
+}
+```
+
+TPP operates on the trailing submatrix `a[q..m, q..n]` where `q = APTP's nelim`.
+`swap_symmetric` naturally handles both factored L columns (rows 0..q) and the
+uneliminated region (q..m), matching SPRAL's `aleft` parameter approach.
+
+### Results
+
+| Category | Matrices | Before (BE) | After (BE) |
+|----------|----------|-------------|------------|
+| A: Factorization-limited | copter2, helm3d01, sparsine, astro-ph | ~1e-5 | ~1e-18 |
+| B: Moderate gap | cont-300, vibrobox, shipsec1/5/8 | ~1e-8 | ~1e-18 |
+| Sole holdout | d_pretok | 2.50e-6 | 2.50e-6 |
+
+**64/65 SuiteSparse matrices pass** strict <5e-11 threshold. d_pretok remained the sole
+failure, resolved in Phase 8.1f (TPP as primary for small fronts).
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `src/aptp/factor.rs` | `FailedPivotMethod` enum, 6 TPP helpers, `tpp_factor()`, integration in `aptp_factor_in_place`, 6 tests (+814 lines). |
+| `src/aptp/diagonal.rs` | `MixedDiagonal::grow()`, `truncate()` (+24 lines). |
+| `src/aptp/mod.rs` | Re-export `FailedPivotMethod`. |
+| `tests/solve.rs` | Updated CI test to use category-dependent ordering. |
+
+---
+
+## Phase 8.1 Summary: Key Findings and Lessons
+
+**Phases 8.1–8.1f** collectively brought the solver from initial two-level APTP
+(with many large backward errors) to **65/65 SuiteSparse matrices passing SPRAL's
+5e-11 backward error threshold**. The journey involved 6 sub-phases, 4 critical
+bug fixes, and extensive SPRAL comparison work.
+
+### Critical Bugs Fixed (in discovery order)
+
+1. **extract_front_factors L21 range** (8.1b): L21 extracted from rows `k..m` instead
+   of `ne..m`, missing TRSM-computed entries for delayed rows. Impact: 10^12–10^14x
+   backward error improvement on bratu3d, stokes128, bloweybq.
+
+2. **MC64 Dijkstra lazy-deletion heap** (8.1c): Rust's `BinaryHeap` with lazy deletion
+   caused 1,400 fewer rows to be finalized, corrupting dual variables and scaling factors.
+   Impact: dual infeasibility violations eliminated, correct scaling for all matrices.
+
+3. **col_order tracking in two_level_factor** (8.1d): Block permutation update read
+   `col_order` after delay swap had already modified it. Impact: 10 additional matrices
+   pass (52 → 52+10 with TPP).
+
+4. **TPP dispatch for small fronts** (8.1f): SPRAL uses TPP (not complete pivoting) for
+   blocks with ncol < 32. Complete pivoting produces fewer 2x2 pivots, critical for
+   indefinite matrices. Impact: d_pretok backward error 2.50e-6 → 7.21e-19.
+
+### Key Architectural Insights
+
+- **SPRAL's three-tier factorization dispatch**: (1) TPP for small/partial blocks
+  (ncol < 32), (2) complete pivoting (`block_ldlt`) for aligned full blocks, (3) TPP
+  fallback for any remaining failed columns. Our dispatch now matches this.
+
+- **2x2 pivots matter for indefinite matrices**: TPP's "try 2x2 first" strategy
+  produces 2-3x more 2x2 pivots than complete pivoting's "2x2 only when off-diagonal
+  is max" approach. The extra 2x2 pivots pair +/- eigenvalues, producing dramatically
+  better-conditioned factors.
+
+- **Inner block size controls accuracy**: Backward error correlates with inner block
+  size, not front size per se. SPRAL's default ib=32 works because TPP handles partial
+  blocks. Our full-tile processing in `factor_inner` achieves equivalent accuracy.
+
+- **Dense kernel is correct in isolation**: All accuracy issues traced to dispatch/
+  extraction/assembly bugs, never to the core APTP elimination math. Verified by
+  exporting assembled frontal matrices and comparing SPRAL vs our kernel on identical
+  input — both produce correct results.
+
+### Investigation Documentation
+
+Detailed investigation logs preserved in `docs/phase8/`:
+
+| Document | Topic |
+|----------|-------|
+| `d_pretok-investigation.md` | Per-supernode stats, SPRAL dispatch analysis, TPP root cause |
+| `mc64-dijkstra-heap-bug.md` | Indexed heap implementation, dual feasibility fix |
+| `mc64-pipeline-investigation.md` | 4-agent scaling/ordering isolation audit |
+| `phase8-audit-investigation.md` | 4-agent assembly/solve/scaling audit, extract_front_factors bug |
+| `phase8-blas3-investigation.md` | BLAS-3 refactoring accuracy analysis |
+| `accuracy-investigation.md` | SPRAL TPP fallback finding, inner block size analysis |
+| `backward-error-investigation.md` | Full SuiteSparse backward error evaluation, failure modes |
+| `two-level-backward-error-investigation.md` | Inner blocking search scope fix |
+| `error-investigation.md` | Default ordering, cross-term update analysis |
+| `blas3-refactor.md` | BLAS-3 architecture design notes |
+
+---
+
+## Phase 8.1d: Fix col_order Tracking Bug in two_level_factor
+
+**Status**: Complete
+**Branch**: `017-two-level-aptp`
+**Date**: 2026-02-19
+
+### Summary
+
+Fixed a col_order tracking bug in `two_level_factor` where the delay swap and
+block_perm update operations were in the wrong order. When `factor_inner` delayed
+some columns, the delay swap modified `col_order` entries before the block_perm
+update could read them, corrupting the permutation mapping for eliminated columns.
+
+This fix resolves the discrepancy where the two-level path (ob=256) produced worse
+backward error than the unblocked path (ob=huge) on certain matrices.
+
+### Root Cause
+
+In each outer-block iteration, three operations happen when columns are delayed:
+
+1. **Row perm propagation** — propagate factor_inner's row permutation to committed L columns
+2. **Delay swap** — swap delayed columns to end of remaining range (modifies `col_order`)
+3. **Block perm update** — apply factor_inner's permutation to `col_order`
+
+Step 3 read `col_order[col_start..col_start+block_cols]` into `orig_order` AFTER
+step 2 had already modified entries via `col_order.swap(failed_pos, end)`. This meant
+`orig_order[block_perm[i]]` for eliminated columns at a previously-delayed position
+read the WRONG original column index.
+
+### The Fix
+
+Moved the block_perm update (step 3) to BEFORE the delay swap (step 2). Now
+`orig_order` captures pre-swap values, ensuring correct permutation mapping.
+
+### Results
+
+Full SuiteSparse suite (65 matrices): **52 strict pass, 3 relaxed, 10 fail**
+
+Key matrices improved by this fix:
+
+| Matrix | Before | After | Status |
+|--------|--------|-------|--------|
+| thread (n=29736) | FAIL | 2.53e-18 | PASS |
+| dawson5 (n=51537) | FAIL | 7.45e-17 | PASS |
+| stokes128 (n=49666) | FAIL | 3.74e-18 | PASS |
+| bratu3d (n=27792) | FAIL | 2.56e-18 | PASS |
+| bloweybq (n=10001) | FAIL | 2.68e-18 | PASS |
+| ncvxqp5 (n=62500) | FAIL | 7.08e-10 | RELAXED |
+| ncvxqp3 (n=75000) | FAIL | 4.52e-10 | RELAXED |
+
+Remaining 10 failures (copter2, helm3d01, astro-ph, sparsine at ~1e-5; cont-300,
+vibrobox, d_pretok, shipsec1/5/8 at ~1e-8 to 1e-6) are separate issues — see
+Remaining Failures below.
+
+### Remaining Failure Analysis
+
+The 10 remaining failures are NOT caused by two_level_factor bugs — they reproduce
+identically with the unblocked path (ob=huge). They fall into two categories:
+
+**Category A — Factorization-limited** (~1e-5 BE: copter2, helm3d01, sparsine, astro-ph):
+Large fronts (1000-11000 rows) where the APTP threshold-pivoting strategy produces
+suboptimal pivot sequences. Likely needs TPP (Threshold Partial Pivoting) fallback
+for fronts exceeding a size threshold, matching SPRAL's hybrid approach.
+
+**Category B — Moderate accuracy gap** (~1e-8 BE: cont-300, vibrobox, d_pretok, shipsec1/5/8):
+Close to threshold but not passing. May benefit from iterative refinement or
+improved pivot selection.
+
+### Regression Test
+
+Added `test_two_level_vs_unblocked_reconstruction`: 512x512 dense symmetric indefinite
+matrix with small diagonal (forcing 2x2 pivots and delays), verifying both ob=128
+(two-level, 4 outer iterations) and ob=huge (unblocked) achieve reconstruction error
+< 1e-12 and are within 10x of each other.
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `src/aptp/factor.rs` | Moved block_perm update before delay swap in `two_level_factor`. Added `test_two_level_vs_unblocked_reconstruction` regression test. |
+
+---
+
+## Phase 8.1c: MC64 Dijkstra Heap Bug Fix & Pipeline Investigation
+
+**Status**: Complete
+**Branch**: `017-two-level-aptp`
+**Date**: 2026-02-18
+
+### Summary
+
+Fixed a critical correctness bug in the MC64 Hungarian algorithm's Dijkstra implementation:
+Rust's `BinaryHeap` with lazy deletion caused dual feasibility violations on production
+matrices. Replaced with SPRAL's exact indexed binary min-heap with position-tracked
+O(log n) deletion. Also fixed the structurally singular pipeline (missing re-matching +
+condensation for singular matrices). Removed `enforce_scaling_bound` workaround.
+
+Conducted a comprehensive 4-agent investigation of the remaining backward error failures,
+categorizing them into scaling-harmful (1), factorization-limited (4), and
+scaling-helps-but-insufficient (1).
+
+### Root Cause: Lazy Heap Deletion
+
+Our Dijkstra shortest-path augmentation used `std::collections::BinaryHeap` (max-heap
+with `Reverse<>` for min-heap behavior). When a row's distance decreased and it moved
+from the heap to Q1 (the current-minimum batch), the old heap entry remained as a
+stale entry. SPRAL uses an indexed binary min-heap with position tracking in `l[i]`,
+supporting explicit `heap_delete` when moving rows to Q1.
+
+The stale entries caused 1,400 fewer rows to be finalized on TSOPF_FS_b39_c7 (14,114
+vs SPRAL's 15,514). Unfinalized rows retained incorrect dual values, causing
+`u[i] + v[j] > c[i,j]` violations that propagated to scaling factors.
+
+First violation appeared at augmentation 4 (root_col=68) — row 69 had `u[69]=0.0`
+(never finalized) vs SPRAL's `u[69]=-4.175` (correctly finalized).
+
+### The Fix: Indexed Binary Min-Heap
+
+Implemented SPRAL's exact heap as three inline functions:
+
+- `heap_update_inline(idx, q, d, pos, qlen)` — insert or decrease-key
+- `heap_pop_inline(q, d, pos, qlen)` — extract minimum
+- `heap_delete_inline(pos0, q, d, pos, qlen)` — delete at position
+
+Operating on shared arrays:
+- `q[0..qlen]` — heap array (0-indexed)
+- `pos[i]` — 1-based position of row i in heap (0 = not in heap)
+- `d[i]` — external distance array for comparisons
+
+The `l[i]` array now correctly encodes heap membership, Q1 membership, and finalized
+status — matching SPRAL's unified state tracking.
+
+### DijkstraState Persistence
+
+Added `DijkstraState` struct that persists across augmentations, matching SPRAL's
+allocation pattern. Arrays `d`, `l`, `jperm`, `pr`, `out`, `q`, `root_edges` are
+allocated once and selectively reset after each augmentation (SPRAL lines 1144-1153).
+This eliminates O(n) allocation per augmentation and O(nnz) jperm re-initialization.
+
+### Structurally Singular Pipeline Fix
+
+Fixed the incomplete matching pipeline (commit `0ff4234`):
+
+1. **Re-matching**: When `matched < n`, extract the matched subgraph and run
+   greedy+Dijkstra a second time to obtain optimal dual variables for the matched
+   portion, matching SPRAL lines 688-801.
+2. **Condensation**: `extract_matched_subgraph` builds the `nn × nn` subgraph with
+   remapped row/column indices for the second matching pass.
+
+### Removed enforce_scaling_bound
+
+With correct dual feasibility from the indexed heap and re-matching, the scaling bound
+`|s_i * a_ij * s_j| <= 1` is guaranteed by the Hungarian algorithm's LP duality
+properties for matched-matched and matched-unmatched edges. The `enforce_scaling_bound`
+workaround function was deleted along with its two unit tests.
+
+Unmatched-unmatched edges can still violate the bound (inherent mathematical limitation,
+not a bug — SPRAL has the same property).
+
+### Verification
+
+| Test | Result |
+|------|--------|
+| TSOPF dual infeasibility | 8.88e-16 (was 3.66) |
+| Rows with u < 0 (TSOPF) | 15,514 (matches SPRAL exactly) |
+| Unit tests (`cargo test --lib -- matching`) | 32/32 pass |
+| Full SuiteSparse MC64 (`test_mc64_suitesparse_full`) | 67/67 pass |
+| Solver unit tests (`cargo test --test solve`) | 22/22 pass |
+| All library tests (`cargo test --lib`) | 353/353 pass |
+
+### MC64 Pipeline Investigation (4-Agent Audit)
+
+Conducted comprehensive investigation of remaining backward error failures using
+`examples/mc64_isolation.rs`, which tests each matrix with four configurations:
+MatchOrderMetis, condensed-ordering-only, scaling-only, and plain-METIS-no-scaling.
+
+See `docs/phase8/mc64-pipeline-investigation.md` for full agent findings.
+
+#### Remaining Failure Categories
+
+**Category A — Scaling-harmful** (1 matrix: dawson5):
+- MC64 scaling CAUSES failure: BE = 7.45e-17 (no scaling) → 7.50e-4 (with scaling)
+- Root cause: suboptimal dual variables from partial matching produce scaling that
+  destroys natural diagonal dominance (90.7% of diagonals become weak after scaling)
+- Need: second-matching on full-rank submatrix for structurally singular matrices
+
+**Category B — Factorization-limited** (4 matrices: copter2, helm3d01, sparsine, astro-ph):
+- Neither ordering nor scaling helps — BE stays at ~1e-3 with all configurations
+- Root cause: large fronts (1000-11000 rows) with BLAS-2 inner kernel
+- Need: BLAS-3 inner blocking (ib=32) in factor_inner, or iterative refinement
+
+**Category C — Scaling-helps-but-insufficient** (1 matrix: TSOPF_FS_b162_c1):
+- Scaling improves BE by 1-4 orders of magnitude but not to threshold
+- Condensed ordering may be counterproductive (TSOPF_b39: condensed 5.98e-8 vs
+  plain METIS 1.19e-10)
+- Need: both better scaling (second matching) AND inner blocking
+
+#### Key Finding: Scaling > Ordering
+
+For dawson5 (the smoking gun), the condensed ordering is NOT the primary problem —
+the scaling is. Even with optimal METIS ordering, MC64 scaling degrades backward error
+from 7.45e-17 to 7.50e-4. The condensed ordering is a secondary contributor.
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `src/aptp/matching.rs` | Replaced `BinaryHeap` Dijkstra with indexed heap (SPRAL port). Added `DijkstraState`, `heap_update_inline`, `heap_delete_inline`, `heap_pop_inline`. Added `extract_matched_subgraph` + re-matching pipeline. Removed `enforce_scaling_bound`, `check_dual_feasibility_raw`, `OrderedFloat`, trace instrumentation. |
+| `docs/phase8/mc64-dijkstra-heap-bug.md` | NEW: comprehensive investigation document |
+| `docs/phase8/mc64-pipeline-investigation.md` | NEW: 4-agent audit of remaining failures |
+| `tools/spral_greedy_compare.f90` | NEW: Fortran tool for SPRAL greedy matching comparison |
+| `examples/mc64_isolation.rs` | NEW: 4-way scaling/ordering isolation diagnostic |
+
+---
+
+## Phase 8.1b: BLAS-3 Refactoring & Accuracy Audit
+
+**Status**: Complete
+**Branch**: `017-two-level-aptp`
+**Date**: 2026-02-18
+
+### Summary
+
+Refactored `factor_inner` from BLAS-2 to BLAS-3 pipeline (factor_block_diagonal →
+apply_and_check → update_trailing), then conducted a comprehensive 4-agent audit of
+the full multifrontal pipeline when backward error remained correlated with front size.
+Found and fixed a critical bug in `extract_front_factors` that caused 10^12-10^14x
+backward error degradation on matrices with pivot delays.
+
+### BLAS-3 Refactoring
+
+Restructured the inner blocking loop to match SPRAL's `run_elim_pivoted_notasks`:
+
+1. **`factor_block_diagonal`**: Complete pivoting within an ib×ib diagonal block.
+   Block-scoped row swaps, returns `block_perm` and `block_nelim`.
+
+2. **`apply_and_check`**: TRSM-based L21 computation (panel below diagonal block)
+   + D^{-1} scaling + threshold scan. Returns `effective_nelim ≤ block_nelim`.
+
+3. **`update_trailing`**: GEMM-based Schur complement A22 -= L21*D*L21^T.
+
+4. **`BlockBackup`**: Pre-factor backup of diagonal+panel region. Supports
+   `restore_failed` for full restore and `restore_diagonal_with_perm` for
+   partial restore of failed columns only.
+
+5. **Failure handling**: On threshold failure (effective_nelim < block_nelim),
+   partial restore of failed diagonal entries with permutation, cross-term
+   Schur updates for passed columns, then swap delayed columns to end.
+
+### Accuracy Audit (4 Agents)
+
+After BLAS-3 refactoring, backward error remained correlated with max_front size
+(bloweybq BE=3.26e-11 at front=13, stokes128 BE=6.08e-6 at front=547, bratu3d
+BE=7.55e-4 at front=1496). Launched 4 parallel audit agents:
+
+**Agent A — Frontal Matrix Assembly** (`numeric.rs`): NO BUGS FOUND.
+`scatter_original_entries` upper-triangle skip logic correct, `extend_add`
+accumulation correct, frontal matrix initialization correct.
+
+**Agent B — Triangular Solve** (`solve.rs`): **BUG FOUND** in `extract_front_factors`.
+When APTP delays columns (ne < k fully-summed eliminated), L21 was extracted from
+rows `k..m` instead of `ne..m`, missing TRSM-computed entries at delayed row positions
+`ne..k`. The `extract_contribution` function in the same file correctly included these
+rows — an internal inconsistency.
+
+**Agent C — MC64 Scaling Application** (`solver.rs`): NO BUGS FOUND.
+Matrix scaling, RHS scale/unscale, permutation composition all correct. Matches SPRAL.
+
+**Agent D — Empirical Isolation**: Confirmed fix resolves primary backward error issues.
+Per-supernode reconstruction diagnostics on bratu3d (MatchOrderMetis) show worst
+reconstruction error = 1.31 (SN 3611, front=799) but BE=2.56e-18 — no bug. Plain
+METIS still fails (known ordering-dependent issue).
+
+### Critical Bug Fix: `extract_front_factors` Delayed Row L21 Entries
+
+**Root cause**: When APTP eliminates `ne` out of `k` fully-summed columns (ne < k due
+to delays), the factored frontal matrix has valid L21 entries at rows `ne..k` (the
+delayed fully-summed rows). These entries were computed by `apply_and_check`'s TRSM
+before the columns failed the threshold test.
+
+`extract_front_factors` extracted L21 from rows `k..m` only, missing rows `ne..k`.
+
+**Fix**: Changed L21 extraction from `frontal.data[(k..m, 0..ne)]` to
+`frontal.data[(ne..m, 0..ne)]`, and built `row_indices` to include delayed rows
+via `result.perm[ne..k]` followed by `frontal.row_indices[k..]`.
+
+**Impact on solve**:
+- Forward solve: L21 * work now correctly scatters to delayed row positions
+- Backward solve: delayed row contributions now correctly gathered for L21^T updates
+
+### Before/After Backward Error
+
+| Matrix | max_front | Before Fix | After Fix | Change |
+|--------|----------:|:----------:|:---------:|:------:|
+| bratu3d | 1,496 | 7.55e-4 | **2.56e-18** | 10^14x |
+| stokes128 | 547 | 6.08e-6 | **3.75e-18** | 10^12x |
+| bloweybq | 13 | 3.26e-11 | **2.68e-18** | 10^7x |
+| sparsine (single) | 11,131 | 2.68e-3 | 4.21e-5 | 60x |
+
+### Remaining: Large-Front Accuracy
+
+Several matrices with max_front > 1000 still show backward error ~1e-3 to 1e-5.
+Per-supernode reconstruction errors of O(1)-O(10) confirm this is numerical
+precision in the dense APTP kernel, not an extraction or solve bug.
+
+| Matrix | max_front | BE (MatchOrderMetis) | Status |
+|--------|----------:|:--------------------:|:------:|
+| sparsine | 11,131 | 4.21e-5 | FAIL |
+| helm3d01 | 2,226 | 1.86e-3 | FAIL |
+| dawson5 | 1,044 | 1.13e-3 | FAIL |
+| copter2 | 1,252 | 1.26e-3 | FAIL |
+| cvxqp3 | 1,664 | 8.32e-7 | FAIL |
+| astro-ph | 2,228 | 2.65e-3 | FAIL |
+| pwtk | 1,068 | 1.48e-4 | FAIL |
+
+Potential fixes (Phase 9 candidates):
+- Iterative refinement (most impactful)
+- Store D^{-1} instead of D (match SPRAL)
+- Profile-guided inner block size tuning
+
+### Tests Added
+
+10 new tests:
+
+**`src/aptp/numeric.rs`** (5 extract_front_factors regression tests):
+1. `test_extract_front_factors_l21_includes_delayed_rows` — L21 dimension check
+2. `test_extract_front_factors_contribution_row_indices_consistent` — delayed row consistency
+3. `test_extract_front_factors_delayed_l21_entries_populated` — TRSM entries preserved
+4. `test_extract_front_factors_reconstruction_with_delays` — L11*D11*L11^T reconstruction
+5. `test_extract_front_factors_solve_roundtrip_with_delays` — full [L11;L21]*D*[L11;L21]^T
+
+**`src/aptp/factor.rs`** (5 factor_inner delay tests):
+1. `test_factor_inner_with_delays` — SPRAL-style cause_delays across 10 configurations
+2. `test_factor_inner_with_delays_targeted` — handcrafted matrix triggering partial block success
+3. `test_factor_inner_with_delays_aggressive` — 15 (n, ib, seed) combinations
+4. `test_factor_inner_cause_delays_then_compare_single_vs_blocked` — single vs blocked equivalence
+5. `test_factor_inner_partial_with_delays_schur_check` — Schur complement P^TAP = LDL^T + [0 0;0 S]
+
+### Test Results
+
+- 347 lib tests pass (10 new)
+- 51 integration tests pass (29 multifrontal + 22 solve)
+- All hand-constructed matrices and SuiteSparse CI subset pass (except sparsine — large-front)
+
+### Files Changed
+
+- `src/aptp/factor.rs` — BLAS-3 pipeline refactoring + 5 delay tests + helpers
+- `src/aptp/numeric.rs` — extract_front_factors fix + 5 regression tests
+- `tests/solve.rs` — solve test updates
+- `docs/backward-error-investigation.md` — investigation results
+- `docs/phase8-audit-investigation.md` — NEW: full audit documentation
+- `docs/ssids-plan.md` — plan updates
+
+---
+
+## Phase 8.1: Two-Level APTP Factorization
+
+**Status**: Complete
+**Branch**: `017-two-level-aptp`
+**Date**: 2026-02-17
+
+### Summary
+
+Replaced the single-level column-by-column dense APTP kernel with a two-level
+blocked implementation. The outer loop processes blocks of nb=256 columns; within
+each block, `factor_inner` processes ib=32-sized sub-blocks using complete pivoting
+(Algorithm 4.1, Duff et al. 2020) at the leaves, with `try_1x1_pivot`/`try_2x2_pivot`
+for threshold-checked stability.
+
+### What Was Built
+
+1. **`complete_pivoting_factor`** (Algorithm 4.1): Standalone function for ib×ib
+   blocks. Searches entire remaining submatrix for max entry, decides 1×1 vs 2×2
+   pivot via determinant condition. Used only in unit tests; `factor_inner` uses
+   the same search logic but delegates to `try_1x1/try_2x2` for threshold checking.
+
+2. **`factor_inner`**: Middle-level kernel processing nb columns. Loops over ib-sized
+   sub-blocks with complete pivoting search, then calls `try_1x1/try_2x2` (which
+   handle backup/restore and threshold checking). Applies Schur complement to ALL
+   trailing rows including panel rows beyond the block.
+
+3. **`two_level_factor`**: Outer block loop. For each nb-sized block: calls
+   `factor_inner` on a submatrix view, propagates row permutations to previously-
+   factored columns, swaps delayed columns to end of remaining range, accumulates
+   D entries and permutation into global result.
+
+4. **BLAS-3 building blocks** (implemented, currently unused):
+   - `apply_and_check`: TRSM-based L21 computation + threshold scan
+   - `update_trailing`: GEMM-based Schur complement A22 -= L21*D*L21^T
+   - `update_delayed`: Placeholder for Phase 8.2 parallelism
+   - `BlockBackup`: Per-block matrix region backup/restore
+
+5. **Options extension**: `outer_block_size` and `inner_block_size` fields added to
+   `AptpOptions` (defaults 256, 32) and `FactorOptions`, flowing through solver API.
+
+### Key Bug Fix: Row Permutation Propagation
+
+The most critical fix: when `factor_inner` operates on a **submatrix view** for
+block 2+, its `swap_symmetric` calls only rearrange rows within that submatrix.
+L entries from previously-factored blocks (at columns before the submatrix) are
+NOT rearranged. This caused massive reconstruction errors (O(1)) because `extract_l`
+reads inconsistent row orderings.
+
+**Fix**: After each block's `factor_inner`, explicitly apply the block's row
+permutation to all columns 0..col_start in the global matrix. This ensures L
+entries across all blocks have consistent row ordering.
+
+### Architecture Decision: factor_inner Handles All Rows
+
+The original plan had `factor_inner` processing only the diagonal block, with
+separate Apply (TRSM) and Update (GEMM) phases for panel rows. In practice,
+`factor_inner` processes ALL rows (including panel) via `try_1x1/try_2x2` and
+`update_schur_1x1/2x2`, which apply Schur complement to the entire trailing matrix.
+
+This approach is correct but uses BLAS-2 operations (rank-1/rank-2 updates) rather
+than BLAS-3 (blocked TRSM/GEMM). The BLAS-3 building blocks are implemented and
+ready for future refactoring where `factor_inner` is limited to the diagonal block.
+
+### Test Results
+
+- 330 lib tests pass (7 new two-level tests)
+- 51 integration tests pass (29 multifrontal + 22 solve)
+- Reconstruction error < 1e-12 on all test matrices
+- Two-level matches single-level accuracy exactly
+- Clippy clean, fmt clean
+
+### What Was NOT Done
+
+- **BLAS-3 performance**: The current implementation is functionally two-level but
+  still uses BLAS-2 operations. BLAS-3 Apply/Update optimization deferred.
+- **Performance benchmarking**: Crossover point analysis deferred (needs BLAS-3 first).
+- **Full SuiteSparse run**: CI subset tested; full 67-matrix run deferred.
+
+---
+
 ## Phase 7.5: Accuracy Investigation & Default Ordering Change
 
 **Status**: Complete

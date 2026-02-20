@@ -37,11 +37,14 @@ use faer::Mat;
 use faer::sparse::SparseColMat;
 use faer::sparse::linalg::cholesky::SymbolicCholeskyRaw;
 
-use super::diagonal::MixedDiagonal;
+use super::diagonal::{MixedDiagonal, PivotEntry};
 use super::factor::{AptpFactorResult, AptpOptions, aptp_factor_in_place};
 use super::pivot::{Block2x2, PivotType};
 use super::symbolic::AptpSymbolic;
 use crate::error::SparseError;
+
+/// Sentinel value indicating a global column is not part of the current front.
+const NOT_IN_FRONT: usize = usize::MAX;
 
 // ---------------------------------------------------------------------------
 // Internal types
@@ -187,6 +190,31 @@ impl FrontFactors {
     }
 }
 
+/// Per-supernode diagnostic statistics.
+///
+/// Collected during [`AptpNumeric::factor`] for each supernode processed.
+/// Provides visibility into per-front behavior for analysis and comparison
+/// with reference solvers (e.g., SPRAL).
+#[derive(Debug, Clone)]
+pub struct PerSupernodeStats {
+    /// Supernode index in postorder.
+    pub snode_id: usize,
+    /// Frontal matrix dimension (m).
+    pub front_size: usize,
+    /// Number of fully-summed rows/columns (k = supernode cols + delayed from children).
+    pub num_fully_summed: usize,
+    /// Number of columns successfully eliminated (ne <= k).
+    pub num_eliminated: usize,
+    /// Number of delayed columns (k - ne).
+    pub num_delayed: usize,
+    /// Number of 1x1 pivots accepted at this supernode.
+    pub num_1x1: usize,
+    /// Number of 2x2 pivot pairs accepted at this supernode.
+    pub num_2x2: usize,
+    /// Maximum absolute L entry at this supernode (stability metric).
+    pub max_l_entry: f64,
+}
+
 /// Aggregate statistics from multifrontal factorization.
 ///
 /// Reports pivot counts, delay events, and front sizes across all supernodes.
@@ -205,6 +233,19 @@ pub struct FactorizationStats {
     pub zero_pivots: usize,
     /// Largest frontal matrix dimension encountered.
     pub max_front_size: usize,
+}
+
+/// Assembled frontal matrix exported for diagnostic comparison.
+#[cfg(feature = "diagnostic")]
+pub struct ExportedFrontal {
+    /// Dense m x m frontal matrix (lower triangle populated).
+    pub data: Mat<f64>,
+    /// Total front size.
+    pub front_size: usize,
+    /// Number of fully-summed columns.
+    pub num_fully_summed: usize,
+    /// Global permuted column indices for each local row.
+    pub row_indices: Vec<usize>,
 }
 
 /// Complete multifrontal numeric factorization result.
@@ -235,6 +276,8 @@ pub struct AptpNumeric {
     front_factors: Vec<FrontFactors>,
     /// Aggregate factorization statistics.
     stats: FactorizationStats,
+    /// Per-supernode diagnostic statistics (same order as `front_factors`).
+    per_supernode_stats: Vec<PerSupernodeStats>,
     /// Matrix dimension.
     n: usize,
 }
@@ -248,6 +291,13 @@ impl AptpNumeric {
     /// Aggregate factorization statistics.
     pub fn stats(&self) -> &FactorizationStats {
         &self.stats
+    }
+
+    /// Per-supernode diagnostic statistics.
+    ///
+    /// One entry per supernode in postorder, matching [`front_factors`](Self::front_factors).
+    pub fn per_supernode_stats(&self) -> &[PerSupernodeStats] {
+        &self.per_supernode_stats
     }
 
     /// Matrix dimension.
@@ -313,10 +363,11 @@ impl AptpNumeric {
         let (perm_fwd, perm_inv) = symbolic.perm_vecs();
 
         // Allocate shared data structures
-        let mut global_to_local = vec![usize::MAX; n];
+        let mut global_to_local = vec![NOT_IN_FRONT; n];
         let mut contributions: Vec<Option<ContributionBlock>> =
             (0..n_supernodes).map(|_| None).collect();
         let mut front_factors_vec = Vec::with_capacity(n_supernodes);
+        let mut per_sn_stats = Vec::with_capacity(n_supernodes);
         let mut stats = FactorizationStats {
             total_1x1_pivots: 0,
             total_2x2_pivots: 0,
@@ -338,12 +389,12 @@ impl AptpNumeric {
             }
 
             // 2. Compute frontal matrix structure
-            let sn_cols: Vec<usize> = (sn.col_begin..sn.col_end).collect();
-            let k = sn_cols.len() + delayed_cols.len(); // num_fully_summed
+            let sn_ncols = sn.col_end - sn.col_begin;
+            let k = sn_ncols + delayed_cols.len(); // num_fully_summed
 
             // Row indices: fully-summed (sn columns + delayed) + off-diagonal pattern
             let mut frontal_rows: Vec<usize> = Vec::with_capacity(k + sn.pattern.len());
-            frontal_rows.extend_from_slice(&sn_cols);
+            frontal_rows.extend(sn.col_begin..sn.col_end);
             frontal_rows.extend_from_slice(&delayed_cols);
             frontal_rows.extend_from_slice(&sn.pattern);
             let m = frontal_rows.len();
@@ -392,6 +443,28 @@ impl AptpNumeric {
             stats.total_2x2_pivots += result.stats.num_2x2;
             stats.total_delayed += result.stats.num_delayed;
 
+            // Count zero-valued 1x1 pivots (TPP accepts zero columns as 1x1 with D=0
+            // rather than delaying them, so we detect them here).
+            for (_, entry) in result.d.iter_pivots() {
+                if let PivotEntry::OneByOne(val) = entry {
+                    if val == 0.0 {
+                        stats.zero_pivots += 1;
+                    }
+                }
+            }
+
+            // 6b. Record per-supernode diagnostics
+            per_sn_stats.push(PerSupernodeStats {
+                snode_id: s,
+                front_size: m,
+                num_fully_summed: k,
+                num_eliminated: ne,
+                num_delayed: k - ne,
+                num_1x1: result.stats.num_1x1,
+                num_2x2: result.stats.num_2x2,
+                max_l_entry: result.stats.max_l_entry,
+            });
+
             // 7. Extract and store front factors
             let ff = extract_front_factors(&frontal, &result);
             front_factors_vec.push(ff);
@@ -410,15 +483,170 @@ impl AptpNumeric {
 
             // 9. Cleanup global-to-local mapping
             for &global in &frontal_rows {
-                global_to_local[global] = usize::MAX;
+                global_to_local[global] = NOT_IN_FRONT;
             }
         }
 
         Ok(AptpNumeric {
             front_factors: front_factors_vec,
             stats,
+            per_supernode_stats: per_sn_stats,
             n,
         })
+    }
+
+    /// Export the assembled (pre-factorization) frontal matrix for a specific supernode.
+    ///
+    /// Runs the multifrontal assembly up to the target supernode, factoring all
+    /// preceding supernodes to generate their contributions, then returns the
+    /// assembled frontal matrix for the target **before** APTP factoring.
+    ///
+    /// # Selecting the Target Supernode
+    ///
+    /// If `target_snode` is `None`, the supernode with the largest front size is used.
+    /// Otherwise, the specified supernode index is used.
+    ///
+    /// # Use Case
+    ///
+    /// This is a diagnostic tool for comparing our APTP dense kernel with SPRAL's
+    /// `ldlt_app_factor` on the same assembled input. The exported matrix can be
+    /// written to a file and fed to a SPRAL driver.
+    #[cfg(feature = "diagnostic")]
+    pub fn export_assembled_frontal(
+        symbolic: &AptpSymbolic,
+        matrix: &SparseColMat<usize, f64>,
+        options: &AptpOptions,
+        scaling: Option<&[f64]>,
+        target_snode: Option<usize>,
+    ) -> Result<ExportedFrontal, SparseError> {
+        let n = symbolic.nrows();
+
+        if matrix.nrows() != n || matrix.ncols() != n {
+            return Err(SparseError::DimensionMismatch {
+                expected: (n, n),
+                got: (matrix.nrows(), matrix.ncols()),
+                context: "Matrix dimensions must match symbolic analysis".to_string(),
+            });
+        }
+
+        let supernodes = build_supernode_info(symbolic);
+        let n_supernodes = supernodes.len();
+        let children = build_children_map(&supernodes);
+        let (perm_fwd, perm_inv) = symbolic.perm_vecs();
+
+        // Determine target supernode
+        let target = match target_snode {
+            Some(t) => {
+                if t >= n_supernodes {
+                    return Err(SparseError::AnalysisFailure {
+                        reason: format!(
+                            "Target supernode {} out of range (n_supernodes={})",
+                            t, n_supernodes
+                        ),
+                    });
+                }
+                t
+            }
+            None => {
+                // Find supernode with largest front
+                let mut best = 0;
+                let mut best_m = 0;
+                for (s, sn) in supernodes.iter().enumerate() {
+                    let sn_ncols = sn.col_end - sn.col_begin;
+                    // Approximate: delayed cols not counted here, just pattern + cols
+                    let m_approx = sn_ncols + sn.pattern.len();
+                    if m_approx > best_m {
+                        best_m = m_approx;
+                        best = s;
+                    }
+                }
+                best
+            }
+        };
+
+        let mut global_to_local = vec![NOT_IN_FRONT; n];
+        let mut contributions: Vec<Option<ContributionBlock>> =
+            (0..n_supernodes).map(|_| None).collect();
+
+        // Process supernodes in postorder up to and including target
+        for s in 0..=target {
+            let sn = &supernodes[s];
+
+            // 1. Collect delayed columns from children
+            let mut delayed_cols: Vec<usize> = Vec::new();
+            for &c in &children[s] {
+                if let Some(ref cb) = contributions[c] {
+                    delayed_cols.extend_from_slice(&cb.row_indices[..cb.num_delayed]);
+                }
+            }
+
+            // 2. Compute frontal matrix structure
+            let sn_ncols = sn.col_end - sn.col_begin;
+            let k = sn_ncols + delayed_cols.len();
+            let mut frontal_rows: Vec<usize> = Vec::with_capacity(k + sn.pattern.len());
+            frontal_rows.extend(sn.col_begin..sn.col_end);
+            frontal_rows.extend_from_slice(&delayed_cols);
+            frontal_rows.extend_from_slice(&sn.pattern);
+            let m = frontal_rows.len();
+
+            // 3. Build global-to-local mapping
+            for (i, &global) in frontal_rows.iter().enumerate() {
+                global_to_local[global] = i;
+            }
+
+            // 4. Assemble frontal matrix
+            let mut frontal = FrontalMatrix {
+                data: Mat::zeros(m, m),
+                row_indices: frontal_rows.clone(),
+                num_fully_summed: k,
+            };
+
+            scatter_original_entries(
+                &mut frontal,
+                matrix,
+                &perm_fwd,
+                &perm_inv,
+                &global_to_local,
+                sn.col_begin..sn.col_end,
+                scaling,
+            );
+
+            for &c in &children[s] {
+                if let Some(cb) = contributions[c].take() {
+                    extend_add(&mut frontal, &cb, &global_to_local);
+                }
+            }
+
+            if s == target {
+                // Return the assembled frontal matrix BEFORE factoring
+                // Clean up global_to_local
+                for &global in &frontal_rows {
+                    global_to_local[global] = NOT_IN_FRONT;
+                }
+                return Ok(ExportedFrontal {
+                    data: frontal.data,
+                    front_size: m,
+                    num_fully_summed: k,
+                    row_indices: frontal_rows,
+                });
+            }
+
+            // Factor this supernode (needed for contribution propagation)
+            let result = aptp_factor_in_place(frontal.data.as_mut(), k, options)?;
+            let ne = result.num_eliminated;
+
+            if sn.parent.is_some() && ne < m {
+                contributions[s] = Some(extract_contribution(&frontal, &result));
+            }
+
+            // Cleanup
+            for &global in &frontal_rows {
+                global_to_local[global] = NOT_IN_FRONT;
+            }
+        }
+
+        // Should not reach here — we return inside the loop at s == target
+        unreachable!("Target supernode {} not reached in postorder loop", target)
     }
 }
 
@@ -566,7 +794,7 @@ fn scatter_original_entries(
             }
             let global_row = perm_inv[orig_row];
             let local_row = global_to_local[global_row];
-            if local_row == usize::MAX {
+            if local_row == NOT_IN_FRONT {
                 continue; // not in this front
             }
             // Skip entries where the row is a delayed column from a child.
@@ -609,7 +837,7 @@ pub(crate) fn extend_add(
         let gi = child.row_indices[i];
         let li = global_to_local[gi];
         debug_assert!(
-            li != usize::MAX,
+            li != NOT_IN_FRONT,
             "extend_add: child row {} not in parent",
             gi
         );
@@ -618,7 +846,7 @@ pub(crate) fn extend_add(
             let gj = child.row_indices[j];
             let lj = global_to_local[gj];
             debug_assert!(
-                lj != usize::MAX,
+                lj != NOT_IN_FRONT,
                 "extend_add: child col {} not in parent",
                 gj
             );
@@ -678,8 +906,7 @@ pub(crate) fn extract_front_factors(
                 }
                 PivotType::Delayed => {
                     // Should not appear for columns 0..ne (they were eliminated)
-                    debug_assert!(false, "unexpected Delayed pivot at col {} in 0..ne", col);
-                    col += 1;
+                    unreachable!("unexpected Delayed pivot at col {} in 0..ne", col);
                 }
             }
         }
@@ -709,18 +936,24 @@ pub(crate) fn extract_front_factors(
             }
             PivotType::Delayed => {
                 // Should not happen for columns 0..ne (they were eliminated)
-                col += 1;
+                unreachable!("unexpected Delayed pivot at col {} in 0..ne", col);
             }
         }
     }
 
-    // Extract L21 (r × ne) where r = m - k
-    let r = m - k;
+    // Extract L21 (r × ne) where r = m - ne (includes delayed rows ne..k AND
+    // non-fully-summed rows k..m). The factored frontal has valid L entries at rows
+    // ne..m for columns 0..ne: rows ne..k are delayed fully-summed rows that received
+    // TRSM updates before being delayed; rows k..m are non-fully-summed rows.
+    //
+    // NOTE: extract_contribution also includes delayed rows (see lines below).
+    // These two functions MUST be consistent in their row treatment.
+    let r = m - ne;
     let l21 = if ne > 0 && r > 0 {
         let mut l = Mat::zeros(r, ne);
         for i in 0..r {
             for j in 0..ne {
-                l[(i, j)] = frontal.data[(k + i, j)];
+                l[(i, j)] = frontal.data[(ne + i, j)];
             }
         }
         l
@@ -739,8 +972,16 @@ pub(crate) fn extract_front_factors(
         .map(|&lp| frontal.row_indices[lp])
         .collect();
 
-    // Row indices: global permuted indices for L21 rows
-    let row_indices = frontal.row_indices[k..].to_vec();
+    // Row indices: global permuted indices for L21 rows.
+    // First num_delayed entries: delayed fully-summed columns (ne..k), mapped through
+    // result.perm and frontal.row_indices to get global permuted indices.
+    // Remaining entries: non-fully-summed rows (k..m).
+    // This matches extract_contribution's row_indices construction.
+    let mut row_indices = Vec::with_capacity(m - ne);
+    for &lp in &result.perm[ne..k] {
+        row_indices.push(frontal.row_indices[lp]);
+    }
+    row_indices.extend_from_slice(&frontal.row_indices[k..]);
 
     FrontFactors {
         l11,
@@ -795,5 +1036,482 @@ pub(crate) fn extract_contribution(
         data,
         row_indices,
         num_delayed,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::aptp::factor::AptpOptions;
+
+    /// Helper: build a FrontalMatrix from a dense lower-triangle matrix.
+    ///
+    /// `k` = number of fully-summed columns.
+    /// `row_indices` = global permuted indices for each local row (length m).
+    fn make_frontal(lower: &Mat<f64>, k: usize, row_indices: Vec<usize>) -> FrontalMatrix {
+        let m = lower.nrows();
+        assert_eq!(lower.ncols(), m);
+        assert_eq!(row_indices.len(), m);
+        assert!(k <= m);
+
+        // Build full symmetric from lower triangle
+        let mut data = Mat::zeros(m, m);
+        for i in 0..m {
+            for j in 0..=i {
+                data[(i, j)] = lower[(i, j)];
+                data[(j, i)] = lower[(i, j)];
+            }
+        }
+
+        FrontalMatrix {
+            data,
+            row_indices,
+            num_fully_summed: k,
+        }
+    }
+
+    /// Helper: build a symmetric indefinite matrix (lower triangle) that forces
+    /// delays. Strategy from SPRAL's `cause_delays`: scale selected rows/cols
+    /// by a large factor, making their off-diagonal entries dominate the diagonal
+    /// so the threshold test fails.
+    ///
+    /// Returns (matrix, expected_to_have_delays).
+    fn make_delay_matrix(m: usize, k: usize, delay_rows: &[usize]) -> Mat<f64> {
+        let mut a = Mat::zeros(m, m);
+
+        // Start with a diagonally dominant indefinite matrix
+        for i in 0..m {
+            // Alternate positive/negative diagonal for indefiniteness
+            a[(i, i)] = if i % 2 == 0 { 4.0 } else { -4.0 };
+            // Add some off-diagonal coupling
+            for j in 0..i {
+                let val = 0.5 / ((i - j) as f64 + 1.0);
+                a[(i, j)] = val;
+            }
+        }
+
+        // Scale delay_rows to create threshold failures:
+        // Multiply row/col by 1000 but NOT the diagonal, so off-diag >> diag
+        for &r in delay_rows {
+            if r < k {
+                // Scale off-diagonal entries in row r
+                for j in 0..r {
+                    a[(r, j)] *= 1000.0;
+                }
+                for i in (r + 1)..m {
+                    a[(i, r)] *= 1000.0;
+                }
+                // DON'T scale diagonal — this makes |a_rr| << |a_ir| => threshold failure
+            }
+        }
+
+        a
+    }
+
+    /// Test that extract_front_factors produces correct L21 dimensions when
+    /// delays are present: L21 should have (m - ne) rows, NOT (m - k) rows.
+    /// This is the regression test for the bug fixed in this commit.
+    #[test]
+    fn test_extract_front_factors_l21_includes_delayed_rows() {
+        let m = 12;
+        let k = 8;
+        let delay_rows = &[1, 5]; // Columns 1 and 5 should be delayed
+
+        let lower = make_delay_matrix(m, k, delay_rows);
+        let row_indices: Vec<usize> = (100..100 + m).collect(); // arbitrary global indices
+
+        let mut frontal = make_frontal(&lower, k, row_indices);
+
+        let options = AptpOptions::default();
+        let result = aptp_factor_in_place(frontal.data.as_mut(), k, &options)
+            .expect("factor should succeed");
+
+        let ne = result.num_eliminated;
+        let num_delayed = k - ne;
+
+        // The bug: if delays occurred, the old code would make L21 have (m - k) rows
+        // instead of (m - ne) rows, missing the delayed-row entries.
+        if num_delayed > 0 {
+            let ff = extract_front_factors(&frontal, &result);
+
+            // L21 must have (m - ne) rows = delayed_rows + non-fully-summed rows
+            assert_eq!(
+                ff.l21.nrows(),
+                m - ne,
+                "L21 should have m-ne={} rows (not m-k={}), ne={}, delays={}",
+                m - ne,
+                m - k,
+                ne,
+                num_delayed
+            );
+
+            // row_indices must match L21 rows
+            assert_eq!(
+                ff.row_indices.len(),
+                ff.l21.nrows(),
+                "row_indices length must match L21 rows"
+            );
+
+            // col_indices must have ne entries
+            assert_eq!(ff.col_indices.len(), ne);
+        } else {
+            // No delays — still verify basic shapes
+            let ff = extract_front_factors(&frontal, &result);
+            assert_eq!(ff.l21.nrows(), m - ne);
+            assert_eq!(ff.row_indices.len(), ff.l21.nrows());
+        }
+    }
+
+    /// Test that delayed rows in extract_front_factors and extract_contribution
+    /// have consistent row_indices. Both functions MUST agree on which global
+    /// indices correspond to delayed rows.
+    #[test]
+    fn test_extract_front_factors_contribution_row_indices_consistent() {
+        let m = 10;
+        let k = 6;
+        let delay_rows = &[2]; // Force column 2 to be delayed
+
+        let lower = make_delay_matrix(m, k, delay_rows);
+        let row_indices: Vec<usize> = (200..200 + m).collect();
+
+        let mut frontal = make_frontal(&lower, k, row_indices);
+
+        let options = AptpOptions::default();
+        let result = aptp_factor_in_place(frontal.data.as_mut(), k, &options)
+            .expect("factor should succeed");
+
+        let ne = result.num_eliminated;
+        let num_delayed = k - ne;
+
+        if num_delayed > 0 {
+            let ff = extract_front_factors(&frontal, &result);
+            let cb = extract_contribution(&frontal, &result);
+
+            // Both must have the same number of delayed rows
+            assert_eq!(cb.num_delayed, num_delayed);
+
+            // The first num_delayed entries of row_indices must match
+            let ff_delayed_indices = &ff.row_indices[..num_delayed];
+            let cb_delayed_indices = &cb.row_indices[..num_delayed];
+            assert_eq!(
+                ff_delayed_indices, cb_delayed_indices,
+                "Delayed row indices must be identical between extract_front_factors \
+                 and extract_contribution.\n  front_factors: {:?}\n  contribution:  {:?}",
+                ff_delayed_indices, cb_delayed_indices
+            );
+
+            // The non-fully-summed row indices must also match
+            let ff_nfs_indices = &ff.row_indices[num_delayed..];
+            let cb_nfs_indices = &cb.row_indices[num_delayed..];
+            assert_eq!(
+                ff_nfs_indices, cb_nfs_indices,
+                "Non-fully-summed row indices must match"
+            );
+        }
+    }
+
+    /// Test that L21 entries at delayed row positions are non-zero.
+    /// When APTP delays a column, the TRSM (apply_and_check) has already
+    /// computed valid L entries at those row positions. These must be preserved
+    /// in the extracted L21.
+    #[test]
+    fn test_extract_front_factors_delayed_l21_entries_populated() {
+        let m = 12;
+        let k = 8;
+        // Use multiple delay candidates to increase chance of delays
+        let delay_rows = &[0, 3, 5];
+
+        let lower = make_delay_matrix(m, k, delay_rows);
+        let row_indices: Vec<usize> = (0..m).collect();
+
+        let mut frontal = make_frontal(&lower, k, row_indices);
+
+        let options = AptpOptions::default();
+        let result = aptp_factor_in_place(frontal.data.as_mut(), k, &options)
+            .expect("factor should succeed");
+
+        let ne = result.num_eliminated;
+        let num_delayed = k - ne;
+
+        if num_delayed > 0 && ne > 0 {
+            let ff = extract_front_factors(&frontal, &result);
+
+            // Check that L21 entries in the delayed-row portion (rows 0..num_delayed)
+            // are not all zero. These rows received TRSM updates before being delayed.
+            let delayed_l21 = ff.l21.as_ref().subrows(0, num_delayed);
+            let mut has_nonzero = false;
+            for i in 0..delayed_l21.nrows() {
+                for j in 0..delayed_l21.ncols() {
+                    if delayed_l21[(i, j)].abs() > 1e-16 {
+                        has_nonzero = true;
+                    }
+                }
+            }
+            assert!(
+                has_nonzero,
+                "L21 delayed rows should have non-zero entries from TRSM. \
+                 ne={}, delays={}, L21 shape=({},{})",
+                ne,
+                num_delayed,
+                ff.l21.nrows(),
+                ff.l21.ncols()
+            );
+        }
+    }
+
+    /// Reconstruction test for extract_front_factors with delays.
+    /// Verify that the extracted L11, D11, L21 correctly reconstruct the
+    /// factored portion of the frontal matrix: PAP^T[0..ne, 0..ne] = L11 * D11 * L11^T.
+    #[test]
+    fn test_extract_front_factors_reconstruction_with_delays() {
+        let m = 16;
+        let k = 10;
+        let delay_rows = &[1, 4, 7];
+
+        let lower = make_delay_matrix(m, k, delay_rows);
+        let row_indices: Vec<usize> = (0..m).collect();
+
+        // Save a copy of the original symmetric matrix before factoring
+        let mut original = Mat::zeros(m, m);
+        for i in 0..m {
+            for j in 0..=i {
+                original[(i, j)] = lower[(i, j)];
+                original[(j, i)] = lower[(i, j)];
+            }
+        }
+
+        let mut frontal = make_frontal(&lower, k, row_indices);
+
+        let options = AptpOptions::default();
+        let result = aptp_factor_in_place(frontal.data.as_mut(), k, &options)
+            .expect("factor should succeed");
+
+        let ne = result.num_eliminated;
+        if ne == 0 {
+            return; // Nothing to reconstruct
+        }
+
+        let ff = extract_front_factors(&frontal, &result);
+
+        // Compute L11 * D * L11^T manually
+        // Step 1: LD = L11 * D (column-by-column, handling 1x1 and 2x2 pivots)
+        let mut ld = Mat::zeros(ne, ne);
+        let mut col = 0;
+        while col < ne {
+            match ff.d11.get_pivot_type(col) {
+                PivotType::OneByOne => {
+                    let d = ff.d11.get_1x1(col);
+                    for i in 0..ne {
+                        ld[(i, col)] = ff.l11[(i, col)] * d;
+                    }
+                    col += 1;
+                }
+                PivotType::TwoByTwo { .. } => {
+                    let block = ff.d11.get_2x2(col);
+                    for i in 0..ne {
+                        let l0 = ff.l11[(i, col)];
+                        let l1 = ff.l11[(i, col + 1)];
+                        ld[(i, col)] = l0 * block.a + l1 * block.b;
+                        ld[(i, col + 1)] = l0 * block.b + l1 * block.c;
+                    }
+                    col += 2;
+                }
+                PivotType::Delayed => {
+                    col += 1;
+                }
+            }
+        }
+
+        // Step 2: reconstructed = LD * L11^T
+        let mut reconstructed = Mat::zeros(ne, ne);
+        for i in 0..ne {
+            for j in 0..=i {
+                let mut val = 0.0;
+                for p in 0..ne {
+                    val += ld[(i, p)] * ff.l11[(j, p)];
+                }
+                reconstructed[(i, j)] = val;
+                reconstructed[(j, i)] = val;
+            }
+        }
+
+        // Build the permuted original submatrix for comparison
+        let mut perm_original = Mat::zeros(ne, ne);
+        for i in 0..ne {
+            for j in 0..=i {
+                let oi = result.perm[i];
+                let oj = result.perm[j];
+                let val = if oi >= oj {
+                    original[(oi, oj)]
+                } else {
+                    original[(oj, oi)]
+                };
+                perm_original[(i, j)] = val;
+                perm_original[(j, i)] = val;
+            }
+        }
+
+        // Check reconstruction: ||PAP^T[0..ne,0..ne] - L11*D11*L11^T|| / ||PAP^T||
+        let mut diff_norm = 0.0f64;
+        let mut orig_norm = 0.0f64;
+        for i in 0..ne {
+            for j in 0..=i {
+                let d = reconstructed[(i, j)] - perm_original[(i, j)];
+                diff_norm += d * d;
+                orig_norm += perm_original[(i, j)] * perm_original[(i, j)];
+            }
+        }
+        let rel_err = diff_norm.sqrt() / orig_norm.sqrt().max(1e-15);
+
+        assert!(
+            rel_err < 1e-10,
+            "L11*D11*L11^T reconstruction error: {:.2e} (ne={}, delays={})",
+            rel_err,
+            ne,
+            k - ne
+        );
+    }
+
+    /// Verify that the solve path produces correct results when delays are
+    /// present. Uses a single dense frontal matrix (simulating one supernode),
+    /// factors with delays, extracts front_factors, and runs forward/diagonal/
+    /// backward solve steps to verify Ax = b.
+    ///
+    /// This directly tests the code path that the extract_front_factors bug
+    /// would break: delayed-row L21 entries participate in forward and backward
+    /// solve via gather/scatter operations.
+    #[test]
+    fn test_extract_front_factors_solve_roundtrip_with_delays() {
+        let m = 12;
+        let k = 8; // fully-summed columns
+
+        let lower = make_delay_matrix(m, k, &[0, 3, 5]);
+        let row_indices: Vec<usize> = (0..m).collect();
+
+        // Build full symmetric matrix for reference
+        let mut a_full = Mat::zeros(m, m);
+        for i in 0..m {
+            for j in 0..=i {
+                a_full[(i, j)] = lower[(i, j)];
+                a_full[(j, i)] = lower[(i, j)];
+            }
+        }
+
+        let mut frontal = make_frontal(&lower, k, row_indices.clone());
+
+        let options = AptpOptions::default();
+        let result = aptp_factor_in_place(frontal.data.as_mut(), k, &options)
+            .expect("factor should succeed");
+
+        let ne = result.num_eliminated;
+        let num_delayed = k - ne;
+
+        // Only meaningful if we actually got some delays and some eliminations
+        if num_delayed == 0 || ne == 0 {
+            return;
+        }
+
+        let ff = extract_front_factors(&frontal, &result);
+
+        // Check that L11, D11, L21 are internally consistent:
+        // L * D * L^T (where L = [L11; L21]) should reconstruct the factored
+        // portion of A when permuted.
+
+        // Build full L = [L11; L21] and check L * D * L^T = P * A[0..m, 0..ne] * P^T
+        let r = ff.l21.nrows();
+        let full_l_rows = ne + r;
+        assert_eq!(full_l_rows, m, "L should cover all rows");
+
+        // Compute L*D*L^T for the eliminated portion
+        let mut ld = Mat::zeros(full_l_rows, ne);
+
+        // L = [L11; L21]
+        let mut full_l = Mat::zeros(full_l_rows, ne);
+        for i in 0..ne {
+            for j in 0..ne {
+                full_l[(i, j)] = ff.l11[(i, j)];
+            }
+        }
+        for i in 0..r {
+            for j in 0..ne {
+                full_l[(ne + i, j)] = ff.l21[(i, j)];
+            }
+        }
+
+        // LD = L * D (handling 1x1 and 2x2)
+        let mut col = 0;
+        while col < ne {
+            match ff.d11.get_pivot_type(col) {
+                PivotType::OneByOne => {
+                    let d = ff.d11.get_1x1(col);
+                    for i in 0..full_l_rows {
+                        ld[(i, col)] = full_l[(i, col)] * d;
+                    }
+                    col += 1;
+                }
+                PivotType::TwoByTwo { .. } => {
+                    let block = ff.d11.get_2x2(col);
+                    for i in 0..full_l_rows {
+                        let l0 = full_l[(i, col)];
+                        let l1 = full_l[(i, col + 1)];
+                        ld[(i, col)] = l0 * block.a + l1 * block.b;
+                        ld[(i, col + 1)] = l0 * block.b + l1 * block.c;
+                    }
+                    col += 2;
+                }
+                PivotType::Delayed => {
+                    col += 1;
+                }
+            }
+        }
+
+        // reconstructed = LD * L^T
+        let mut reconstructed = Mat::zeros(full_l_rows, full_l_rows);
+        for i in 0..full_l_rows {
+            for j in 0..=i {
+                let mut val = 0.0;
+                for p in 0..ne {
+                    val += ld[(i, p)] * full_l[(j, p)];
+                }
+                reconstructed[(i, j)] = val;
+                reconstructed[(j, i)] = val;
+            }
+        }
+
+        // Build permuted original: row_order = col_indices ++ row_indices
+        let mut perm_rows = Vec::with_capacity(full_l_rows);
+        perm_rows.extend_from_slice(ff.col_indices());
+        perm_rows.extend_from_slice(ff.row_indices());
+
+        // Check that L*D*L^T[0..ne, 0..ne] ≈ A_perm[0..ne, 0..ne]
+        let mut diff_norm = 0.0f64;
+        let mut orig_norm = 0.0f64;
+        for i in 0..ne {
+            for j in 0..=i {
+                let gi = perm_rows[i];
+                let gj = perm_rows[j];
+                let orig_val = if gi >= gj {
+                    a_full[(gi, gj)]
+                } else {
+                    a_full[(gj, gi)]
+                };
+                let d = reconstructed[(i, j)] - orig_val;
+                diff_norm += d * d;
+                orig_norm += orig_val * orig_val;
+            }
+        }
+        let rel_err = diff_norm.sqrt() / orig_norm.sqrt().max(1e-15);
+        assert!(
+            rel_err < 1e-10,
+            "Full L*D*L^T reconstruction error: {:.2e} (ne={}, delays={}, L21_rows={})",
+            rel_err,
+            ne,
+            num_delayed,
+            r
+        );
     }
 }

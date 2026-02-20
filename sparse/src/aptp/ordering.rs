@@ -321,7 +321,7 @@ fn split_matching_cycles(
     let mut singletons = 0usize;
     let mut two_cycles = 0usize;
 
-    // First pass: mark unmatched indices
+    // First pass: mark unmatched indices (visited, so cycle walker skips them)
     for i in 0..n {
         if !is_matched[i] {
             partner[i] = -2;
@@ -329,10 +329,22 @@ fn split_matching_cycles(
         }
     }
 
-    // Second pass: walk cycles and split into singletons + 2-cycles
+    // Second pass: walk cycles, split into singletons + 2-cycles.
+    // Following SPRAL's mo_split: ALL nodes get condensed indices (including
+    // unmatched, which become singleton condensed nodes for METIS).
     let mut condensed_idx = 0usize;
     for i in 0..n {
-        if visited[i] {
+        if visited[i] && partner[i] != -2 {
+            // Already processed as part of a matched cycle
+            continue;
+        }
+
+        // Unmatched node: assign singleton condensed index
+        if partner[i] == -2 {
+            old_to_new[i] = condensed_idx;
+            new_to_old.push(i);
+            condensed_idx += 1;
+            singletons += 1;
             continue;
         }
 
@@ -426,10 +438,11 @@ fn build_condensed_adjacency(
     let mut marker = vec![usize::MAX; cdim]; // marker[cnode] = current source cnode
 
     for col in 0..n {
-        if decomp.partner[col] == -2 {
-            continue; // Skip unmatched columns
-        }
         let c_col = decomp.old_to_new[col];
+
+        // For 2-cycle second members: old_to_new maps to same condensed index
+        // as the first member. The marker dedup handles this — we process both
+        // columns of a pair, and all edges merge into the same condensed node.
 
         // Mark self to avoid self-loops
         marker[c_col] = c_col;
@@ -437,9 +450,6 @@ fn build_condensed_adjacency(
         let start = col_ptrs[col];
         let end = col_ptrs[col + 1];
         for &row in &row_indices[start..end] {
-            if decomp.partner[row] == -2 {
-                continue; // Skip unmatched rows
-            }
             let c_row = decomp.old_to_new[row];
             if marker[c_row] != c_col {
                 marker[c_row] = c_col;
@@ -513,24 +523,10 @@ fn expand_ordering(condensed_order: &[i32], decomp: &CycleDecomposition, n: usiz
         }
     }
 
-    // Append unmatched indices at the end
-    let matched_count = fwd.len();
-    for i in 0..n {
-        if decomp.partner[i] == -2 {
-            fwd.push(i);
-        }
-    }
-
+    // All nodes (matched + unmatched) have condensed indices and are emitted
+    // by the loop above. Unmatched nodes are singleton condensed nodes placed
+    // at METIS-chosen positions, not appended at the end.
     debug_assert_eq!(fwd.len(), n);
-    // Matched positions = singletons + 2*two_cycles; unmatched fill [matched_count..n)
-    debug_assert_eq!(
-        matched_count,
-        decomp.singletons + 2 * decomp.two_cycles,
-        "matched expansion size mismatch: {} != {} singletons + 2*{} two_cycles",
-        matched_count,
-        decomp.singletons,
-        decomp.two_cycles,
-    );
 
     // Build inverse: inv[old_idx] = new_pos
     let mut inv = vec![0usize; n];
@@ -1069,10 +1065,16 @@ mod tests {
         let decomp = split_matching_cycles(&fwd, &is_matched, 6);
 
         assert_eq!(decomp.two_cycles, 2);
-        assert_eq!(decomp.singletons, 1);
-        assert_eq!(decomp.condensed_dim, 3); // Only matched indices
-        assert_eq!(decomp.partner[5], -2); // Unmatched
-        assert_eq!(decomp.partner[2], -1); // Singleton
+        // Singletons include both matched singletons and unmatched-as-singletons
+        assert_eq!(decomp.singletons, 2); // {2} matched singleton + {5} unmatched singleton
+        assert_eq!(decomp.condensed_dim, 4); // All nodes: 2 pairs + 2 singletons
+        assert_eq!(decomp.partner[5], -2); // Still tagged as unmatched
+        assert_eq!(decomp.partner[2], -1); // Matched singleton
+        // Unmatched node 5 has a condensed index
+        assert!(
+            decomp.old_to_new[5] < decomp.condensed_dim,
+            "unmatched node should have valid condensed index"
+        );
     }
 
     #[test]
@@ -1270,28 +1272,178 @@ mod tests {
         let is_matched = vec![true, true, true, false, false];
         let decomp = split_matching_cycles(&fwd, &is_matched, 5);
 
-        assert_eq!(decomp.condensed_dim, 2); // pair + singleton = 2
+        // Now includes unmatched as singleton condensed nodes
+        assert_eq!(decomp.condensed_dim, 4); // pair + singleton + 2 unmatched
 
-        let condensed_order = vec![0i32, 1i32];
+        let condensed_order = vec![0i32, 1i32, 2i32, 3i32];
         let perm = expand_ordering(&condensed_order, &decomp, 5);
 
         let (expanded_fwd, expanded_inv) = perm.as_ref().arrays();
         assert_eq!(expanded_fwd.len(), 5);
 
-        // Unmatched should be at the end
-        assert!(
-            expanded_inv[3] >= 3,
-            "unmatched index 3 should be at end, got pos {}",
-            expanded_inv[3]
-        );
-        assert!(
-            expanded_inv[4] >= 3,
-            "unmatched index 4 should be at end, got pos {}",
-            expanded_inv[4]
-        );
+        // All nodes should have valid positions
+        let mut seen = [false; 5];
+        for &v in expanded_fwd {
+            assert!(v < 5);
+            seen[v] = true;
+        }
+        assert!(seen.iter().all(|&s| s), "not a valid permutation");
 
         // Pair {0,1} still consecutive
         let diff = (expanded_inv[0] as isize - expanded_inv[1] as isize).unsigned_abs();
         assert_eq!(diff, 1, "pair (0,1) not consecutive");
+
+        // Unmatched nodes are now at METIS-determined positions (not forced to end)
+        // With identity condensed ordering, they get positions based on their
+        // condensed index, not appended
+    }
+
+    // ---- Unmatched node condensation fix tests ----
+
+    #[test]
+    fn test_split_unmatched_get_condensed_indices() {
+        // 4 nodes: pair {0,1}, unmatched {2}, unmatched {3}
+        let fwd = vec![1, 0, 2, 3]; // 2,3 map to self but unmatched
+        let is_matched = vec![true, true, false, false];
+        let decomp = split_matching_cycles(&fwd, &is_matched, 4);
+
+        // Both unmatched nodes should have condensed indices
+        assert_eq!(decomp.condensed_dim, 3); // 1 pair + 2 unmatched singletons
+        assert!(decomp.old_to_new[2] < decomp.condensed_dim);
+        assert!(decomp.old_to_new[3] < decomp.condensed_dim);
+
+        // Unmatched nodes have distinct condensed indices
+        assert_ne!(decomp.old_to_new[2], decomp.old_to_new[3]);
+
+        // Pair members share condensed index
+        assert_eq!(decomp.old_to_new[0], decomp.old_to_new[1]);
+    }
+
+    #[test]
+    fn test_condensed_adjacency_includes_unmatched_edges() {
+        // 4x4: pair {0,1} connected to unmatched {2}. {3} isolated unmatched.
+        // [1  1  1  0]
+        // [1  1  0  0]
+        // [1  0  1  0]
+        // [0  0  0  1]
+        let matrix = make_upper_tri(
+            4,
+            &[
+                (0, 0, 1.0),
+                (0, 1, 1.0),
+                (0, 2, 1.0),
+                (1, 1, 1.0),
+                (2, 2, 1.0),
+                (3, 3, 1.0),
+            ],
+        );
+
+        let fwd = vec![1, 0, 2, 3];
+        let is_matched = vec![true, true, false, false];
+        let decomp = split_matching_cycles(&fwd, &is_matched, 4);
+
+        let (xadj, adjncy) = build_condensed_adjacency(matrix.symbolic(), &decomp).unwrap();
+
+        // Should have 3 condensed nodes: pair{0,1}, singleton{2}, singleton{3}
+        assert_eq!(xadj.len(), 4); // 3 + 1
+
+        // The pair {0,1} should have edge to unmatched singleton {2}
+        // (since original node 0 connects to node 2)
+        let c_pair = decomp.old_to_new[0];
+        let c_unmatched_2 = decomp.old_to_new[2];
+
+        let pair_start = xadj[c_pair] as usize;
+        let pair_end = xadj[c_pair + 1] as usize;
+        let pair_neighbors: Vec<i32> = adjncy[pair_start..pair_end].to_vec();
+        assert!(
+            pair_neighbors.contains(&(c_unmatched_2 as i32)),
+            "pair should neighbor unmatched node 2; neighbors = {:?}",
+            pair_neighbors
+        );
+
+        // The unmatched singleton {3} should be isolated (no edges except diagonal)
+        let c_unmatched_3 = decomp.old_to_new[3];
+        let n3_start = xadj[c_unmatched_3] as usize;
+        let n3_end = xadj[c_unmatched_3 + 1] as usize;
+        assert_eq!(
+            n3_end - n3_start,
+            0,
+            "isolated unmatched node 3 should have no neighbors"
+        );
+    }
+
+    #[test]
+    fn test_expand_unmatched_not_at_end() {
+        // 6 nodes: pair {0,1}, unmatched {2}, singleton {3}, pair {4,5}
+        // With condensed_order that places unmatched first, it should appear first
+        let fwd = vec![1, 0, 2, 3, 5, 4];
+        let is_matched = vec![true, true, false, true, true, true];
+        let decomp = split_matching_cycles(&fwd, &is_matched, 6);
+
+        // condensed_dim should include unmatched
+        let cdim = decomp.condensed_dim;
+
+        // Create a condensed ordering that puts the unmatched node first
+        let c_unmatched = decomp.old_to_new[2];
+        let mut condensed_order = vec![0i32; cdim];
+        // Put unmatched at position 0
+        condensed_order[c_unmatched] = 0;
+        // Fill remaining positions
+        let mut pos = 1i32;
+        for (cnode, order) in condensed_order.iter_mut().enumerate().take(cdim) {
+            if cnode == c_unmatched {
+                continue;
+            }
+            *order = pos;
+            pos += 1;
+        }
+
+        let perm = expand_ordering(&condensed_order, &decomp, 6);
+        let (expanded_fwd, expanded_inv) = perm.as_ref().arrays();
+
+        // Unmatched node 2 should be at position 0 (not at the end)
+        assert_eq!(
+            expanded_inv[2], 0,
+            "unmatched node should be at position 0, got {}",
+            expanded_inv[2]
+        );
+
+        // Valid permutation
+        let mut seen = [false; 6];
+        for &v in expanded_fwd {
+            assert!(v < 6);
+            seen[v] = true;
+        }
+        assert!(seen.iter().all(|&s| s));
+    }
+
+    #[test]
+    fn test_all_unmatched_gets_ordering() {
+        // Edge case: all nodes unmatched (empty matching)
+        let fwd = vec![0, 1, 2, 3];
+        let is_matched = vec![false, false, false, false];
+        let decomp = split_matching_cycles(&fwd, &is_matched, 4);
+
+        // All should be singleton condensed nodes
+        assert_eq!(decomp.condensed_dim, 4);
+        assert_eq!(decomp.singletons, 4);
+        assert_eq!(decomp.two_cycles, 0);
+
+        // All have valid condensed indices
+        for i in 0..4 {
+            assert!(decomp.old_to_new[i] < 4);
+        }
+
+        // Identity condensed ordering should produce valid expansion
+        let condensed_order = vec![0i32, 1, 2, 3];
+        let perm = expand_ordering(&condensed_order, &decomp, 4);
+        let (fwd_expanded, _) = perm.as_ref().arrays();
+        assert_eq!(fwd_expanded.len(), 4);
+
+        let mut seen = [false; 4];
+        for &v in fwd_expanded {
+            seen[v] = true;
+        }
+        assert!(seen.iter().all(|&s| s));
     }
 }

@@ -28,7 +28,7 @@ pub mod solve;
 pub mod solver;
 pub mod symbolic;
 
-pub use diagonal::MixedDiagonal;
+pub use diagonal::{MixedDiagonal, PivotEntry, PivotIter};
 pub use inertia::Inertia;
 pub use matching::{Mc64Job, Mc64Result, mc64_matching};
 pub use ordering::{MatchOrderResult, match_order_metis, metis_ordering};
@@ -38,8 +38,8 @@ pub use symbolic::{AptpSymbolic, SymbolicStatistics};
 
 pub use factor::{
     AptpFactorResult, AptpFactorization, AptpFallback, AptpOptions, AptpPivotRecord,
-    AptpStatistics, aptp_factor, aptp_factor_in_place,
+    AptpStatistics, FailedPivotMethod, aptp_factor, aptp_factor_in_place,
 };
 
-pub use numeric::{AptpNumeric, FactorizationStats, FrontFactors};
+pub use numeric::{AptpNumeric, FactorizationStats, FrontFactors, PerSupernodeStats};
 pub use solver::{AnalyzeOptions, FactorOptions, OrderingStrategy, SolverOptions, SparseLDLT};

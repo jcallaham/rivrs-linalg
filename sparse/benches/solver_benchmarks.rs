@@ -337,17 +337,83 @@ fn bench_match_order(c: &mut Criterion) {
     }
 }
 
+/// Dense APTP kernel benchmark: two-level vs single-level comparison.
+///
+/// Benchmarks `aptp_factor` on random dense symmetric indefinite matrices,
+/// comparing two-level blocking (default nb=256, ib=32) against single-level
+/// (forced via outer_block_size=usize::MAX).
+fn bench_kernel_two_level(c: &mut Criterion) {
+    use faer::Mat;
+    use rivrs_sparse::aptp::{AptpOptions, aptp_factor};
+
+    let sizes = [128, 256, 512, 1024];
+
+    // Generate deterministic test matrices
+    let matrices: Vec<(usize, Mat<f64>)> = sizes
+        .iter()
+        .map(|&n| {
+            let a = Mat::from_fn(n, n, |i, j| {
+                let (i, j) = if i >= j { (i, j) } else { (j, i) };
+                let seed = (i * 1000 + j * 7 + 13) as f64;
+                let val = (seed * 0.618033988749).fract() * 2.0 - 1.0;
+                if i == j { val * 10.0 } else { val }
+            });
+            (n, a)
+        })
+        .collect();
+
+    // Two-level kernel (default block sizes)
+    {
+        let mut group = c.benchmark_group("kernel/two_level");
+        group.sample_size(10);
+
+        for (n, a) in &matrices {
+            let opts = AptpOptions {
+                outer_block_size: 256,
+                inner_block_size: 32,
+                ..AptpOptions::default()
+            };
+
+            group.bench_with_input(BenchmarkId::from_parameter(n), a, |b, a| {
+                b.iter(|| aptp_factor(a.as_ref(), &opts).expect("factor should succeed"));
+            });
+        }
+        group.finish();
+    }
+
+    // Single-level kernel (force via large outer_block_size)
+    {
+        let mut group = c.benchmark_group("kernel/single_level");
+        group.sample_size(10);
+
+        for (n, a) in &matrices {
+            let opts = AptpOptions {
+                outer_block_size: usize::MAX,
+                inner_block_size: 32,
+                ..AptpOptions::default()
+            };
+
+            group.bench_with_input(BenchmarkId::from_parameter(n), a, |b, a| {
+                b.iter(|| aptp_factor(a.as_ref(), &opts).expect("factor should succeed"));
+            });
+        }
+        group.finish();
+    }
+}
+
 criterion_group!(component_benches, bench_components);
 criterion_group!(e2e_benches, bench_e2e);
 criterion_group!(ci_benches, bench_ci_subset);
 criterion_group!(symbolic_benches, bench_symbolic_analysis);
 criterion_group!(mc64_benches, bench_mc64_matching);
 criterion_group!(match_order_benches, bench_match_order);
+criterion_group!(kernel_benches, bench_kernel_two_level);
 criterion_main!(
     component_benches,
     e2e_benches,
     ci_benches,
     symbolic_benches,
     mc64_benches,
-    match_order_benches
+    match_order_benches,
+    kernel_benches
 );

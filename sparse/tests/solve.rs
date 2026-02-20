@@ -270,7 +270,18 @@ fn test_solve_suitesparse_ci() {
         let b_vec = sparse_matvec(a, &x_vec);
         let b = Col::from_fn(n, |i| b_vec[i]);
 
-        let result = SparseLDLT::solve_full(a, &b, &SolverOptions::default());
+        // Follow Duff et al (2020) experimental protocol:
+        // hard-indefinite → MC64+METIS, otherwise → plain METIS
+        let ordering = if meta.category == "hard-indefinite" {
+            OrderingStrategy::MatchOrderMetis
+        } else {
+            OrderingStrategy::Metis
+        };
+        let opts = SolverOptions {
+            ordering,
+            ..SolverOptions::default()
+        };
+        let result = SparseLDLT::solve_full(a, &b, &opts);
         match result {
             Ok(x) => {
                 let be = sparse_backward_error(a, &x, &b);
@@ -888,4 +899,135 @@ fn test_match_order_metis_requires_numeric() {
         matches!(&result, Err(SparseError::AnalysisFailure { .. })),
         "expected AnalysisFailure error"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Full SuiteSparse backward error validation
+// ---------------------------------------------------------------------------
+
+/// Minimum number of SuiteSparse matrices to consider the full collection present.
+const MIN_SUITESPARSE_FULL: usize = 50;
+
+/// End-to-end backward error on the full SuiteSparse collection.
+///
+/// Loads matrices one at a time to avoid OOM. Follows Duff et al (2020)
+/// experimental protocol: easy-indefinite → plain METIS, hard-indefinite →
+/// MC64+METIS. Reports per-matrix backward error with `--nocapture`.
+///
+/// Run with:
+///   cargo test --release --test solve test_solve_suitesparse_full -- --ignored --nocapture --test-threads=1
+#[test]
+#[ignore = "requires full SuiteSparse collection"]
+fn test_solve_suitesparse_full() {
+    use rivrs_sparse::io::registry;
+
+    const SPRAL_BE_THRESHOLD: f64 = 5e-11;
+    const RELAXED_BE_THRESHOLD: f64 = 1e-8;
+
+    let all_meta = registry::load_registry().expect("failed to load metadata.json");
+    let suitesparse_meta: Vec<_> = all_meta
+        .into_iter()
+        .filter(|m| m.source == "suitesparse")
+        .collect();
+
+    let mut passed_strict = 0usize;
+    let mut passed_relaxed = 0usize;
+    let mut missing = 0usize;
+    let mut failed = Vec::new();
+
+    eprintln!("\n{:<40} {:>8} {:>12}  Status", "Matrix", "n", "BE");
+    eprintln!("{}", "-".repeat(80));
+
+    for meta in &suitesparse_meta {
+        let test_matrix = match registry::load_test_matrix_from_entry(meta) {
+            Ok(Some(tm)) => tm,
+            Ok(None) => {
+                missing += 1;
+                eprintln!("{:<40} {:>8} {:>12}  MISSING", meta.name, meta.size, "");
+                continue;
+            }
+            Err(e) => {
+                failed.push(format!("'{}': load error: {}", meta.name, e));
+                eprintln!(
+                    "{:<40} {:>8} {:>12}  LOAD ERROR: {}",
+                    meta.name, meta.size, "", e
+                );
+                continue;
+            }
+        };
+
+        let a = &test_matrix.matrix;
+        let n = a.nrows();
+
+        // Build RHS from a known x_exact
+        let x_vec: Vec<f64> = (0..n).map(|i| ((i % 7) as f64 - 3.0) / 3.0).collect();
+        let b_vec = sparse_matvec(a, &x_vec);
+        let b = Col::from_fn(n, |i| b_vec[i]);
+
+        // Follow Duff et al (2020) experimental protocol:
+        // easy-indefinite → plain METIS, hard-indefinite → MC64+METIS
+        let ordering = if meta.category == "hard-indefinite" {
+            OrderingStrategy::MatchOrderMetis
+        } else {
+            OrderingStrategy::Metis
+        };
+        let opts = SolverOptions {
+            ordering,
+            ..SolverOptions::default()
+        };
+        let result = SparseLDLT::solve_full(a, &b, &opts);
+        match result {
+            Ok(x) => {
+                let be = sparse_backward_error(a, &x, &b);
+                let status = if be < SPRAL_BE_THRESHOLD {
+                    passed_strict += 1;
+                    "PASS"
+                } else if be < RELAXED_BE_THRESHOLD {
+                    passed_relaxed += 1;
+                    "RELAXED"
+                } else {
+                    failed.push(format!("'{}' (n={}): BE={:.2e}", meta.name, n, be));
+                    "FAIL"
+                };
+                eprintln!("{:<40} {:>8} {:>12.2e}  {}", meta.name, n, be, status);
+            }
+            Err(e) => {
+                failed.push(format!("'{}' (n={}): solve error: {}", meta.name, n, e));
+                eprintln!("{:<40} {:>8} {:>12}  SOLVE ERROR: {}", meta.name, n, "", e);
+            }
+        }
+        // test_matrix dropped here — frees memory before next iteration
+    }
+
+    eprintln!("{}", "-".repeat(80));
+    eprintln!(
+        "Strict (<5e-11): {}  Relaxed (<1e-8): {}  Missing: {}  Failed: {}  Total: {}",
+        passed_strict,
+        passed_relaxed,
+        missing,
+        failed.len(),
+        suitesparse_meta.len()
+    );
+
+    if suitesparse_meta.len() - missing < MIN_SUITESPARSE_FULL {
+        eprintln!(
+            "\nSkipping assertions: only {} SuiteSparse matrices loaded (need >= {}). \
+             Extract the full collection to test-data/suitesparse/.",
+            suitesparse_meta.len() - missing,
+            MIN_SUITESPARSE_FULL
+        );
+        return;
+    }
+
+    if !failed.is_empty() {
+        eprintln!("\nFailed matrices:");
+        for f in &failed {
+            eprintln!("  {}", f);
+        }
+        panic!(
+            "{} of {} matrices failed backward error threshold",
+            failed.len(),
+            suitesparse_meta.len() - missing
+        );
+    }
 }
