@@ -971,7 +971,6 @@ fn test_solve_suitesparse_full() {
         } else {
             OrderingStrategy::Metis
         };
-        // let ordering = OrderingStrategy::MatchOrderMetis;
         let opts = SolverOptions {
             ordering,
             ..SolverOptions::default()
