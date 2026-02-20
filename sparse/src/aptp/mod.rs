@@ -28,7 +28,7 @@ pub mod solve;
 pub mod solver;
 pub mod symbolic;
 
-pub use diagonal::MixedDiagonal;
+pub use diagonal::{MixedDiagonal, PivotEntry, PivotIter};
 pub use inertia::Inertia;
 pub use matching::{Mc64Job, Mc64Result, mc64_matching};
 pub use ordering::{MatchOrderResult, match_order_metis, metis_ordering};

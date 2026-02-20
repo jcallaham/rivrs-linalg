@@ -283,7 +283,10 @@ fn compare_matrix(path: &Path) -> Option<()> {
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        eprintln!("  {:<40} SPRAL FAILED (exit {}): {}", name, output.status, stderr);
+        eprintln!(
+            "  {:<40} SPRAL FAILED (exit {}): {}",
+            name, output.status, stderr
+        );
         return None;
     }
 

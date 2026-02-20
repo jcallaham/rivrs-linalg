@@ -66,38 +66,6 @@ pub enum Mc64Job {
     MaximumProduct,
 }
 
-/// Strategy for computing scaling of structurally singular matrices (matched < n).
-///
-/// SPRAL's `hungarian_wrapper` (scaling.f90 lines 688-801) contains code to
-/// extract a matched subgraph and re-run the Hungarian algorithm, plus Duff-Pralet
-/// correction for unmatched rows. However, that code path is effectively dead:
-/// `hungarian_match` sets `iperm(i) = 0` for unmatched rows (never negative),
-/// so the `match(i) < 0` guard never fires, and the re-matching runs on the
-/// full graph (a no-op). SPRAL thus effectively uses the first matching's duals
-/// for ALL rows — the same formula as the full-match case.
-///
-/// `DualsDirect` matches SPRAL's effective behavior. `RematchDuffPralet` implements
-/// what SPRAL's code *intends* but never actually executes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SingularScalingStrategy {
-    /// Use the first matching's dual variables directly for all rows.
-    /// Unmatched rows get `u[i]=0`, unmatched columns get `v[j]=0` (set by
-    /// `hungarian_match`), so their scaling is `exp((0 + v[i] - cmax[i]) / 2)`
-    /// or `exp((u[i] + 0 - cmax[i]) / 2)`.
-    ///
-    /// This matches SPRAL's *effective* behavior and guarantees `|s_i * a_ij * s_j| <= 1`
-    /// for all edges via dual feasibility.
-    DualsDirect,
-
-    /// Extract the matched subgraph, re-run Hungarian to get optimal subgraph duals,
-    /// then apply Duff-Pralet correction for unmatched rows.
-    ///
-    /// This matches what SPRAL's code *appears* to do but never actually executes
-    /// (the `match(i) < 0` guard is dead code). Empirically, this produces worse
-    /// scaling on matrices like dawson5 where MC64 scaling is harmful.
-    RematchDuffPralet,
-}
-
 /// Bipartite cost graph with logarithmic edge costs.
 ///
 /// Built from the input matrix by expanding the upper triangle to full
@@ -126,6 +94,9 @@ struct MatchingState {
 }
 
 const UNMATCHED: usize = usize::MAX;
+
+/// Clamp bound for log-domain scaling to prevent overflow/underflow in `exp()`.
+const LOG_SCALE_CLAMP: f64 = 500.0;
 
 /// Compute MC64 weighted bipartite matching and symmetric scaling for a sparse
 /// symmetric matrix.
@@ -246,83 +217,28 @@ pub fn mc64_matching(
     #[cfg(debug_assertions)]
     assert_dual_feasibility(&graph, &state);
 
-    // Default to DualsDirect — matches SPRAL's effective behavior.
-    let strategy = SingularScalingStrategy::DualsDirect;
-
-    let scaling = match strategy {
-        SingularScalingStrategy::DualsDirect => {
-            // Match SPRAL's effective behavior (scaling.f90 line 1169):
-            // Zero unmatched row duals, then use the same formula as the full-match case.
-            // SPRAL: `where (iperm(1:m) .eq. 0) dualu(1:m) = 0.0`
-            //
-            // Note: For partial matching, the duals from the Hungarian algorithm are not
-            // globally feasible (u[i] + v[j] <= c[i,j] may be violated). SPRAL does not
-            // enforce this either — its tests only check |s*a*s| <= 1 for full-match
-            // matrices. The scaling still improves diagonal dominance for APTP.
-            for i in 0..n {
-                if state.row_match[i] == UNMATCHED {
-                    state.u[i] = 0.0;
-                }
-            }
-            let v = compute_column_duals(&graph, &state);
-            symmetrize_scaling(&state.u, &v, &graph.col_max_log)
+    // Match SPRAL's effective behavior (scaling.f90 line 1169):
+    // Zero unmatched row duals, then use the same formula as the full-match case.
+    // SPRAL: `where (iperm(1:m) .eq. 0) dualu(1:m) = 0.0`
+    //
+    // Note: For partial matching, the duals from the Hungarian algorithm are not
+    // globally feasible (u[i] + v[j] <= c[i,j] may be violated). SPRAL does not
+    // enforce this either — its tests only check |s*a*s| <= 1 for full-match
+    // matrices. The scaling still improves diagonal dominance for APTP.
+    for i in 0..n {
+        if state.row_match[i] == UNMATCHED {
+            state.u[i] = 0.0;
         }
-        SingularScalingStrategy::RematchDuffPralet => {
-            // Extract matched subgraph, re-run Hungarian for optimal subgraph duals,
-            // then apply Duff-Pralet log-space correction for unmatched rows.
-            //
-            // NOTE: This matches what SPRAL's code *appears* to do (scaling.f90 lines
-            // 688-801) but never actually executes — the `match(i) < 0` guard is dead
-            // code because `hungarian_match` sets unmatched iperm to 0, not negative.
-            // Empirically this produces worse scaling on some matrices (e.g., dawson5).
-            let (sub_graph, new_to_old, _old_to_new) =
-                extract_matched_subgraph(&graph, &is_row_matched);
-
-            let nn = sub_graph.n;
-            let mut sub_state = greedy_initial_matching(&sub_graph);
-            let mut sub_ds = DijkstraState::new(nn);
-            sub_ds.init_jperm(&sub_graph, &sub_state);
-            for j in 0..nn {
-                if sub_state.col_match[j] != UNMATCHED {
-                    continue;
-                }
-                dijkstra_augment(j, &sub_graph, &mut sub_state, &mut sub_ds);
-            }
-
-            let sub_v = compute_column_duals(&sub_graph, &sub_state);
-
-            // Matched indices: use second matching's duals with ORIGINAL col_max_log
-            let mut log_scaling = vec![f64::NEG_INFINITY; n];
-            for new_idx in 0..nn {
-                let old_idx = new_to_old[new_idx];
-                log_scaling[old_idx] = (sub_state.u[new_idx] + sub_v[new_idx]
-                    - graph.col_max_log[old_idx])
-                    / 2.0;
-            }
-
-            // Duff-Pralet correction in log-space (SPRAL lines 777-797)
-            duff_pralet_log_correction(matrix, &mut log_scaling, &is_row_matched);
-
-            // Convert from log-space to linear-space
-            let mut scaling = vec![0.0_f64; n];
-            for i in 0..n {
-                if log_scaling[i] == f64::NEG_INFINITY {
-                    scaling[i] = 1.0;
-                } else {
-                    let clamped = log_scaling[i].clamp(-500.0, 500.0);
-                    scaling[i] = clamped.exp();
-                }
-            }
-            scaling
-        }
-    };
+    }
+    let v = compute_column_duals(&graph, &state);
+    let scaling = symmetrize_scaling(&state.u, &v, &graph.col_max_log);
 
     // is_matched uses row-only: for condensation pipeline, what matters is whether
     // row i has a real matching edge (not a fake assignment from build_singular_permutation)
-    let is_matched: Vec<bool> = is_row_matched.clone();
+    let is_matched = is_row_matched;
 
     // Build permutation: matched rows keep their matched column, unmatched get remaining
-    let (fwd, inv) = build_singular_permutation(n, &state, &is_row_matched);
+    let (fwd, inv) = build_singular_permutation(n, &state, &is_matched);
 
     Ok(Mc64Result {
         matching: Perm::new_checked(fwd.into_boxed_slice(), inv.into_boxed_slice(), n),
@@ -367,7 +283,7 @@ fn assert_dual_feasibility(graph: &CostGraph, state: &MatchingState) {
     let v = compute_column_duals(graph, state);
     let n = graph.n;
 
-    for j in 0..n {
+    for (j, &vj) in v.iter().enumerate().take(n) {
         let col_start = graph.col_ptr[j];
         let col_end = graph.col_ptr[j + 1];
         for idx in col_start..col_end {
@@ -376,7 +292,7 @@ fn assert_dual_feasibility(graph: &CostGraph, state: &MatchingState) {
             if state.row_match[i] == UNMATCHED {
                 continue;
             }
-            let slack = graph.cost[idx] - state.u[i] - v[j];
+            let slack = graph.cost[idx] - state.u[i] - vj;
             debug_assert!(
                 slack >= -eps,
                 "dual infeasibility: u[{}] + v[{}] - c[{},{}] = {:.6e} > eps",
@@ -487,7 +403,7 @@ fn build_cost_graph(matrix: &SparseColMat<usize, f64>) -> CostGraph {
     // the mirroring loop above would double-count off-diagonal entries.
     // For upper-triangular input, dedup is a no-op.
     for entries in &mut col_entries {
-        entries.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.partial_cmp(&b.1).unwrap()));
+        entries.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.total_cmp(&b.1)));
         entries.dedup_by_key(|entry| entry.0);
     }
 
@@ -709,6 +625,20 @@ impl DijkstraState {
         }
     }
 
+    /// Reset touched rows: Q1/finalized region [low-1..n) and heap region [0..qlen).
+    fn cleanup_touched(&mut self, low: usize, qlen: usize, n: usize) {
+        for k in (low - 1)..n {
+            let i = self.q[k];
+            self.d[i] = f64::INFINITY;
+            self.l[i] = 0;
+        }
+        for k in 0..qlen {
+            let i = self.q[k];
+            self.d[i] = f64::INFINITY;
+            self.l[i] = 0;
+        }
+    }
+
     /// Initialize jperm from current matching state.
     fn init_jperm(&mut self, graph: &CostGraph, state: &MatchingState) {
         let n = graph.n;
@@ -808,16 +738,12 @@ fn dijkstra_augment(
             ds.q[low - 1] = i; // 0-indexed array access
             ds.l[i] = low; // 1-based position in Q1/finalized region
         } else {
-            // Add to heap
+            // Add to heap (q is pre-allocated to size n, so qlen never exceeds q.len())
             qlen += 1;
             ds.l[i] = qlen; // 1-based heap position
-            if ds.q.len() < qlen {
-                ds.q.push(i);
-            } else {
-                ds.q[qlen - 1] = i;
-            }
+            ds.q[qlen - 1] = i;
             // Sift up in heap
-            heap_update_inline(i, &mut ds.q, &ds.d, &mut ds.l, qlen);
+            heap_update_inline(i, &mut ds.q, &ds.d, &mut ds.l);
         }
         // Update tree
         let jj = state.row_match[i];
@@ -915,17 +841,13 @@ fn dijkstra_augment(
                     ds.l[i] = low;
                 } else {
                     if ds.l[i] == 0 {
-                        // New entry in heap
+                        // New entry in heap (q is pre-allocated to size n)
                         qlen += 1;
                         ds.l[i] = qlen;
-                        if ds.q.len() < qlen {
-                            ds.q.push(i);
-                        } else {
-                            ds.q[qlen - 1] = i;
-                        }
+                        ds.q[qlen - 1] = i;
                     }
                     // d[i] decreased — sift up
-                    heap_update_inline(i, &mut ds.q, &ds.d, &mut ds.l, qlen);
+                    heap_update_inline(i, &mut ds.q, &ds.d, &mut ds.l);
                 }
                 // Update tree
                 let jj = state.row_match[i];
@@ -938,17 +860,7 @@ fn dijkstra_augment(
     // If csp = INFINITY, no augmenting path found
     if csp == f64::INFINITY {
         // Clean up touched rows (SPRAL lines 1144-1153)
-        // label 190: clean up Q1 + finalized + heap
-        for k in (low - 1)..n {
-            let i = ds.q[k];
-            ds.d[i] = f64::INFINITY;
-            ds.l[i] = 0;
-        }
-        for k in 0..qlen {
-            let i = ds.q[k];
-            ds.d[i] = f64::INFINITY;
-            ds.l[i] = 0;
-        }
+        ds.cleanup_touched(low, qlen, n);
         return false;
     }
 
@@ -980,16 +892,7 @@ fn dijkstra_augment(
     }
 
     // Clean up touched rows: Q1 + finalized + heap (SPRAL lines 1144-1153)
-    for k in (low - 1)..n {
-        let i = ds.q[k];
-        ds.d[i] = f64::INFINITY;
-        ds.l[i] = 0;
-    }
-    for k in 0..qlen {
-        let i = ds.q[k];
-        ds.d[i] = f64::INFINITY;
-        ds.l[i] = 0;
-    }
+    ds.cleanup_touched(low, qlen, n);
 
     true
 }
@@ -997,13 +900,7 @@ fn dijkstra_augment(
 /// Inline heap_update: sift row `idx` up in heap after d[idx] decreased.
 /// Matches SPRAL's `heap_update` (scaling.f90 lines 1180-1216).
 /// `pos` values are 1-based heap positions.
-fn heap_update_inline(
-    idx: usize,
-    q: &mut [usize],
-    d: &[f64],
-    pos: &mut [usize],
-    _qlen: usize,
-) {
+fn heap_update_inline(idx: usize, q: &mut [usize], d: &[f64], pos: &mut [usize]) {
     let mut p = pos[idx]; // 1-based
     if p <= 1 {
         q[0] = idx; // ensure root is set
@@ -1118,7 +1015,7 @@ fn symmetrize_scaling(u: &[f64], v: &[f64], col_max_log: &[f64]) -> Vec<f64> {
         let log_scale = (u[i] + v[i] - col_max_log[i]) / 2.0;
 
         // Clamp to avoid overflow/underflow in exp
-        let clamped = log_scale.clamp(-500.0, 500.0);
+        let clamped = log_scale.clamp(-LOG_SCALE_CLAMP, LOG_SCALE_CLAMP);
         scaling.push(clamped.exp());
     }
 
@@ -1130,8 +1027,7 @@ fn symmetrize_scaling(u: &[f64], v: &[f64], col_max_log: &[f64]) -> Vec<f64> {
 /// For unmatched index i: `scaling[i] = 1.0 / max_k |a[i,k] * scaling[k]|` over
 /// matched k. Convention: `1/0 = 1.0`.
 ///
-/// Note: This linear-space version is retained for unit tests. The production path
-/// now uses `duff_pralet_log_correction` which operates in log-space matching SPRAL.
+/// Retained for unit tests of the correction logic in linear-space.
 #[cfg(test)]
 fn duff_pralet_correction(
     matrix: &SparseColMat<usize, f64>,
@@ -1192,160 +1088,6 @@ fn duff_pralet_correction(
     }
 }
 
-/// Extract the matched subgraph from a cost graph for re-matching.
-///
-/// Given a partial matching where `is_row_matched[i]` indicates which rows
-/// participated in the matching, extract an `nn x nn` subgraph containing
-/// only the matched rows and columns. This follows SPRAL's `hungarian_wrapper`
-/// (scaling.f90 lines 699-735).
-///
-/// Returns `(sub_graph, new_to_old, old_to_new)` where:
-/// - `sub_graph` is the `nn x nn` cost graph with remapped indices
-/// - `new_to_old[k]` maps subgraph index `k` to original index
-/// - `old_to_new[i]` maps original index to subgraph index (or `usize::MAX` if unmatched)
-fn extract_matched_subgraph(
-    graph: &CostGraph,
-    is_row_matched: &[bool],
-) -> (CostGraph, Vec<usize>, Vec<usize>) {
-    let n = graph.n;
-
-    // Build index mappings
-    let mut old_to_new = vec![usize::MAX; n];
-    let mut new_to_old = Vec::new();
-    for i in 0..n {
-        if is_row_matched[i] {
-            old_to_new[i] = new_to_old.len();
-            new_to_old.push(i);
-        }
-    }
-    let nn = new_to_old.len();
-
-    // Extract subgraph: keep only entries where both row and column are matched
-    let mut sub_col_entries: Vec<Vec<(usize, f64)>> = vec![Vec::new(); nn];
-    let mut sub_col_max_log = vec![f64::NEG_INFINITY; nn];
-
-    for old_j in 0..n {
-        if old_to_new[old_j] == usize::MAX {
-            continue; // Skip unmatched columns
-        }
-        let new_j = old_to_new[old_j];
-        let col_start = graph.col_ptr[old_j];
-        let col_end = graph.col_ptr[old_j + 1];
-
-        for idx in col_start..col_end {
-            let old_i = graph.row_idx[idx];
-            if old_to_new[old_i] == usize::MAX {
-                continue; // Skip entries in unmatched rows
-            }
-            let new_i = old_to_new[old_i];
-            let cost = graph.cost[idx];
-            sub_col_entries[new_j].push((new_i, cost));
-        }
-    }
-
-    // Compute column maxima for the subgraph from ORIGINAL col_max_log.
-    // The cost values are preserved from the original graph (already c = cmax - log|a|).
-    // The subgraph column maxima should use the original cmax values since
-    // the cost representation depends on them.
-    for new_j in 0..nn {
-        let old_j = new_to_old[new_j];
-        sub_col_max_log[new_j] = graph.col_max_log[old_j];
-    }
-
-    // Sort each column's entries by row index for deterministic ordering
-    for entries in &mut sub_col_entries {
-        entries.sort_by_key(|&(row, _)| row);
-    }
-
-    // Build CSC arrays
-    let mut col_ptr = Vec::with_capacity(nn + 1);
-    let mut row_idx = Vec::new();
-    let mut cost = Vec::new();
-
-    col_ptr.push(0);
-    for new_j in 0..nn {
-        for &(new_i, c) in &sub_col_entries[new_j] {
-            row_idx.push(new_i);
-            cost.push(c);
-        }
-        col_ptr.push(row_idx.len());
-    }
-
-    let sub_graph = CostGraph {
-        col_ptr,
-        row_idx,
-        cost,
-        col_max_log: sub_col_max_log,
-        n: nn,
-    };
-
-    (sub_graph, new_to_old, old_to_new)
-}
-
-/// Apply Duff-Pralet correction for unmatched indices in log-space.
-///
-/// Following SPRAL's approach (scaling.f90 lines 777-797):
-/// For unmatched index `i` connected to matched `k`:
-///   `log_scaling[i] = max(log_scaling[i], log|a_ik| + log_scaling[k])`
-/// Then negate: `log_scaling[i] = -log_scaling[i]`.
-/// If still at sentinel (`NEG_INFINITY`): leave unchanged (caller converts to 1.0).
-///
-/// This operates on the original matrix (not the cost graph) to access raw
-/// entry magnitudes.
-fn duff_pralet_log_correction(
-    matrix: &SparseColMat<usize, f64>,
-    log_scaling: &mut [f64],
-    is_row_matched: &[bool],
-) {
-    let n = matrix.nrows();
-    let symbolic = matrix.symbolic();
-    let values = matrix.val();
-    let col_ptrs = symbolic.col_ptr();
-    let row_indices = symbolic.row_idx();
-
-    // Snapshot of matched log-scaling for consistent reads
-    let matched_log: Vec<f64> = log_scaling.to_vec();
-
-    for j in 0..n {
-        let start = col_ptrs[j];
-        let end = col_ptrs[j + 1];
-        for k in start..end {
-            let i = row_indices[k];
-            let abs_val = values[k].abs();
-            if abs_val == 0.0 {
-                continue;
-            }
-            let log_abs = abs_val.ln();
-
-            // Entry (i, j): if i unmatched and j matched
-            if !is_row_matched[i] && is_row_matched[j] && matched_log[j] != f64::NEG_INFINITY {
-                let contrib = log_abs + matched_log[j];
-                if contrib > log_scaling[i] {
-                    log_scaling[i] = contrib;
-                }
-            }
-            // Symmetric entry (j, i): if j unmatched and i matched
-            if i != j
-                && !is_row_matched[j]
-                && is_row_matched[i]
-                && matched_log[i] != f64::NEG_INFINITY
-            {
-                let contrib = log_abs + matched_log[i];
-                if contrib > log_scaling[j] {
-                    log_scaling[j] = contrib;
-                }
-            }
-        }
-    }
-
-    // Negate for unmatched indices (SPRAL: rscaling[i] = -rscaling[i])
-    for i in 0..n {
-        if !is_row_matched[i] && log_scaling[i] != f64::NEG_INFINITY {
-            log_scaling[i] = -log_scaling[i];
-        }
-    }
-}
-
 /// Count singletons, 2-cycles, and longer cycles in a matching permutation.
 ///
 /// For symmetric matrices, the optimal matching decomposes into singletons
@@ -1387,7 +1129,6 @@ pub fn count_cycles(matching: &[usize]) -> (usize, usize, usize) {
 
     (singletons, two_cycles, longer_cycles)
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -1571,9 +1312,6 @@ mod tests {
             let col_end = graph.col_ptr[j + 1];
             for idx in col_start..col_end {
                 if graph.row_idx[idx] == i {
-                    // Matched edge: reduced cost c[i,j] - u[i] should be small
-                    // (but greedy doesn't guarantee exactly zero for all)
-                    let _rc = graph.cost[idx] - state.u[i];
                     break;
                 }
             }
@@ -1606,9 +1344,7 @@ mod tests {
         // Try to augment each unmatched column
         let mut augmented = false;
         for j in 0..3 {
-            if state.col_match[j] == UNMATCHED
-                && dijkstra_augment(j, &graph, &mut state, &mut ds)
-            {
+            if state.col_match[j] == UNMATCHED && dijkstra_augment(j, &graph, &mut state, &mut ds) {
                 augmented = true;
             }
         }
@@ -2046,53 +1782,6 @@ mod tests {
         }
     }
 
-    // ---- Second matching / re-matching tests ----
-
-    #[test]
-    fn test_extract_matched_subgraph_6x6() {
-        // 6x6 with 1 unmatched row: row 5 has no connections
-        // The subgraph should be 5x5 containing only rows/cols 0-4
-        let matrix = make_upper_tri(
-            6,
-            &[
-                (0, 0, 4.0),
-                (0, 1, 2.0),
-                (1, 1, 5.0),
-                (1, 2, 1.0),
-                (2, 2, 3.0),
-                (2, 3, 1.0),
-                (3, 3, 6.0),
-                (3, 4, 2.0),
-                (4, 4, 7.0),
-                // Row/col 5 only has self-connection (or none)
-            ],
-        );
-
-        let graph = build_cost_graph(&matrix);
-        let is_row_matched = vec![true, true, true, true, true, false];
-
-        let (sub_graph, new_to_old, old_to_new) =
-            extract_matched_subgraph(&graph, &is_row_matched);
-
-        assert_eq!(sub_graph.n, 5, "subgraph should be 5x5");
-        assert_eq!(new_to_old.len(), 5);
-        assert_eq!(old_to_new[5], usize::MAX, "unmatched row should map to MAX");
-
-        // Verify new_to_old maps back correctly
-        for (new_idx, &old_idx) in new_to_old.iter().enumerate() {
-            assert_eq!(old_to_new[old_idx], new_idx);
-        }
-
-        // Verify col_max_log preserved from original
-        for new_j in 0..5 {
-            let old_j = new_to_old[new_j];
-            assert!(
-                (sub_graph.col_max_log[new_j] - graph.col_max_log[old_j]).abs() < 1e-14,
-                "col_max_log should be preserved from original graph"
-            );
-        }
-    }
-
     #[test]
     fn test_second_matching_improves_scaling() {
         // Structurally singular: 6x6, row 5 unmatched
@@ -2179,54 +1868,5 @@ mod tests {
             assert!(s > 0.0, "scaling[{}] positive", i);
             assert!(s.is_finite(), "scaling[{}] finite", i);
         }
-    }
-
-    #[test]
-    fn test_duff_pralet_log_correction_basic() {
-        // Test the log-space Duff-Pralet correction directly
-        // 4x4: rows 0,1,2 matched, row 3 unmatched with connection to row 0
-        let matrix = make_upper_tri(
-            4,
-            &[
-                (0, 0, 4.0),
-                (0, 1, 2.0),
-                (0, 3, 1.0),
-                (1, 1, 5.0),
-                (1, 2, 1.0),
-                (2, 2, 3.0),
-            ],
-        );
-
-        // Matched indices have log-scaling, unmatched starts at NEG_INFINITY
-        let mut log_scaling = vec![0.0, -0.5, 0.3, f64::NEG_INFINITY];
-        let is_row_matched = vec![true, true, true, false];
-
-        duff_pralet_log_correction(&matrix, &mut log_scaling, &is_row_matched);
-
-        // Row 3 should no longer be NEG_INFINITY (connected to matched row 0)
-        assert!(
-            log_scaling[3] != f64::NEG_INFINITY,
-            "unmatched row 3 should be corrected from NEG_INFINITY"
-        );
-        assert!(
-            log_scaling[3].is_finite(),
-            "corrected log_scaling[3] should be finite"
-        );
-
-        // The correction negates the log-scaling for unmatched rows
-        // Expected: log_scaling[3] = -(log|a_03| + log_scaling[0])
-        // = -(ln(1.0) + 0.0) = 0.0
-        let expected = -(1.0_f64.ln() + 0.0);
-        assert!(
-            (log_scaling[3] - expected).abs() < 1e-12,
-            "log_scaling[3] = {}, expected {}",
-            log_scaling[3],
-            expected
-        );
-
-        // Matched indices should be unchanged
-        assert!((log_scaling[0] - 0.0).abs() < 1e-14);
-        assert!((log_scaling[1] - (-0.5)).abs() < 1e-14);
-        assert!((log_scaling[2] - 0.3).abs() < 1e-14);
     }
 }

@@ -41,15 +41,27 @@ fn main() {
     // Print TSV header (stdout for piping)
     println!(
         "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-        "snode_id", "front_size", "num_fully_summed", "num_eliminated",
-        "num_delayed", "num_1x1", "num_2x2", "max_l_entry"
+        "snode_id",
+        "front_size",
+        "num_fully_summed",
+        "num_eliminated",
+        "num_delayed",
+        "num_1x1",
+        "num_2x2",
+        "max_l_entry"
     );
 
     for s in per_sn {
         println!(
             "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{:.6e}",
-            s.snode_id, s.front_size, s.num_fully_summed, s.num_eliminated,
-            s.num_delayed, s.num_1x1, s.num_2x2, s.max_l_entry,
+            s.snode_id,
+            s.front_size,
+            s.num_fully_summed,
+            s.num_eliminated,
+            s.num_delayed,
+            s.num_1x1,
+            s.num_2x2,
+            s.max_l_entry,
         );
     }
 
@@ -76,8 +88,14 @@ fn main() {
     for s in &delayed {
         eprintln!(
             "{:>8}  {:>10}  {:>6}  {:>6}  {:>7}  {:>5}  {:>5}  {:>12.4e}",
-            s.snode_id, s.front_size, s.num_fully_summed, s.num_eliminated,
-            s.num_delayed, s.num_1x1, s.num_2x2, s.max_l_entry,
+            s.snode_id,
+            s.front_size,
+            s.num_fully_summed,
+            s.num_eliminated,
+            s.num_delayed,
+            s.num_1x1,
+            s.num_2x2,
+            s.max_l_entry,
         );
     }
     eprintln!("Total supernodes with delays: {}", delayed.len());
@@ -95,8 +113,14 @@ fn main() {
     for s in by_front_size.iter().take(20) {
         eprintln!(
             "{:>8}  {:>10}  {:>6}  {:>6}  {:>7}  {:>5}  {:>5}  {:>12.4e}",
-            s.snode_id, s.front_size, s.num_fully_summed, s.num_eliminated,
-            s.num_delayed, s.num_1x1, s.num_2x2, s.max_l_entry,
+            s.snode_id,
+            s.front_size,
+            s.num_fully_summed,
+            s.num_eliminated,
+            s.num_delayed,
+            s.num_1x1,
+            s.num_2x2,
+            s.max_l_entry,
         );
     }
 

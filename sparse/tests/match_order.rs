@@ -821,4 +821,3 @@ fn test_match_order_full_suitesparse() {
         "all loadable SuiteSparse matrices should pass match_order_metis"
     );
 }
-

@@ -15,18 +15,18 @@
 //! If no matrix names are given, runs on a default set of interesting matrices.
 //! Matrix names use the SuiteSparse format: "GHS_indef/dawson5", "Newman/astro-ph", etc.
 
+use faer::Col;
 use faer::dyn_stack::{MemBuffer, MemStack};
 use faer::sparse::linalg::cholesky::SymmetricOrdering;
-use faer::Col;
 
-use rivrs_sparse::aptp::{
-    match_order_metis, mc64_matching, metis_ordering, AnalyzeOptions, AptpSymbolic, FactorOptions,
-    Mc64Job, OrderingStrategy, SparseLDLT,
-};
+use rivrs_sparse::aptp::factor::AptpOptions;
 use rivrs_sparse::aptp::matching::count_cycles;
 use rivrs_sparse::aptp::numeric::AptpNumeric;
-use rivrs_sparse::aptp::factor::AptpOptions;
 use rivrs_sparse::aptp::solve::{aptp_solve, aptp_solve_scratch};
+use rivrs_sparse::aptp::{
+    AnalyzeOptions, AptpSymbolic, FactorOptions, Mc64Job, OrderingStrategy, SparseLDLT,
+    match_order_metis, mc64_matching, metis_ordering,
+};
 use rivrs_sparse::io::registry;
 use rivrs_sparse::validate::sparse_backward_error;
 
@@ -52,14 +52,12 @@ fn sep() {
 }
 
 /// Experiment 1: Baseline backward error comparison.
-fn experiment_baseline(
-    _name: &str,
-    a: &faer::sparse::SparseColMat<usize, f64>,
-    b: &Col<f64>,
-) {
+fn experiment_baseline(_name: &str, a: &faer::sparse::SparseColMat<usize, f64>, b: &Col<f64>) {
     println!("\n=== EXPERIMENT 1: Baseline Backward Error ===");
-    println!("{:<15} {:<18} {:<12} {:<8} {:<8} {:<8} {:<8}",
-        "Ordering", "BE", "Status", "1x1", "2x2", "delays", "max_frt");
+    println!(
+        "{:<15} {:<18} {:<12} {:<8} {:<8} {:<8} {:<8}",
+        "Ordering", "BE", "Status", "1x1", "2x2", "delays", "max_frt"
+    );
     sep();
 
     for (ordering_name, ordering) in [
@@ -91,9 +89,13 @@ fn experiment_baseline(
                 let status = if be < 5e-11 { "PASS" } else { "FAIL" };
                 println!(
                     "{:<15} {:<18.2e} {:<12} {:<8} {:<8} {:<8} {:<8}",
-                    ordering_name, be, status,
-                    stats.total_1x1_pivots, stats.total_2x2_pivots,
-                    stats.total_delayed, stats.max_front_size,
+                    ordering_name,
+                    be,
+                    status,
+                    stats.total_1x1_pivots,
+                    stats.total_2x2_pivots,
+                    stats.total_delayed,
+                    stats.max_front_size,
                 );
             }
             Err(e) => {
@@ -104,10 +106,7 @@ fn experiment_baseline(
 }
 
 /// Experiment 2: MC64 quality diagnostics.
-fn experiment_mc64_diagnostics(
-    _name: &str,
-    a: &faer::sparse::SparseColMat<usize, f64>,
-) {
+fn experiment_mc64_diagnostics(_name: &str, a: &faer::sparse::SparseColMat<usize, f64>) {
     println!("\n=== EXPERIMENT 2: MC64 Quality Diagnostics ===");
 
     let mc64_result = match mc64_matching(a, Mc64Job::MaximumProduct) {
@@ -122,15 +121,21 @@ fn experiment_mc64_diagnostics(
     let (fwd, _) = mc64_result.matching.as_ref().arrays();
 
     // Matching cardinality
-    println!("  Matched: {} / {} ({:.1}%)", mc64_result.matched, n,
-        100.0 * mc64_result.matched as f64 / n as f64);
+    println!(
+        "  Matched: {} / {} ({:.1}%)",
+        mc64_result.matched,
+        n,
+        100.0 * mc64_result.matched as f64 / n as f64
+    );
     let unmatched = mc64_result.is_matched.iter().filter(|&&m| !m).count();
     println!("  Unmatched rows: {}", unmatched);
 
     // Cycle structure
     let (singletons, two_cycles, longer_cycles) = count_cycles(fwd);
-    println!("  Cycle decomposition: {} singletons, {} two-cycles, {} longer-cycles",
-        singletons, two_cycles, longer_cycles);
+    println!(
+        "  Cycle decomposition: {} singletons, {} two-cycles, {} longer-cycles",
+        singletons, two_cycles, longer_cycles
+    );
 
     // Matching weight: sum of |a_{i,match[i]}|
     let sym = a.symbolic();
@@ -167,8 +172,14 @@ fn experiment_mc64_diagnostics(
             }
         }
     }
-    println!("  Matching weight (sum |a_{{i,sigma(i)}}|): {:.6e}", matching_weight);
-    println!("  Matched diagonal: {}, off-diagonal: {}", matched_diag, matched_offdiag);
+    println!(
+        "  Matching weight (sum |a_{{i,sigma(i)}}|): {:.6e}",
+        matching_weight
+    );
+    println!(
+        "  Matched diagonal: {}, off-diagonal: {}",
+        matched_diag, matched_offdiag
+    );
 
     // Scaling statistics
     let scaling = &mc64_result.scaling;
@@ -177,19 +188,37 @@ fn experiment_mc64_diagnostics(
     let mean_s: f64 = scaling.iter().sum::<f64>() / n as f64;
     let log_scaling: Vec<f64> = scaling.iter().map(|&s| s.ln()).collect();
     let mean_log = log_scaling.iter().sum::<f64>() / n as f64;
-    let std_log = (log_scaling.iter().map(|&l| (l - mean_log).powi(2)).sum::<f64>() / n as f64).sqrt();
+    let std_log = (log_scaling
+        .iter()
+        .map(|&l| (l - mean_log).powi(2))
+        .sum::<f64>()
+        / n as f64)
+        .sqrt();
 
     println!("  Scaling factors:");
-    println!("    min={:.6e}  max={:.6e}  ratio={:.6e}", min_s, max_s, max_s / min_s);
-    println!("    mean={:.6e}  geometric_mean={:.6e}", mean_s, mean_log.exp());
+    println!(
+        "    min={:.6e}  max={:.6e}  ratio={:.6e}",
+        min_s,
+        max_s,
+        max_s / min_s
+    );
+    println!(
+        "    mean={:.6e}  geometric_mean={:.6e}",
+        mean_s,
+        mean_log.exp()
+    );
     println!("    log-scale: mean={:.4}  std={:.4}", mean_log, std_log);
 
     // Extreme scaling factors
-    let extreme_large: Vec<(usize, f64)> = scaling.iter().enumerate()
+    let extreme_large: Vec<(usize, f64)> = scaling
+        .iter()
+        .enumerate()
         .filter(|&(_, s)| *s > 1e10)
         .map(|(i, s)| (i, *s))
         .collect();
-    let extreme_small: Vec<(usize, f64)> = scaling.iter().enumerate()
+    let extreme_small: Vec<(usize, f64)> = scaling
+        .iter()
+        .enumerate()
         .filter(|&(_, s)| *s < 1e-10)
         .map(|(i, s)| (i, *s))
         .collect();
@@ -202,7 +231,10 @@ fn experiment_mc64_diagnostics(
             println!("      ... and {} more", extreme_large.len() - 5);
         }
     }
-    println!("    Extreme small (<1e-10): {} entries", extreme_small.len());
+    println!(
+        "    Extreme small (<1e-10): {} entries",
+        extreme_small.len()
+    );
     if !extreme_small.is_empty() {
         for &(i, s) in extreme_small.iter().take(5) {
             println!("      scaling[{}] = {:.6e}", i, s);
@@ -227,7 +259,10 @@ fn experiment_mc64_diagnostics(
             }
         }
     }
-    println!("  Scaling bound: max |s_i * a_ij * s_j| = {:.6e}", global_max_scaled);
+    println!(
+        "  Scaling bound: max |s_i * a_ij * s_j| = {:.6e}",
+        global_max_scaled
+    );
     println!("  Scaling violations (>1+1e-8): {}", violations);
 
     // Scaled diagonal dominance check
@@ -258,8 +293,10 @@ fn experiment_mc64_diagnostics(
             diag_weak += 1;
         }
     }
-    println!("  Scaled diagonal: {} dominant, {} weak, {} missing",
-        diag_dominant, diag_weak, diag_missing);
+    println!(
+        "  Scaled diagonal: {} dominant, {} weak, {} missing",
+        diag_dominant, diag_weak, diag_missing
+    );
 
     // Condensation diagnostics from match_order_metis
     let mor_result = match match_order_metis(a) {
@@ -269,10 +306,14 @@ fn experiment_mc64_diagnostics(
             return;
         }
     };
-    println!("  Condensation: dim={} (from {}), singletons={}, two_cycles={}",
-        mor_result.condensed_dim, n, mor_result.singletons, mor_result.two_cycles);
-    println!("  Condensation ratio: {:.1}%",
-        100.0 * mor_result.condensed_dim as f64 / n as f64);
+    println!(
+        "  Condensation: dim={} (from {}), singletons={}, two_cycles={}",
+        mor_result.condensed_dim, n, mor_result.singletons, mor_result.two_cycles
+    );
+    println!(
+        "  Condensation ratio: {:.1}%",
+        100.0 * mor_result.condensed_dim as f64 / n as f64
+    );
 }
 
 /// Experiment 3: Scaling isolation.
@@ -285,15 +326,19 @@ fn experiment_scaling_isolation(
     b: &Col<f64>,
 ) {
     println!("\n=== EXPERIMENT 3: Scaling Isolation ===");
-    println!("{:<40} {:<18} {:<12} {:<8} {:<8}",
-        "Configuration", "BE", "Status", "delays", "max_frt");
+    println!(
+        "{:<40} {:<18} {:<12} {:<8} {:<8}",
+        "Configuration", "BE", "Status", "delays", "max_frt"
+    );
     sep();
 
     let n = a.nrows();
 
     // 3a: MatchOrderMetis with scaling (baseline)
     {
-        let opts = AnalyzeOptions { ordering: OrderingStrategy::MatchOrderMetis };
+        let opts = AnalyzeOptions {
+            ordering: OrderingStrategy::MatchOrderMetis,
+        };
         let mut solver = match SparseLDLT::analyze_with_matrix(a, &opts) {
             Ok(s) => s,
             Err(e) => {
@@ -310,9 +355,10 @@ fn experiment_scaling_isolation(
         let be = sparse_backward_error(a, &x, b);
         let stats = solver.stats().unwrap();
         let status = if be < 5e-11 { "PASS" } else { "FAIL" };
-        println!("{:<40} {:<18.2e} {:<12} {:<8} {:<8}",
-            "MatchOrderMetis (ord+scale)", be, status,
-            stats.total_delayed, stats.max_front_size);
+        println!(
+            "{:<40} {:<18.2e} {:<12} {:<8} {:<8}",
+            "MatchOrderMetis (ord+scale)", be, status, stats.total_delayed, stats.max_front_size
+        );
     }
 
     // 3b: MatchOrderMetis ordering WITHOUT scaling
@@ -321,7 +367,10 @@ fn experiment_scaling_isolation(
         let mor_result = match match_order_metis(a) {
             Ok(r) => r,
             Err(e) => {
-                println!("{:<40} match_order_metis error: {}", "MatchOrder ord, NO scale", e);
+                println!(
+                    "{:<40} match_order_metis error: {}",
+                    "MatchOrder ord, NO scale", e
+                );
                 return;
             }
         };
@@ -339,9 +388,10 @@ fn experiment_scaling_isolation(
         let be = sparse_backward_error(a, &x, b);
         let stats = solver.stats().unwrap();
         let status = if be < 5e-11 { "PASS" } else { "FAIL" };
-        println!("{:<40} {:<18.2e} {:<12} {:<8} {:<8}",
-            "MatchOrder ord, NO scale", be, status,
-            stats.total_delayed, stats.max_front_size);
+        println!(
+            "{:<40} {:<18.2e} {:<12} {:<8} {:<8}",
+            "MatchOrder ord, NO scale", be, status, stats.total_delayed, stats.max_front_size
+        );
     }
 
     // 3c: Plain METIS ordering WITH MC64 scaling
@@ -365,28 +415,21 @@ fn experiment_scaling_isolation(
             }
         };
 
-        let symbolic = match AptpSymbolic::analyze(
-            a.symbolic(),
-            SymmetricOrdering::Custom(perm.as_ref()),
-        ) {
-            Ok(s) => s,
-            Err(e) => {
-                println!("{:<40} symbolic error: {}", "Metis ord + MC64 scale", e);
-                return;
-            }
-        };
+        let symbolic =
+            match AptpSymbolic::analyze(a.symbolic(), SymmetricOrdering::Custom(perm.as_ref())) {
+                Ok(s) => s,
+                Err(e) => {
+                    println!("{:<40} symbolic error: {}", "Metis ord + MC64 scale", e);
+                    return;
+                }
+            };
 
         // Transform scaling to elimination order
         let (perm_fwd, _) = symbolic.perm_vecs();
         let elim_scaling: Vec<f64> = (0..n).map(|i| scaling[perm_fwd[i]]).collect();
 
         let aptp_options = AptpOptions::default();
-        let numeric = match AptpNumeric::factor(
-            &symbolic,
-            a,
-            &aptp_options,
-            Some(&elim_scaling),
-        ) {
+        let numeric = match AptpNumeric::factor(&symbolic, a, &aptp_options, Some(&elim_scaling)) {
             Ok(num) => num,
             Err(e) => {
                 println!("{:<40} factor error: {}", "Metis ord + MC64 scale", e);
@@ -423,14 +466,17 @@ fn experiment_scaling_isolation(
         let be = sparse_backward_error(a, &x, b);
         let stats = numeric.stats();
         let status = if be < 5e-11 { "PASS" } else { "FAIL" };
-        println!("{:<40} {:<18.2e} {:<12} {:<8} {:<8}",
-            "Metis ord + MC64 scale", be, status,
-            stats.total_delayed, stats.max_front_size);
+        println!(
+            "{:<40} {:<18.2e} {:<12} {:<8} {:<8}",
+            "Metis ord + MC64 scale", be, status, stats.total_delayed, stats.max_front_size
+        );
     }
 
     // 3d: Plain Metis, no scaling (reference)
     {
-        let opts = AnalyzeOptions { ordering: OrderingStrategy::Metis };
+        let opts = AnalyzeOptions {
+            ordering: OrderingStrategy::Metis,
+        };
         let mut solver = SparseLDLT::analyze_with_matrix(a, &opts).unwrap();
         solver.factor(a, &FactorOptions::default()).unwrap();
         let scratch = solver.solve_scratch(1);
@@ -440,9 +486,14 @@ fn experiment_scaling_isolation(
         let be = sparse_backward_error(a, &x, b);
         let stats = solver.stats().unwrap();
         let status = if be < 5e-11 { "PASS" } else { "FAIL" };
-        println!("{:<40} {:<18.2e} {:<12} {:<8} {:<8}",
-            "Metis ord, NO scale (reference)", be, status,
-            stats.total_delayed, stats.max_front_size);
+        println!(
+            "{:<40} {:<18.2e} {:<12} {:<8} {:<8}",
+            "Metis ord, NO scale (reference)",
+            be,
+            status,
+            stats.total_delayed,
+            stats.max_front_size
+        );
     }
 }
 
@@ -461,7 +512,11 @@ fn main() {
         "Cote/vibrobox".to_string(),
         "Boeing/crystk02".to_string(),
     ];
-    let targets = if cli_args.is_empty() { &default_targets } else { &cli_args };
+    let targets = if cli_args.is_empty() {
+        &default_targets
+    } else {
+        &cli_args
+    };
 
     for target in targets {
         let meta = all.iter().find(|m| m.name == *target);

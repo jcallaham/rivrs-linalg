@@ -47,6 +47,14 @@ use super::perm::perm_from_forward;
 use super::pivot::{Block2x2, PivotType};
 use crate::error::SparseError;
 
+/// Bunch-Kaufman α parameter for 2×2 determinant condition: |det| ≥ α × |a₂₁|².
+const BUNCH_KAUFMAN_ALPHA: f64 = 0.5;
+
+/// Growth factor bound for complete pivoting: max |L_ij| ≤ COMPLETE_PIVOTING_GROWTH_BOUND.
+/// From Algorithm 4.1 of Duff, Hogg & Lopez (2020).
+#[cfg(test)]
+const COMPLETE_PIVOTING_GROWTH_BOUND: f64 = 4.0;
+
 // ---------------------------------------------------------------------------
 // Configuration types
 // ---------------------------------------------------------------------------
@@ -186,7 +194,7 @@ pub struct AptpFactorization {
 /// Summary statistics from factorization.
 ///
 /// Invariant: `num_1x1 + 2 * num_2x2 + num_delayed == total_fully_summed_columns`
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct AptpStatistics {
     /// Count of 1x1 pivots accepted.
     pub num_1x1: usize,
@@ -442,142 +450,6 @@ fn swap_symmetric_block(
     // Cross element a[(j,i)] stays unchanged
 }
 
-/// Attempt a 1x1 pivot at column `col`.
-///
-/// Divides column k by diagonal d_kk, checks singularity and stability.
-/// On success, L column entries are written in place (a[i, col] = l_ik).
-/// On failure, the column is restored to its original state.
-///
-/// Returns Ok((d_value, max_l_entry)) or Err(max_l_entry).
-#[cfg(test)]
-#[allow(dead_code)] // Used by complete_pivoting_factor (also #[cfg(test)])
-fn try_1x1_pivot(
-    mut a: MatMut<'_, f64>,
-    col: usize,
-    threshold: f64,
-    small: f64,
-) -> Result<(f64, f64), f64> {
-    let m = a.nrows();
-    let d_kk = a[(col, col)];
-
-    if d_kk.abs() < small {
-        return Err(0.0);
-    }
-
-    let inv_d = 1.0 / d_kk;
-    let stability_bound = 1.0 / threshold;
-
-    // TODO(Phase 9.1): Replace per-column Vec backup with per-block backup
-    // when two-level blocking is implemented.
-    let backup: Vec<f64> = ((col + 1)..m).map(|i| a[(i, col)]).collect();
-
-    // Compute L column: l_ik = a_ik / d_kk
-    let mut max_l: f64 = 0.0;
-    for i in (col + 1)..m {
-        let l_ik = a[(i, col)] * inv_d;
-        a[(i, col)] = l_ik;
-        let abs_l = l_ik.abs();
-        if abs_l > max_l {
-            max_l = abs_l;
-        }
-    }
-
-    // Stability check
-    if max_l >= stability_bound {
-        // Restore column
-        for (idx, i) in ((col + 1)..m).enumerate() {
-            a[(i, col)] = backup[idx];
-        }
-        return Err(max_l);
-    }
-
-    Ok((d_kk, max_l))
-}
-
-/// Attempt a 2x2 Bunch-Kaufman pivot using columns `col` and `partner`.
-///
-/// Tests the determinant condition from Algorithm 4.1:
-/// `|det(D_22)| >= 0.5 * |a_21|^2`
-#[cfg(test)]
-#[allow(dead_code)] // Used by complete_pivoting_factor (also #[cfg(test)])
-fn try_2x2_pivot(
-    mut a: MatMut<'_, f64>,
-    col: usize,
-    partner: usize,
-    threshold: f64,
-    small: f64,
-) -> Result<(Block2x2, f64), ()> {
-    let m = a.nrows();
-    let a11 = a[(col, col)];
-    let a22 = a[(partner, partner)];
-    let (r21, c21) = if partner > col {
-        (partner, col)
-    } else {
-        (col, partner)
-    };
-    let a21 = a[(r21, c21)];
-
-    let det = a11 * a22 - a21 * a21;
-    if det.abs() < 0.5 * a21 * a21 {
-        return Err(());
-    }
-    if det.abs() < small {
-        return Err(());
-    }
-
-    let block = Block2x2 {
-        first_col: col,
-        a: a11,
-        b: a21,
-        c: a22,
-    };
-
-    let inv_det = 1.0 / det;
-    let stability_bound = 1.0 / threshold;
-    let mut max_l: f64 = 0.0;
-
-    let rows_start = col.max(partner) + 1;
-    let n_rows = m - rows_start;
-    // TODO(Phase 9.1): Replace per-column Vec backup with per-block backup
-    // when two-level blocking is implemented.
-    let mut backup_col: Vec<f64> = Vec::with_capacity(n_rows);
-    let mut backup_partner: Vec<f64> = Vec::with_capacity(n_rows);
-    for i in rows_start..m {
-        backup_col.push(a[(i, col)]);
-        backup_partner.push(a[(i, partner)]);
-    }
-
-    for i in rows_start..m {
-        let ai1 = a[(i, col)];
-        let ai2 = a[(i, partner)];
-
-        let l_i1 = (ai1 * a22 - ai2 * a21) * inv_det;
-        let l_i2 = (ai2 * a11 - ai1 * a21) * inv_det;
-
-        a[(i, col)] = l_i1;
-        a[(i, partner)] = l_i2;
-
-        let abs1 = l_i1.abs();
-        let abs2 = l_i2.abs();
-        if abs1 > max_l {
-            max_l = abs1;
-        }
-        if abs2 > max_l {
-            max_l = abs2;
-        }
-    }
-
-    if max_l >= stability_bound {
-        for (idx, i) in (rows_start..m).enumerate() {
-            a[(i, col)] = backup_col[idx];
-            a[(i, partner)] = backup_partner[idx];
-        }
-        return Err(());
-    }
-
-    Ok((block, max_l))
-}
-
 /// Rank-1 Schur complement update after eliminating a 1x1 pivot at column `col`.
 #[cfg(test)]
 #[allow(dead_code)] // Used by complete_pivoting_factor (also #[cfg(test)])
@@ -702,12 +574,7 @@ fn complete_pivoting_factor(mut a: MatMut<'_, f64>, small: f64) -> AptpFactorRes
 
     let mut col_order: Vec<usize> = (0..n).collect();
     let mut d = MixedDiagonal::new(n);
-    let mut stats = AptpStatistics {
-        num_1x1: 0,
-        num_2x2: 0,
-        num_delayed: 0,
-        max_l_entry: 0.0,
-    };
+    let mut stats = AptpStatistics::default();
     let mut pivot_log = Vec::with_capacity(n);
     let mut k = 0; // next column to eliminate
 
@@ -819,7 +686,7 @@ fn complete_pivoting_factor(mut a: MatMut<'_, f64>, small: f64) -> AptpFactorRes
                 continue;
             }
 
-            if delta.abs() >= 0.5 * a_tm * a_tm {
+            if delta.abs() >= BUNCH_KAUFMAN_ALPHA * a_tm * a_tm {
                 // 2×2 pivot using (t, m)
                 // Swap m → k and t → k+1
                 if m != k {
@@ -930,30 +797,12 @@ fn complete_pivoting_factor(mut a: MatMut<'_, f64>, small: f64) -> AptpFactorRes
 
     let num_eliminated = k;
 
-    // Build final D of correct dimension
-    let mut final_d = MixedDiagonal::new(num_eliminated);
-    let mut col = 0;
-    while col < num_eliminated {
-        match d.get_pivot_type(col) {
-            PivotType::OneByOne => {
-                final_d.set_1x1(col, d.get_1x1(col));
-                col += 1;
-            }
-            PivotType::TwoByTwo { partner } if partner > col => {
-                let block = d.get_2x2(col);
-                final_d.set_2x2(block);
-                col += 2;
-            }
-            _ => {
-                col += 1;
-            }
-        }
-    }
+    d.truncate(num_eliminated);
 
     let delayed_cols: Vec<usize> = (num_eliminated..n).map(|i| col_order[i]).collect();
 
     AptpFactorResult {
-        d: final_d,
+        d,
         perm: col_order,
         num_eliminated,
         delayed_cols,
@@ -1006,12 +855,7 @@ fn factor_block_diagonal(
 
     let mut local_perm: Vec<usize> = (0..block_size).collect();
     let mut d = MixedDiagonal::new(block_size);
-    let mut stats = AptpStatistics {
-        num_1x1: 0,
-        num_2x2: 0,
-        num_delayed: 0,
-        max_l_entry: 0.0,
-    };
+    let mut stats = AptpStatistics::default();
     let mut pivot_log = Vec::with_capacity(block_size);
     let mut k = 0; // offset within block (next column to eliminate)
 
@@ -1131,7 +975,7 @@ fn factor_block_diagonal(
                 continue;
             }
 
-            if delta.abs() >= 0.5 * a_tm * a_tm {
+            if delta.abs() >= BUNCH_KAUFMAN_ALPHA * a_tm * a_tm {
                 // 2×2 pivot: swap m_idx → cur, t → cur+1
                 if m_idx != cur {
                     swap_symmetric_block(a.rb_mut(), cur, m_idx, col_start, row_limit);
@@ -1424,8 +1268,13 @@ fn apply_and_check(
 
     let panel_start = col_start + block_cols;
 
-    let l11_copy = a.rb().submatrix(col_start, col_start, block_nelim, block_nelim).to_owned();
-    let panel = a.rb_mut().submatrix_mut(panel_start, col_start, panel_rows, block_nelim);
+    let l11_copy = a
+        .rb()
+        .submatrix(col_start, col_start, block_nelim, block_nelim)
+        .to_owned();
+    let panel = a
+        .rb_mut()
+        .submatrix_mut(panel_start, col_start, panel_rows, block_nelim);
     triangular_solve::solve_unit_lower_triangular_in_place(
         l11_copy.as_ref(),
         panel.transpose_mut(),
@@ -1557,7 +1406,10 @@ fn update_trailing(
 
     // GEMM: A22 -= W * L21^T (lower triangle only)
     // Copy L21 to avoid borrow conflict (L21 and A22 overlap in `a`)
-    let l21_copy = a.rb().submatrix(trailing_start, col_start, trailing_size, nelim).to_owned();
+    let l21_copy = a
+        .rb()
+        .submatrix(trailing_start, col_start, trailing_size, nelim)
+        .to_owned();
     let mut a22 = a.submatrix_mut(trailing_start, trailing_start, trailing_size, trailing_size);
 
     tri_matmul::matmul_with_conj(
@@ -1583,11 +1435,7 @@ fn update_trailing(
 ///
 /// # SPRAL Equivalent
 /// `calcLD<OP_N>` in `spral/src/ssids/cpu/kernels/calc_ld.hxx:41+`
-fn compute_ld(
-    l: MatRef<'_, f64>,
-    d: &MixedDiagonal,
-    nelim: usize,
-) -> Mat<f64> {
+fn compute_ld(l: MatRef<'_, f64>, d: &MixedDiagonal, nelim: usize) -> Mat<f64> {
     let nrows = l.nrows();
     let mut w = Mat::zeros(nrows, nelim);
     let mut col = 0;
@@ -1751,12 +1599,7 @@ fn factor_inner(
 
     let mut col_order: Vec<usize> = (0..m).collect();
     let mut d = MixedDiagonal::new(p);
-    let mut stats = AptpStatistics {
-        num_1x1: 0,
-        num_2x2: 0,
-        num_delayed: 0,
-        max_l_entry: 0.0,
-    };
+    let mut stats = AptpStatistics::default();
     let mut pivot_log = Vec::with_capacity(p);
     let mut k = 0;
     let mut end_pos = p;
@@ -1907,28 +1750,7 @@ fn factor_inner(
         }
 
         // 11. ACCUMULATE D entries for passed columns
-        let mut bcol = 0;
-        while bcol < nelim {
-            match block_d.get_pivot_type(bcol) {
-                PivotType::OneByOne => {
-                    d.set_1x1(k + bcol, block_d.get_1x1(bcol));
-                    bcol += 1;
-                }
-                PivotType::TwoByTwo { partner } if partner > bcol => {
-                    let blk = block_d.get_2x2(bcol);
-                    d.set_2x2(Block2x2 {
-                        first_col: k + bcol,
-                        a: blk.a,
-                        b: blk.b,
-                        c: blk.c,
-                    });
-                    bcol += 2;
-                }
-                _ => {
-                    bcol += 1;
-                }
-            }
-        }
+        d.copy_from_offset(&block_d, k, nelim);
 
         // Accumulate stats from passed columns only (count from block_d directly)
         let mut passed_1x1 = 0;
@@ -2008,30 +1830,12 @@ fn factor_inner(
 
     let num_eliminated = k;
 
-    // Build final D
-    let mut final_d = MixedDiagonal::new(num_eliminated);
-    let mut col = 0;
-    while col < num_eliminated {
-        match d.get_pivot_type(col) {
-            PivotType::OneByOne => {
-                final_d.set_1x1(col, d.get_1x1(col));
-                col += 1;
-            }
-            PivotType::TwoByTwo { partner } if partner > col => {
-                let block = d.get_2x2(col);
-                final_d.set_2x2(block);
-                col += 2;
-            }
-            _ => {
-                col += 1;
-            }
-        }
-    }
+    d.truncate(num_eliminated);
 
     let delayed_cols: Vec<usize> = (num_eliminated..p).map(|i| col_order[i]).collect();
 
     Ok(AptpFactorResult {
-        d: final_d,
+        d,
         perm: col_order,
         num_eliminated,
         delayed_cols,
@@ -2062,12 +1866,7 @@ fn two_level_factor(
 
     let mut col_order: Vec<usize> = (0..m).collect();
     let mut global_d = MixedDiagonal::new(p);
-    let mut stats = AptpStatistics {
-        num_1x1: 0,
-        num_2x2: 0,
-        num_delayed: 0,
-        max_l_entry: 0.0,
-    };
+    let mut stats = AptpStatistics::default();
     let mut pivot_log = Vec::with_capacity(p);
 
     let mut global_nelim = 0;
@@ -2127,9 +1926,10 @@ fn two_level_factor(
         // corrupting the mapping for eliminated columns.
         {
             let block_perm = &block_result.perm;
-            let orig_order: Vec<usize> =
-                col_order[col_start..col_start + block_cols].to_vec();
+            let orig_order: Vec<usize> = col_order[col_start..col_start + block_cols].to_vec();
             for i in 0..block_cols {
+                // Entries with block_perm[i] >= block_cols are contribution block rows
+                // (not fully-summed columns), so they don't have a col_order mapping.
                 if block_perm[i] < block_cols {
                     col_order[col_start + i] = orig_order[block_perm[i]];
                 }
@@ -2152,29 +1952,7 @@ fn two_level_factor(
         }
 
         // 4. Accumulate into global result
-        // Copy D entries from block_result
-        let mut bcol = 0;
-        while bcol < block_nelim {
-            match block_result.d.get_pivot_type(bcol) {
-                PivotType::OneByOne => {
-                    global_d.set_1x1(global_nelim + bcol, block_result.d.get_1x1(bcol));
-                    bcol += 1;
-                }
-                PivotType::TwoByTwo { partner } if partner > bcol => {
-                    let block = block_result.d.get_2x2(bcol);
-                    global_d.set_2x2(Block2x2 {
-                        first_col: global_nelim + bcol,
-                        a: block.a,
-                        b: block.b,
-                        c: block.c,
-                    });
-                    bcol += 2;
-                }
-                _ => {
-                    bcol += 1;
-                }
-            }
-        }
+        global_d.copy_from_offset(&block_result.d, global_nelim, block_nelim);
 
         // Merge stats
         stats.num_1x1 += block_result.stats.num_1x1;
@@ -2205,30 +1983,12 @@ fn two_level_factor(
         remaining_fully_summed -= block_cols;
     }
 
-    // Build final D of correct dimension
-    let mut final_d = MixedDiagonal::new(global_nelim);
-    let mut col = 0;
-    while col < global_nelim {
-        match global_d.get_pivot_type(col) {
-            PivotType::OneByOne => {
-                final_d.set_1x1(col, global_d.get_1x1(col));
-                col += 1;
-            }
-            PivotType::TwoByTwo { partner } if partner > col => {
-                let block = global_d.get_2x2(col);
-                final_d.set_2x2(block);
-                col += 2;
-            }
-            _ => {
-                col += 1;
-            }
-        }
-    }
+    global_d.truncate(global_nelim);
 
     let delayed_cols: Vec<usize> = (global_nelim..p).map(|i| col_order[i]).collect();
 
     Ok(AptpFactorResult {
-        d: final_d,
+        d: global_d,
         perm: col_order,
         num_eliminated: global_nelim,
         delayed_cols,
@@ -2491,12 +2251,7 @@ fn tpp_factor_as_primary(
 
     let mut col_order: Vec<usize> = (0..m).collect();
     let mut d = MixedDiagonal::new(p);
-    let mut stats = AptpStatistics {
-        num_1x1: 0,
-        num_2x2: 0,
-        num_delayed: 0,
-        max_l_entry: 0.0,
-    };
+    let mut stats = AptpStatistics::default();
     let mut pivot_log = Vec::with_capacity(p);
 
     let additional = tpp_factor(
@@ -2612,9 +2367,7 @@ fn tpp_factor(
             // Try (t, p) as 2x2 pivot (requires t < p)
             let maxt = tpp_find_rc_abs_max_exclude(a.as_ref(), t, nelim, m, p);
             let maxp = tpp_find_rc_abs_max_exclude(a.as_ref(), p, nelim, m, t);
-            if tpp_test_2x2(a.as_ref(), t, p, maxt, maxp, u, small)
-                .is_some()
-            {
+            if tpp_test_2x2(a.as_ref(), t, p, maxt, maxp, u, small).is_some() {
                 // Accept 2x2 pivot: swap t→nelim, p→nelim+1
                 if t != nelim {
                     swap_symmetric(a.rb_mut(), t, nelim);
@@ -2929,7 +2682,7 @@ mod tests {
         );
         // L entries bounded by 4 (complete pivoting guarantee)
         assert!(
-            stats.max_l_entry <= 4.0 + 1e-10,
+            stats.max_l_entry <= COMPLETE_PIVOTING_GROWTH_BOUND + 1e-10,
             "L entries should be bounded by 4, got {}",
             stats.max_l_entry
         );
@@ -2972,7 +2725,7 @@ mod tests {
         // With Δ ≈ 0, should fall back to 1×1 on max(|a_mm|, |a_tt|)
         // L entries bounded by √2 < 4 in this case (paper's bound)
         assert!(
-            stats.max_l_entry <= 4.0 + 1e-10,
+            stats.max_l_entry <= COMPLETE_PIVOTING_GROWTH_BOUND + 1e-10,
             "L entries should be bounded by 4"
         );
 
@@ -3040,7 +2793,7 @@ mod tests {
 
             // L entries bounded by 4 (Algorithm 4.1 guarantee)
             assert!(
-                stats.max_l_entry <= 4.0 + 1e-10,
+                stats.max_l_entry <= COMPLETE_PIVOTING_GROWTH_BOUND + 1e-10,
                 "complete pivoting {}x{}: max_l_entry {:.2e} > 4",
                 n,
                 n,
@@ -3062,10 +2815,7 @@ mod tests {
         let result = aptp_factor(a.as_ref(), &opts).unwrap();
 
         // All columns eliminated, no delays
-        assert_eq!(
-            result.stats.num_1x1 + 2 * result.stats.num_2x2,
-            2
-        );
+        assert_eq!(result.stats.num_1x1 + 2 * result.stats.num_2x2, 2);
         assert_eq!(result.stats.num_delayed, 0);
         assert!(result.delayed_cols.is_empty());
 
@@ -3085,10 +2835,7 @@ mod tests {
         let result = aptp_factor(a.as_ref(), &opts).unwrap();
 
         // All columns eliminated, no delays
-        assert_eq!(
-            result.stats.num_1x1 + 2 * result.stats.num_2x2,
-            3
-        );
+        assert_eq!(result.stats.num_1x1 + 2 * result.stats.num_2x2, 3);
         assert_eq!(result.stats.num_delayed, 0);
 
         let error =
@@ -3130,7 +2877,11 @@ mod tests {
         // TPP records zero columns as zero pivots (1x1 with D=0), while APTP
         // delays them. Either way, the other 2 columns should be eliminated.
         let eliminated = result.stats.num_1x1 + 2 * result.stats.num_2x2;
-        assert!(eliminated >= 2, "should eliminate at least 2 columns, got {}", eliminated);
+        assert!(
+            eliminated >= 2,
+            "should eliminate at least 2 columns, got {}",
+            eliminated
+        );
         let total = eliminated + result.stats.num_delayed;
         assert_eq!(total, 3, "total pivots + delays should equal n");
     }
@@ -3368,10 +3119,7 @@ mod tests {
         let result = aptp_factor(a.as_ref(), &opts).unwrap();
 
         // All columns eliminated, no delays
-        assert_eq!(
-            result.stats.num_1x1 + 2 * result.stats.num_2x2,
-            4
-        );
+        assert_eq!(result.stats.num_1x1 + 2 * result.stats.num_2x2, 4);
         assert_eq!(result.stats.num_delayed, 0);
         assert!(result.stats.max_l_entry < 1.0 / opts.threshold);
     }
@@ -3640,7 +3388,7 @@ mod tests {
 
         // L entries bounded by 4 (complete pivoting guarantee)
         assert!(
-            result.stats.max_l_entry <= 4.0 + 1e-10,
+            result.stats.max_l_entry <= COMPLETE_PIVOTING_GROWTH_BOUND + 1e-10,
             "max_l_entry {} > 4",
             result.stats.max_l_entry
         );
@@ -3703,8 +3451,7 @@ mod tests {
                         "PD matrix {}x{} should have zero delays",
                         n, n
                     );
-                    let total_elim =
-                        result.stats.num_1x1 + 2 * result.stats.num_2x2;
+                    let total_elim = result.stats.num_1x1 + 2 * result.stats.num_2x2;
                     assert_eq!(
                         total_elim, n,
                         "PD matrix {}x{} should eliminate all columns (1x1={}, 2x2={})",
@@ -4143,7 +3890,8 @@ mod tests {
 
     #[test]
     fn test_two_level_vs_unblocked_reconstruction() {
-        // Regression test for Bug 2: col_order tracking corruption in two_level_factor.
+        // Regression test: col_order tracking corruption in two_level_factor when
+        // block_perm was applied after delay swap, causing incorrect column mapping.
         //
         // When delay swaps happened BEFORE block_perm was applied to col_order,
         // the permutation mapping was corrupted, causing massive reconstruction
@@ -4438,8 +4186,12 @@ mod tests {
             let mut s = seed
                 .wrapping_add((a * 10007) as u64)
                 .wrapping_add((b * 7) as u64);
-            s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-            s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            s = s
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            s = s
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             ((s >> 33) as f64) / (u32::MAX as f64 / 2.0) - 1.0
         };
 
@@ -4463,7 +4215,9 @@ mod tests {
         // Deterministically select which rows to scale
         let mut state = seed;
         let mut next_idx = || -> usize {
-            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             ((state >> 33) as usize) % n
         };
 
@@ -4508,28 +4262,78 @@ mod tests {
 
         let configs = [
             // Small: 8x8 with ib=2 (4 blocks)
-            TestConfig { n: 8, ib: 2, seed: 42, scale: 1000.0 },
+            TestConfig {
+                n: 8,
+                ib: 2,
+                seed: 42,
+                scale: 1000.0,
+            },
             // Small: 8x8 with ib=4 (2 blocks)
-            TestConfig { n: 8, ib: 4, seed: 42, scale: 1000.0 },
+            TestConfig {
+                n: 8,
+                ib: 4,
+                seed: 42,
+                scale: 1000.0,
+            },
             // Medium: 16x16 with ib=4 (4 blocks)
-            TestConfig { n: 16, ib: 4, seed: 42, scale: 1000.0 },
+            TestConfig {
+                n: 16,
+                ib: 4,
+                seed: 42,
+                scale: 1000.0,
+            },
             // Medium: 16x16 with ib=2 (8 blocks)
-            TestConfig { n: 16, ib: 2, seed: 42, scale: 1000.0 },
+            TestConfig {
+                n: 16,
+                ib: 2,
+                seed: 42,
+                scale: 1000.0,
+            },
             // Larger: 32x32 with ib=4
-            TestConfig { n: 32, ib: 4, seed: 42, scale: 1000.0 },
+            TestConfig {
+                n: 32,
+                ib: 4,
+                seed: 42,
+                scale: 1000.0,
+            },
             // Larger: 32x32 with ib=8
-            TestConfig { n: 32, ib: 8, seed: 42, scale: 1000.0 },
+            TestConfig {
+                n: 32,
+                ib: 8,
+                seed: 42,
+                scale: 1000.0,
+            },
             // Different seed
-            TestConfig { n: 16, ib: 4, seed: 137, scale: 1000.0 },
+            TestConfig {
+                n: 16,
+                ib: 4,
+                seed: 137,
+                scale: 1000.0,
+            },
             // Extreme scale
-            TestConfig { n: 16, ib: 4, seed: 42, scale: 1e6 },
+            TestConfig {
+                n: 16,
+                ib: 4,
+                seed: 42,
+                scale: 1e6,
+            },
             // 64x64 with ib=8
-            TestConfig { n: 64, ib: 8, seed: 42, scale: 1000.0 },
+            TestConfig {
+                n: 64,
+                ib: 8,
+                seed: 42,
+                scale: 1000.0,
+            },
             // 64x64 with ib=16
-            TestConfig { n: 64, ib: 16, seed: 42, scale: 1000.0 },
+            TestConfig {
+                n: 64,
+                ib: 16,
+                seed: 42,
+                scale: 1000.0,
+            },
         ];
 
-        let mut any_delays_found = false;
+        let mut _any_delays_found = false;
         let mut any_failures = false;
 
         for (idx, config) in configs.iter().enumerate() {
@@ -4546,9 +4350,7 @@ mod tests {
             let result = aptp_factor(a.as_ref(), &opts).unwrap();
 
             let n = config.n;
-            let sum = result.stats.num_1x1
-                + 2 * result.stats.num_2x2
-                + result.stats.num_delayed;
+            let sum = result.stats.num_1x1 + 2 * result.stats.num_2x2 + result.stats.num_delayed;
             assert_eq!(
                 sum, n,
                 "config {}: statistics invariant broken: {} != {}",
@@ -4556,17 +4358,7 @@ mod tests {
             );
 
             if result.stats.num_delayed > 0 {
-                any_delays_found = true;
-                eprintln!(
-                    "config {} (n={}, ib={}, seed={}, scale={:.0e}): {} delayed, {} eliminated",
-                    idx,
-                    config.n,
-                    config.ib,
-                    config.seed,
-                    config.scale,
-                    result.stats.num_delayed,
-                    n - result.stats.num_delayed
-                );
+                _any_delays_found = true;
             }
 
             // If fully eliminated, check reconstruction error
@@ -4578,16 +4370,6 @@ mod tests {
                     result.perm.as_ref().arrays().0,
                 );
                 if error >= 1e-12 {
-                    eprintln!(
-                        "config {} (n={}, ib={}, seed={}, scale={:.0e}): \
-                         reconstruction error {:.2e} >= 1e-12 (NO DELAYS)",
-                        idx,
-                        config.n,
-                        config.ib,
-                        config.seed,
-                        config.scale,
-                        error
-                    );
                     any_failures = true;
                 }
                 assert!(
@@ -4604,7 +4386,6 @@ mod tests {
 
         // At least one config should have triggered delays (confirming the
         // cause_delays pattern works with the threshold).
-        eprintln!("any_delays_found = {}", any_delays_found);
         // Note: we don't assert any_delays_found because with complete pivoting
         // the diagonal block never delays — only apply_and_check can reduce
         // effective_nelim. Whether this triggers depends on the matrix structure.
@@ -4676,16 +4457,6 @@ mod tests {
             let sum = result.stats.num_1x1 + 2 * result.stats.num_2x2 + result.stats.num_delayed;
             assert_eq!(sum, n, "ib={}: statistics invariant: {} != {}", ib, sum, n);
 
-            eprintln!(
-                "targeted (ib={}): 1x1={}, 2x2={}, delayed={}, eliminated={}, max_l={:.2e}",
-                ib,
-                result.stats.num_1x1,
-                result.stats.num_2x2,
-                result.stats.num_delayed,
-                n - result.stats.num_delayed,
-                result.stats.max_l_entry
-            );
-
             // Check reconstruction if fully eliminated
             if result.stats.num_delayed == 0 {
                 let error = dense_reconstruction_error(
@@ -4694,7 +4465,6 @@ mod tests {
                     &result.d,
                     result.perm.as_ref().arrays().0,
                 );
-                eprintln!("targeted (ib={}): reconstruction error = {:.2e}", ib, error);
                 assert!(
                     error < 1e-12,
                     "targeted (ib={}): reconstruction error {:.2e} >= 1e-12 (no delays)",
@@ -4729,14 +4499,12 @@ mod tests {
                 };
                 let result_p = aptp_factor_in_place(a_copy.as_mut(), p, &opts_partial).unwrap();
                 let error_p = check_partial_factorization_in_place(&a, &a_copy, &result_p);
-                eprintln!(
-                    "targeted partial (ib={}, p={}): elim={}, delay={}, error={:.2e}",
-                    ib, p, result_p.num_eliminated, result_p.stats.num_delayed, error_p
-                );
                 assert!(
                     error_p < 1e-10,
                     "targeted partial (ib={}, p={}): error {:.2e} >= 1e-10",
-                    ib, p, error_p
+                    ib,
+                    p,
+                    error_p
                 );
             }
         }
@@ -4771,9 +4539,9 @@ mod tests {
             (64, 16, 1),
         ];
 
-        let mut total_delays = 0;
+        let mut _total_delays = 0;
         let mut max_error = 0.0_f64;
-        let mut worst_config = String::new();
+        let mut _worst_config = String::new();
 
         for &(n, ib, seed) in &test_cases {
             // Build a random symmetric indefinite matrix
@@ -4791,16 +4559,14 @@ mod tests {
 
             let result = aptp_factor(a.as_ref(), &opts).unwrap();
 
-            let sum = result.stats.num_1x1
-                + 2 * result.stats.num_2x2
-                + result.stats.num_delayed;
+            let sum = result.stats.num_1x1 + 2 * result.stats.num_2x2 + result.stats.num_delayed;
             assert_eq!(
                 sum, n,
                 "(n={}, ib={}, seed={}): stats invariant {} != {}",
                 n, ib, seed, sum, n
             );
 
-            total_delays += result.stats.num_delayed;
+            _total_delays += result.stats.num_delayed;
 
             if result.stats.num_delayed == 0 {
                 let error = dense_reconstruction_error(
@@ -4811,25 +4577,19 @@ mod tests {
                 );
                 if error > max_error {
                     max_error = error;
-                    worst_config = format!(
-                        "n={}, ib={}, seed={}: error={:.2e}",
-                        n, ib, seed, error
-                    );
+                    _worst_config =
+                        format!("n={}, ib={}, seed={}: error={:.2e}", n, ib, seed, error);
                 }
                 assert!(
                     error < 1e-10,
                     "(n={}, ib={}, seed={}): reconstruction error {:.2e} >= 1e-10",
-                    n, ib, seed, error
+                    n,
+                    ib,
+                    seed,
+                    error
                 );
             }
         }
-
-        eprintln!(
-            "aggressive test: {} total delays across {} configs, worst error: {}",
-            total_delays,
-            test_cases.len(),
-            worst_config
-        );
     }
 
     #[test]
@@ -4865,15 +4625,6 @@ mod tests {
                 ..AptpOptions::default()
             };
             let result_blocked = aptp_factor(a.as_ref(), &opts_blocked).unwrap();
-
-            eprintln!(
-                "seed={}: single(elim={}, delay={}), blocked(elim={}, delay={})",
-                seed,
-                n - result_single.stats.num_delayed,
-                result_single.stats.num_delayed,
-                n - result_blocked.stats.num_delayed,
-                result_blocked.stats.num_delayed,
-            );
 
             // Both should achieve good reconstruction when fully eliminated
             if result_single.stats.num_delayed == 0 {
@@ -5072,34 +4823,112 @@ mod tests {
         // If backup/restore/update_cross_terms is wrong, S will be corrupted.
 
         struct PartialConfig {
-            m: usize,   // total matrix dimension
-            p: usize,   // num_fully_summed
-            ib: usize,  // inner block size
+            m: usize,  // total matrix dimension
+            p: usize,  // num_fully_summed
+            ib: usize, // inner block size
             seed: u64,
             scale: f64,
         }
 
         let configs = [
             // Small cases: 12x12 with p=8, ib=4 (2 inner blocks, 4 contribution rows)
-            PartialConfig { m: 12, p: 8, ib: 4, seed: 42, scale: 1000.0 },
-            PartialConfig { m: 12, p: 8, ib: 4, seed: 137, scale: 1000.0 },
-            PartialConfig { m: 12, p: 8, ib: 2, seed: 42, scale: 1000.0 },
+            PartialConfig {
+                m: 12,
+                p: 8,
+                ib: 4,
+                seed: 42,
+                scale: 1000.0,
+            },
+            PartialConfig {
+                m: 12,
+                p: 8,
+                ib: 4,
+                seed: 137,
+                scale: 1000.0,
+            },
+            PartialConfig {
+                m: 12,
+                p: 8,
+                ib: 2,
+                seed: 42,
+                scale: 1000.0,
+            },
             // Medium: 16x12 (p=12 of 16), ib=4
-            PartialConfig { m: 16, p: 12, ib: 4, seed: 42, scale: 1000.0 },
-            PartialConfig { m: 16, p: 12, ib: 4, seed: 271, scale: 1000.0 },
+            PartialConfig {
+                m: 16,
+                p: 12,
+                ib: 4,
+                seed: 42,
+                scale: 1000.0,
+            },
+            PartialConfig {
+                m: 16,
+                p: 12,
+                ib: 4,
+                seed: 271,
+                scale: 1000.0,
+            },
             // 20x16, ib=4
-            PartialConfig { m: 20, p: 16, ib: 4, seed: 42, scale: 1000.0 },
-            PartialConfig { m: 20, p: 16, ib: 8, seed: 42, scale: 1000.0 },
+            PartialConfig {
+                m: 20,
+                p: 16,
+                ib: 4,
+                seed: 42,
+                scale: 1000.0,
+            },
+            PartialConfig {
+                m: 20,
+                p: 16,
+                ib: 8,
+                seed: 42,
+                scale: 1000.0,
+            },
             // Larger: 32x24, ib=8
-            PartialConfig { m: 32, p: 24, ib: 8, seed: 42, scale: 1000.0 },
-            PartialConfig { m: 32, p: 24, ib: 4, seed: 42, scale: 1000.0 },
+            PartialConfig {
+                m: 32,
+                p: 24,
+                ib: 8,
+                seed: 42,
+                scale: 1000.0,
+            },
+            PartialConfig {
+                m: 32,
+                p: 24,
+                ib: 4,
+                seed: 42,
+                scale: 1000.0,
+            },
             // 48x32, ib=8
-            PartialConfig { m: 48, p: 32, ib: 8, seed: 42, scale: 1000.0 },
+            PartialConfig {
+                m: 48,
+                p: 32,
+                ib: 8,
+                seed: 42,
+                scale: 1000.0,
+            },
             // Extreme scale
-            PartialConfig { m: 16, p: 12, ib: 4, seed: 42, scale: 1e6 },
+            PartialConfig {
+                m: 16,
+                p: 12,
+                ib: 4,
+                seed: 42,
+                scale: 1e6,
+            },
             // More seeds
-            PartialConfig { m: 16, p: 12, ib: 4, seed: 314, scale: 1000.0 },
-            PartialConfig { m: 16, p: 12, ib: 4, seed: 997, scale: 1000.0 },
+            PartialConfig {
+                m: 16,
+                p: 12,
+                ib: 4,
+                seed: 314,
+                scale: 1000.0,
+            },
+            PartialConfig {
+                m: 16,
+                p: 12,
+                ib: 4,
+                seed: 997,
+                scale: 1000.0,
+            },
         ];
 
         let mut any_delays = false;
@@ -5121,9 +4950,7 @@ mod tests {
             let original = a.clone();
             let result = aptp_factor_in_place(a.as_mut(), config.p, &opts).unwrap();
 
-            let sum = result.stats.num_1x1
-                + 2 * result.stats.num_2x2
-                + result.stats.num_delayed;
+            let sum = result.stats.num_1x1 + 2 * result.stats.num_2x2 + result.stats.num_delayed;
             assert_eq!(
                 sum, config.p,
                 "config {} (m={}, p={}, ib={}): stats invariant {} != {}",
@@ -5137,20 +4964,6 @@ mod tests {
             // Check partial factorization correctness (PAP^T = LDL^T + [0;S])
             let error = check_partial_factorization_in_place(&original, &a, &result);
 
-            eprintln!(
-                "config {} (m={}, p={}, ib={}, seed={}, scale={:.0e}): \
-                 elim={}, delay={}, partial_error={:.2e}",
-                idx,
-                config.m,
-                config.p,
-                config.ib,
-                config.seed,
-                config.scale,
-                result.num_eliminated,
-                result.stats.num_delayed,
-                error
-            );
-
             if error > worst_error {
                 worst_error = error;
                 worst_config = format!(
@@ -5158,20 +4971,7 @@ mod tests {
                     idx, config.m, config.p, config.ib, config.seed
                 );
             }
-
-            if error >= 1e-10 {
-                eprintln!(
-                    "  *** FAILURE: config {} (m={}, p={}, ib={}, seed={}): \
-                     partial factorization error {:.2e} >= 1e-10",
-                    idx, config.m, config.p, config.ib, config.seed, error
-                );
-            }
         }
-
-        eprintln!(
-            "partial factorization test: any_delays={}, worst_error: {} at {}",
-            any_delays, worst_error, worst_config
-        );
 
         assert!(
             any_delays,
@@ -5227,7 +5027,11 @@ mod tests {
         // col part: a[(2,1)]=0.2 (excluding row 3)
         // max = 0.5
         let max_exc = tpp_find_rc_abs_max_exclude(a.as_ref(), 1, 0, 4, 3);
-        assert!((max_exc - 0.5).abs() < 1e-15, "expected 0.5, got {}", max_exc);
+        assert!(
+            (max_exc - 0.5).abs() < 1e-15,
+            "expected 0.5, got {}",
+            max_exc
+        );
 
         // tpp_test_2x2: (0, 1) with a11=4, a21=0.5, a22=-3
         // det = 4*(-3) - 0.25 = -12.25 → non-singular
@@ -5306,15 +5110,27 @@ mod tests {
             match (i, j) {
                 // Top-left 8x8: easy pivots
                 (i, j) if i < 8 && j < 8 => {
-                    if i == j { 10.0 } else { 0.01 }
+                    if i == j {
+                        10.0
+                    } else {
+                        0.01
+                    }
                 }
                 // Middle 4x4: hard pivots (small diag, large off-diag)
                 (i, j) if i >= 8 && i < 12 && j >= 8 && j < 12 => {
-                    if i == j { 0.005 } else { 2.0 }
+                    if i == j {
+                        0.005
+                    } else {
+                        2.0
+                    }
                 }
                 // Bottom-right 4x4: easy pivots
                 (i, j) if i >= 12 && j >= 12 => {
-                    if i == j { 20.0 } else { 0.1 }
+                    if i == j {
+                        20.0
+                    } else {
+                        0.1
+                    }
                 }
                 // Cross terms: large
                 (i, j) if (8..12).contains(&i) && j < 8 => 3.0,
@@ -5339,17 +5155,6 @@ mod tests {
             ..AptpOptions::default()
         };
         let result_tpp = aptp_factor(a.as_ref(), &opts_tpp).unwrap();
-
-        eprintln!(
-            "APTP only: elim={}, delayed={}",
-            n - result_pass.stats.num_delayed,
-            result_pass.stats.num_delayed
-        );
-        eprintln!(
-            "APTP+TPP:  elim={}, delayed={}",
-            n - result_tpp.stats.num_delayed,
-            result_tpp.stats.num_delayed
-        );
 
         // TPP should recover at least some of APTP's delays
         assert!(
@@ -5401,15 +5206,6 @@ mod tests {
             ..AptpOptions::default()
         };
         let result = aptp_factor(a.as_ref(), &opts).unwrap();
-
-        eprintln!(
-            "stress: n={}, 1x1={}, 2x2={}, delayed={}, max_l={:.2e}",
-            n,
-            result.stats.num_1x1,
-            result.stats.num_2x2,
-            result.stats.num_delayed,
-            result.stats.max_l_entry
-        );
 
         if result.stats.num_delayed == 0 {
             let error = dense_reconstruction_error(
@@ -5470,8 +5266,9 @@ mod tests {
         );
 
         // Both must satisfy invariant
-        let sum_pass =
-            result_pass.stats.num_1x1 + 2 * result_pass.stats.num_2x2 + result_pass.stats.num_delayed;
+        let sum_pass = result_pass.stats.num_1x1
+            + 2 * result_pass.stats.num_2x2
+            + result_pass.stats.num_delayed;
         let sum_tpp =
             result_tpp.stats.num_1x1 + 2 * result_tpp.stats.num_2x2 + result_tpp.stats.num_delayed;
         assert_eq!(sum_pass, n);
@@ -5483,9 +5280,13 @@ mod tests {
         // Matrix with some zero columns — TPP should handle gracefully.
         let n = 4;
         let a = symmetric_matrix(n, |i, j| {
-            if i == j { [5.0, 0.0, 0.0, 3.0][i] }
-            else if (i == 0 && j == 3) || (i == 3 && j == 0) { 0.1 }
-            else { 0.0 }
+            if i == j {
+                [5.0, 0.0, 0.0, 3.0][i]
+            } else if (i == 0 && j == 3) || (i == 3 && j == 0) {
+                0.1
+            } else {
+                0.0
+            }
         });
 
         let opts = AptpOptions {

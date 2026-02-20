@@ -64,7 +64,7 @@ pub struct AnalyzeOptions {
 impl Default for AnalyzeOptions {
     fn default() -> Self {
         Self {
-            ordering: OrderingStrategy::Metis,
+            ordering: OrderingStrategy::MatchOrderMetis,
         }
     }
 }
@@ -107,7 +107,7 @@ pub struct SolverOptions {
 impl Default for SolverOptions {
     fn default() -> Self {
         Self {
-            ordering: OrderingStrategy::Metis,
+            ordering: OrderingStrategy::MatchOrderMetis,
             threshold: 0.01,
             fallback: AptpFallback::BunchKaufman,
         }

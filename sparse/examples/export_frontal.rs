@@ -92,11 +92,9 @@ fn main() {
         (sym, Some(elim_scaling))
     } else {
         let perm = metis_ordering(matrix.symbolic()).expect("METIS ordering failed");
-        let sym = AptpSymbolic::analyze(
-            matrix.symbolic(),
-            SymmetricOrdering::Custom(perm.as_ref()),
-        )
-        .expect("Symbolic analysis failed");
+        let sym =
+            AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Custom(perm.as_ref()))
+                .expect("Symbolic analysis failed");
         (sym, None)
     };
 
@@ -138,7 +136,10 @@ fn main() {
     .expect("Failed to export assembled frontal matrix");
 
     println!("  Frontal matrix: m={}, k={}", m, k);
-    println!("  Row indices (first 20): {:?}", &row_indices[..20.min(row_indices.len())]);
+    println!(
+        "  Row indices (first 20): {:?}",
+        &row_indices[..20.min(row_indices.len())]
+    );
 
     // Mirror lower triangle to get full symmetric matrix
     let mut full = frontal.clone();
@@ -210,7 +211,11 @@ fn main() {
     writeln!(
         mf,
         "ordering: {}",
-        if use_matching { "MatchOrderMetis" } else { "METIS" }
+        if use_matching {
+            "MatchOrderMetis"
+        } else {
+            "METIS"
+        }
     )
     .unwrap();
     writeln!(

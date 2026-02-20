@@ -21,6 +21,7 @@ rand_distr = { version = "0.4", optional = true }
 
 [features]
 test-util = ["rand", "rand_distr"]
+diagnostic = []
 
 [dev-dependencies]
 approx = "0.5"
@@ -32,6 +33,10 @@ tempfile = "3"
 # benchmarks. This is a standard Cargo pattern for activating optional features
 # during testing without making them default.
 rivrs-sparse = { path = ".", features = ["test-util"] }
+
+[[example]]
+name = "export_frontal"
+required-features = ["diagnostic"]
 
 [[bench]]
 name = "solver_benchmarks"

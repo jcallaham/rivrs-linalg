@@ -2102,7 +2102,7 @@ test report. This is the "working solver" milestone.
 
 ---
 
-## Phase 8: Performance Optimization (8.1 COMPLETE)
+## Phase 8: Performance Optimization (8.1a-f COMPLETE)
 
 ### Objectives
 Optimize the working solver for performance: two-level blocking for large fronts,
@@ -2285,9 +2285,90 @@ TRSM/GEMM. Consider revisiting after Phase 8.2 profiling identifies bottlenecks.
 
 **Time Estimate:** 1 week
 
-#### 8.2: Parallel Factorization & Solve + Benchmarking
-**Task:** Add shared-memory parallelism to factorization and solve, and benchmark
-the complete optimized solver
+**Post-8.1a sub-phases (8.1b-f):** After the initial two-level APTP implementation
+(8.1a), a series of debugging, validation, and pipeline-hardening sub-phases were
+carried out on branch `017-two-level-aptp`. These are documented in `docs/ssids-log.md`:
+
+- **8.1b**: BLAS-3 refactoring of `factor_inner` (factor_block_diagonal → apply_and_check
+  → update_trailing) + comprehensive accuracy audit. Critical `extract_front_factors`
+  bug fix (L21 extraction from wrong row range → 10^12-14× backward error improvement).
+- **8.1c**: MC64 Dijkstra heap bug fix — replaced Rust `BinaryHeap` with lazy deletion
+  with SPRAL's exact indexed binary heap (`heap_update_inline`/`heap_delete_inline`).
+  Eliminated dual feasibility violations in the Hungarian matching algorithm.
+- **8.1d**: Fix `col_order` tracking in `two_level_factor` — delay swap must happen
+  before `block_perm` update to maintain correct column-to-original mapping.
+- **8.1e**: TPP (Threshold Partial Pivoting) fallback for APTP failed columns —
+  when block-scoped complete pivoting cannot find acceptable pivots, TPP retries with
+  exhaustive serial search.
+- **8.1f**: TPP as primary factorization for small fronts, matching SPRAL's dispatch
+  (`ldlt_tpp_factor` for ncol < 32, `block_ldlt` for full aligned blocks). Result:
+  **65/65 SuiteSparse matrices pass** with MatchOrderMetis. d_pretok backward error
+  improved from 2.50e-6 to 7.21e-19.
+
+#### 8.1g: Sequential Profiling & Optimization
+
+**Task:** Profile the complete solver pipeline, establish performance baselines,
+and optimize sequential bottlenecks before adding parallelism.
+
+**Motivation:**
+Phase 8.1a-f produced a correct, fully-validated sequential solver (65/65 SuiteSparse
+pass). Before adding parallel infrastructure, we need to:
+1. Understand where time is spent (which supernodes, which operations)
+2. Identify and fix allocation hotspots that would cause contention under threads
+3. Establish clean sequential baselines for measuring parallel speedup
+4. Make informed decisions about which parallelism strategy matters most
+
+Without this data, parallelism decisions are guesswork. Profiling reveals whether
+tree-level parallelism (many independent supernodes) or intra-node BLAS-3 parallelism
+(few large supernodes) is more important for a given matrix class.
+
+**Deliverables:**
+
+1. **Instrumented profiling of factorization loop**
+   - Add `ProfileSession` instrumentation to per-supernode factor loop
+   - Measure: time per supernode, frontal matrix allocation, assembly, APTP kernel,
+     contribution extraction
+   - Generate Chrome Trace output for representative matrices (small, medium, large)
+   - Identify top-10 supernodes by time for each CI matrix
+
+2. **Allocation audit and optimization**
+   - Per-supernode `Mat::zeros(m, m)` frontal matrix: evaluate reusable scratch buffer
+   - Per-row `Vec` allocations in `factor_inner` row permutation loops: hoist outside loop
+   - `BlockBackup::create` dense copies: evaluate diagonal-only backup
+   - Per-column backup `Vec<f64>` in `try_1x1_pivot`/`try_2x2_pivot`: pre-allocate and reuse
+   - Measure allocation count and RSS before/after fixes
+
+3. **Sequential performance baselines**
+   - Factor time vs matrix dimension (full SuiteSparse suite)
+   - Solve time vs matrix dimension
+   - Peak RSS per matrix
+   - Time breakdown: ordering / symbolic / numeric / solve
+   - Comparison with faer's built-in simplicial LDL^T (where applicable)
+
+4. **Performance report**
+   - Workload distribution across supernodes (histogram of per-supernode time)
+   - Front size distribution vs time contribution
+   - Allocation pressure analysis (count, total bytes, per-supernode)
+   - Recommendations for Phase 8.2 parallelism strategy based on profiling data
+
+**Testing:**
+- All optimizations must preserve correctness (65/65 SuiteSparse, reconstruction < 1e-12)
+- No regressions in backward error on any CI matrix
+- Memory usage must not increase (should decrease)
+
+**Success Criteria:**
+- [ ] Profiling instrumentation in factorization hot path
+- [ ] Chrome Trace profiles generated for CI matrix suite
+- [ ] Allocation hotspots identified and top candidates fixed
+- [ ] Sequential performance baselines documented
+- [ ] Workload distribution analysis complete (informs 8.2 parallelism strategy)
+- [ ] No correctness regressions
+
+**Time Estimate:** 1-2 weeks
+
+#### 8.2: Parallel Factorization & Solve
+**Task:** Add shared-memory parallelism to factorization and solve, informed by
+Phase 8.1g profiling data
 
 **Algorithm Reference:**
 - Duff & Reid (1983) — assembly tree parallelism
@@ -2343,12 +2424,10 @@ impl SparseLDLT {
 exact threading boundary — which methods accept `Par` — will be refined during
 speccing.
 
-**Benchmarking deliverable:** Performance report showing:
-- Factor time vs matrix size (sequential and parallel)
-- Solve time vs matrix size (sequential and parallel)
-- Parallel scaling (1, 2, 4, 8 threads)
-- Memory usage
-- Effect of two-level APTP on large fronts
+**Benchmarking deliverable:** Parallel scaling report (building on 8.1g baselines):
+- Parallel scaling curves (1, 2, 4, 8 threads) for factor and solve
+- Speedup vs sequential baselines from Phase 8.1g
+- Load balancing analysis (workload imbalance across threads)
 - Comparison with faer's built-in solvers and SPRAL (if available)
 
 **Testing:**
@@ -2358,36 +2437,34 @@ speccing.
 
 **Success Criteria:**
 - [ ] Deterministic parallel execution
-- [ ] Results identical to sequential
+- [ ] Results identical to sequential (bitwise)
 - [ ] Speedup on factorization (≥3× on 4 cores for large problems)
 - [ ] Speedup on solve for wide assembly trees
 - [ ] Load balancing effective for unbalanced trees
-- [ ] Performance competitive with SPRAL on sequential
 - [ ] ≥75% parallel efficiency on 4 cores
-- [ ] No correctness regressions from optimization changes
+- [ ] No correctness regressions
 
-**Time Estimate:** 3 weeks
+**Time Estimate:** 2-3 weeks
 
 ### Phase 8 Exit Criteria
 
 **Required Outcomes:**
-1. Two-level APTP improves cache performance on large fronts
-2. Parallel factorization and solve working and deterministic
-3. Performance benchmarked and documented
-4. No correctness regressions from optimization
+1. Two-level APTP correct and validated on full SuiteSparse (8.1a-f: DONE)
+2. Sequential performance profiled, baselined, and optimized (8.1g)
+3. Parallel factorization and solve working and deterministic (8.2)
+4. No correctness regressions from optimization or parallelism
 5. All CI SuiteSparse matrices (MatchOrderMetis) achieve backward error < 5e-11
 
 **Validation Questions:**
-- Does two-level APTP improve performance on large fronts?
-- Does two-level APTP close the accuracy gap on WARN/FAIL matrices?
-- Is parallel speedup significant?
-- Is performance competitive with SPRAL?
+- Where does sequential time go? (8.1g profiling → informs 8.2 strategy)
+- Is parallel speedup significant? (8.2)
+- Is performance competitive with SPRAL? (8.1g sequential + 8.2 parallel)
 
 **Checkpoint:** Run full SuiteSparse benchmark suite (67+ matrices, MatchOrderMetis).
-Generate performance report with scaling plots and comparison data. Compare Phase 7
-baseline (4/8 CI pass) vs Phase 8 results.
+Generate performance report with sequential baselines (8.1g) and parallel scaling
+plots (8.2). Compare Phase 7 baseline (4/8 CI pass) vs Phase 8 results.
 
-**Time Estimate:** 4 weeks
+**Time Estimate:** 4-5 weeks (8.1g: 1-2 weeks, 8.2: 2-3 weeks)
 
 ---
 

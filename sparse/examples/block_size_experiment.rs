@@ -11,9 +11,7 @@ use faer::dyn_stack::{MemBuffer, MemStack};
 use faer::sparse::SparseColMat;
 use std::path::Path;
 
-use rivrs_sparse::aptp::{
-    AnalyzeOptions, FactorOptions, OrderingStrategy, SparseLDLT,
-};
+use rivrs_sparse::aptp::{AnalyzeOptions, FactorOptions, OrderingStrategy, SparseLDLT};
 use rivrs_sparse::io::mtx::load_mtx;
 
 fn backward_error(matrix: &SparseColMat<usize, f64>, x: &Col<f64>, b: &Col<f64>) -> f64 {
@@ -32,7 +30,11 @@ fn backward_error(matrix: &SparseColMat<usize, f64>, x: &Col<f64>, b: &Col<f64>)
             ax[i] += values[idx] * x[j];
         }
     }
-    let norm_r: f64 = ax.iter().zip(b.as_ref().iter()).map(|(&a, &b)| (a - b).abs()).fold(0.0, f64::max);
+    let norm_r: f64 = ax
+        .iter()
+        .zip(b.as_ref().iter())
+        .map(|(&a, &b)| (a - b).abs())
+        .fold(0.0, f64::max);
     let norm_a: f64 = values.iter().map(|v| v.abs()).fold(0.0, f64::max);
     let norm_x: f64 = (0..n).map(|i| x[i].abs()).fold(0.0, f64::max);
     let norm_b: f64 = b.as_ref().iter().map(|v| v.abs()).fold(0.0, f64::max);

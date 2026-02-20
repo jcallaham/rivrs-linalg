@@ -117,7 +117,11 @@ fn main() {
                         norm_a = norm_a.max(pap[(i, j)].abs());
                     }
                 }
-                let rel_err = if norm_a > 0.0 { max_err / norm_a } else { max_err };
+                let rel_err = if norm_a > 0.0 {
+                    max_err / norm_a
+                } else {
+                    max_err
+                };
 
                 eprintln!(
                     "{:<12} {:>6}/{:<6} {:>12.2e} {:>8} {:>6}",

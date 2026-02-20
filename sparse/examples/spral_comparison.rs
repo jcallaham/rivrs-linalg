@@ -37,8 +37,8 @@ use std::io::Write;
 use std::path::Path;
 use std::process::Command;
 
-use faer::sparse::linalg::cholesky::SymmetricOrdering;
 use faer::sparse::SparseColMat;
+use faer::sparse::linalg::cholesky::SymmetricOrdering;
 
 use rivrs_sparse::aptp::{AptpSymbolic, match_order_metis};
 use rivrs_sparse::io::mtx::load_mtx;
@@ -121,11 +121,7 @@ fn run_spral_match_order(matrix: &SparseColMat<usize, f64>) -> Option<(Vec<f64>,
         .spawn()
         .ok()?;
 
-    child
-        .stdin
-        .as_mut()?
-        .write_all(input.as_bytes())
-        .ok()?;
+    child.stdin.as_mut()?.write_all(input.as_bytes()).ok()?;
 
     let output = child.wait_with_output().ok()?;
     if !output.status.success() {
@@ -231,7 +227,11 @@ fn compare_matrix(name: &str, matrix: &SparseColMat<usize, f64>) -> bool {
 
     let scaling_ok = max_diff < 1e-10;
     let fill_ok = fill_ratio < 2.0 && fill_ratio > 0.5;
-    let status = if scaling_ok && fill_ok { "OK" } else { "MISMATCH" };
+    let status = if scaling_ok && fill_ok {
+        "OK"
+    } else {
+        "MISMATCH"
+    };
 
     eprintln!(
         "  {:<40} {:>8} {:>12.2e} {:>12.2e} {:>12} {:>12} {:>10.3}  {}",
