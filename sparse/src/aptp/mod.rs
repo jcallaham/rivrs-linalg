@@ -17,11 +17,29 @@
 //!   Solving Symmetric Linear Systems", Math. Comp.
 
 pub mod diagonal;
+pub mod factor;
 pub mod inertia;
+pub mod matching;
+pub mod numeric;
+pub mod ordering;
 pub mod perm;
 pub mod pivot;
+pub mod solve;
+pub mod solver;
+pub mod symbolic;
 
-pub use diagonal::MixedDiagonal;
+pub use diagonal::{MixedDiagonal, PivotEntry, PivotIter};
 pub use inertia::Inertia;
+pub use matching::{Mc64Job, Mc64Result, mc64_matching};
+pub use ordering::{MatchOrderResult, match_order_metis, metis_ordering};
 pub use perm::perm_from_forward;
 pub use pivot::{Block2x2, PivotType};
+pub use symbolic::{AptpSymbolic, SymbolicStatistics};
+
+pub use factor::{
+    AptpFactorResult, AptpFactorization, AptpFallback, AptpOptions, AptpPivotRecord,
+    AptpStatistics, FailedPivotMethod, aptp_factor, aptp_factor_in_place,
+};
+
+pub use numeric::{AptpNumeric, FactorizationStats, FrontFactors, PerSupernodeStats};
+pub use solver::{AnalyzeOptions, FactorOptions, OrderingStrategy, SolverOptions, SparseLDLT};

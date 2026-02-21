@@ -15,6 +15,8 @@ use crate::error::SparseError;
 /// Supports `coordinate real symmetric` format only. Entries are
 /// 1-indexed in the file and converted to 0-indexed internally.
 /// The returned matrix stores the full symmetric matrix (both triangles).
+/// Explicit zero entries are dropped to avoid storing structural zeros that
+/// would create spurious edges in adjacency graphs (e.g., for METIS ordering).
 ///
 /// # Errors
 ///
@@ -91,7 +93,7 @@ pub fn load_mtx(path: &Path) -> Result<SparseColMat<usize, f64>, SparseError> {
             Some(size_line_idx + 1),
         )
     })?;
-    let _nnz: usize = size_parts[2].parse().map_err(|_| {
+    let declared_nnz: usize = size_parts[2].parse().map_err(|_| {
         parse_err(
             format!("invalid nnz: '{}'", size_parts[2]),
             Some(size_line_idx + 1),
@@ -100,6 +102,7 @@ pub fn load_mtx(path: &Path) -> Result<SparseColMat<usize, f64>, SparseError> {
 
     // Parse triplets and symmetrize
     let mut triplets: Vec<Triplet<usize, usize, f64>> = Vec::new();
+    let mut data_lines = 0usize;
     for (line_idx, line) in lines {
         let line = line.trim();
         if line.is_empty() || line.starts_with('%') {
@@ -152,6 +155,15 @@ pub fn load_mtx(path: &Path) -> Result<SparseColMat<usize, f64>, SparseError> {
             ));
         }
 
+        data_lines += 1;
+
+        // Skip explicit zeros — some MatrixMarket files (e.g. bloweybq) store
+        // structural zeros that would create spurious edges in the adjacency
+        // graph, severely degrading METIS ordering quality.
+        if val == 0.0 {
+            continue;
+        }
+
         triplets.push(Triplet { row, col, val });
         // Symmetrize: add (col, row, val) for off-diagonal entries
         if row != col {
@@ -161,6 +173,14 @@ pub fn load_mtx(path: &Path) -> Result<SparseColMat<usize, f64>, SparseError> {
                 val,
             });
         }
+    }
+
+    // Detect truncated files: data lines should match declared nnz
+    if data_lines < declared_nnz {
+        eprintln!(
+            "WARNING: {}: file declares {} entries but only {} data lines found (truncated file?)",
+            path_str, declared_nnz, data_lines
+        );
     }
 
     SparseColMat::try_new_from_triplets(nrows, ncols, &triplets)

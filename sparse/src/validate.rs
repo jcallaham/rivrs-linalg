@@ -195,6 +195,65 @@ pub fn backward_error(a: &SparseColMat<usize, f64>, x: &Col<f64>, b: &Col<f64>) 
     r_norm / denom
 }
 
+/// Compute backward error using sparse matrix-vector multiply.
+///
+/// Returns `||Ax - b|| / (||A||_F * ||x|| + ||b||)`.
+/// Uses direct sparse iteration to avoid O(n^2) dense conversion.
+///
+/// **Matrix storage**: Expects a full symmetric CSC matrix (both triangles
+/// stored), which is what our `.mtx` reader and `SparseColMat::try_new_from_triplets`
+/// produce. Each off-diagonal entry (i,j) appears in both column i and column j.
+///
+/// The Frobenius norm and matrix-vector product are computed directly from
+/// the stored entries. This is O(nnz) work and O(n) extra memory.
+pub fn sparse_backward_error(a: &SparseColMat<usize, f64>, x: &Col<f64>, b: &Col<f64>) -> f64 {
+    let n = a.nrows();
+
+    // Compute A*x directly from the full symmetric CSC.
+    // Since both triangles are stored, a regular matvec is correct.
+    let symbolic = a.symbolic();
+    let col_ptrs = symbolic.col_ptr();
+    let row_indices = symbolic.row_idx();
+    let values = a.val();
+
+    let mut ax = vec![0.0f64; n];
+    for j in 0..n {
+        for idx in col_ptrs[j]..col_ptrs[j + 1] {
+            let i = row_indices[idx];
+            let v = values[idx];
+            ax[i] += v * x[j];
+        }
+    }
+
+    // Compute residual r = Ax - b
+    let mut r_norm_sq = 0.0;
+    for k in 0..n {
+        let r = ax[k] - b[k];
+        r_norm_sq += r * r;
+    }
+    let r_norm = r_norm_sq.sqrt();
+    let x_norm = x.norm_l2();
+    let b_norm = b.norm_l2();
+
+    // Compute ||A||_F from stored values directly.
+    // Full symmetric storage: each off-diagonal entry appears twice,
+    // so sum(v^2) = sum(diag^2) + 2*sum(off_diag^2) = ||A||_F^2.
+    let mut a_norm_sq = 0.0;
+    for j in 0..n {
+        for &v in &values[col_ptrs[j]..col_ptrs[j + 1]] {
+            a_norm_sq += v * v;
+        }
+    }
+    let a_norm = a_norm_sq.sqrt();
+
+    let denom = a_norm * x_norm + b_norm;
+    if denom == 0.0 {
+        return 0.0;
+    }
+
+    r_norm / denom
+}
+
 /// Check whether two inertia values are identical and dimensionally consistent.
 ///
 /// Returns `true` only if all three counts match AND both inertias have the

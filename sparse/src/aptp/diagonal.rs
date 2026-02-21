@@ -11,6 +11,17 @@
 use super::inertia::Inertia;
 use super::pivot::{Block2x2, PivotType};
 
+/// A single pivot entry from a [`MixedDiagonal`], yielded by [`MixedDiagonal::iter_pivots`].
+#[derive(Debug, Clone)]
+pub enum PivotEntry {
+    /// 1x1 pivot with scalar diagonal value.
+    OneByOne(f64),
+    /// 2x2 Bunch-Kaufman pivot block (yielded only at the lower-indexed column).
+    TwoByTwo(Block2x2),
+    /// Unresolved pivot.
+    Delayed,
+}
+
 /// The D factor in P^T A P = L D L^T with mixed 1x1 and 2x2 blocks.
 ///
 /// Stores a block diagonal matrix where each block is either a 1x1 scalar
@@ -34,6 +45,7 @@ use super::pivot::{Block2x2, PivotType};
 ///
 /// - Hogg, Duff & Lopez (2020), Section 3: mixed diagonal D storage in APTP
 /// - Bunch & Kaufman (1977): 2x2 pivot block structure
+#[derive(Debug)]
 pub struct MixedDiagonal {
     pivot_map: Vec<PivotType>,
     diag: Vec<f64>,
@@ -185,6 +197,92 @@ impl MixedDiagonal {
             .count()
     }
 
+    /// Extend to accommodate `new_n` entries. New entries are initialized as Delayed.
+    pub fn grow(&mut self, new_n: usize) {
+        if new_n > self.n {
+            self.pivot_map.resize(new_n, PivotType::Delayed);
+            self.diag.resize(new_n, 0.0);
+            self.off_diag.resize(new_n, 0.0);
+            self.n = new_n;
+        }
+    }
+
+    /// Shrink to `new_n` entries, discarding trailing entries.
+    pub fn truncate(&mut self, new_n: usize) {
+        debug_assert!(
+            new_n <= self.n,
+            "truncate: new_n {} > current n {}",
+            new_n,
+            self.n
+        );
+        self.pivot_map.truncate(new_n);
+        self.diag.truncate(new_n);
+        self.off_diag.truncate(new_n);
+        self.n = new_n;
+    }
+
+    /// Copy `count` pivot entries from `source` (starting at index 0) into `self`
+    /// (starting at `self_offset`).
+    ///
+    /// Handles 1x1, 2x2, and Delayed pivots. For 2x2 pivots, both columns of
+    /// the pair are copied as a unit.
+    ///
+    /// # Panics (debug only)
+    ///
+    /// - `self_offset + count > self.n`
+    /// - `count > source.n`
+    pub fn copy_from_offset(&mut self, source: &MixedDiagonal, self_offset: usize, count: usize) {
+        debug_assert!(
+            self_offset + count <= self.n,
+            "copy_from_offset: self_offset {} + count {} > self.n {}",
+            self_offset,
+            count,
+            self.n
+        );
+        debug_assert!(
+            count <= source.n,
+            "copy_from_offset: count {} > source.n {}",
+            count,
+            source.n
+        );
+
+        let mut col = 0;
+        while col < count {
+            match source.pivot_map[col] {
+                PivotType::OneByOne => {
+                    self.pivot_map[self_offset + col] = PivotType::OneByOne;
+                    self.diag[self_offset + col] = source.diag[col];
+                    col += 1;
+                }
+                PivotType::TwoByTwo { .. } if col + 1 < count => {
+                    let dest = self_offset + col;
+                    self.pivot_map[dest] = PivotType::TwoByTwo { partner: dest + 1 };
+                    self.pivot_map[dest + 1] = PivotType::TwoByTwo { partner: dest };
+                    self.diag[dest] = source.diag[col];
+                    self.diag[dest + 1] = source.diag[col + 1];
+                    self.off_diag[dest] = source.off_diag[col];
+                    col += 2;
+                }
+                PivotType::Delayed => {
+                    // Leave as Delayed (already the default)
+                    col += 1;
+                }
+                _ => {
+                    // Second column of a 2x2 pair, or 2x2 at boundary — skip
+                    col += 1;
+                }
+            }
+        }
+    }
+
+    /// Iterate over pivot entries, yielding `(col_index, PivotEntry)` pairs.
+    ///
+    /// Advances by 1 for 1x1 and Delayed pivots, by 2 for 2x2 pivots
+    /// (yielding the block only at the lower-indexed column and skipping the partner).
+    pub fn iter_pivots(&self) -> PivotIter<'_> {
+        PivotIter { d: self, col: 0 }
+    }
+
     /// Number of 2x2 pivot pairs.
     pub fn num_2x2_pairs(&self) -> usize {
         self.pivot_map
@@ -230,28 +328,33 @@ impl MixedDiagonal {
             match self.pivot_map[col] {
                 PivotType::OneByOne => {
                     let d = self.diag[col];
-                    debug_assert!(d != 0.0, "solve_in_place: zero 1x1 pivot at col {}", col);
-                    x[col] /= d;
+                    if d == 0.0 {
+                        // Zero pivot: set solution component to zero
+                        // (SPRAL action=true convention)
+                        x[col] = 0.0;
+                    } else {
+                        x[col] /= d;
+                    }
                     col += 1;
                 }
                 PivotType::TwoByTwo { partner } => {
                     if partner > col {
-                        // This is the owner (lower-indexed column) of the 2x2 block.
-                        // Read a, b, c directly from parallel arrays — O(1).
                         let a = self.diag[col];
                         let b = self.off_diag[col];
                         let c = self.diag[partner];
                         let det = a * c - b * b;
-                        debug_assert!(
-                            det != 0.0,
-                            "solve_in_place: zero determinant 2x2 block at col {}",
-                            col
-                        );
-                        let r1 = x[col];
-                        let r2 = x[partner];
-                        // Cramer's rule: [[a,b],[b,c]]^-1 = (1/det) * [[c,-b],[-b,a]]
-                        x[col] = (c * r1 - b * r2) / det;
-                        x[partner] = (a * r2 - b * r1) / det;
+                        if det == 0.0 {
+                            // Zero-determinant 2x2 block: set both components to zero
+                            // (SPRAL action=true convention)
+                            x[col] = 0.0;
+                            x[partner] = 0.0;
+                        } else {
+                            let r1 = x[col];
+                            let r2 = x[partner];
+                            // Cramer's rule: [[a,b],[b,c]]^-1 = (1/det) * [[c,-b],[-b,a]]
+                            x[col] = (c * r1 - b * r2) / det;
+                            x[partner] = (a * r2 - b * r1) / det;
+                        }
                     }
                     // Skip partner column if we've already processed this pair
                     col += 1;
@@ -356,6 +459,53 @@ impl MixedDiagonal {
             positive,
             negative,
             zero,
+        }
+    }
+}
+
+/// Iterator over pivot entries in a [`MixedDiagonal`].
+///
+/// Yields `(col_index, PivotEntry)` pairs, advancing by 2 for 2x2 pivots
+/// (yielding only at the lower-indexed column).
+pub struct PivotIter<'a> {
+    d: &'a MixedDiagonal,
+    col: usize,
+}
+
+impl<'a> Iterator for PivotIter<'a> {
+    type Item = (usize, PivotEntry);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.col >= self.d.n {
+            return None;
+        }
+        let col = self.col;
+        match self.d.pivot_map[col] {
+            PivotType::OneByOne => {
+                self.col += 1;
+                Some((col, PivotEntry::OneByOne(self.d.diag[col])))
+            }
+            PivotType::TwoByTwo { partner } if partner > col => {
+                self.col += 2;
+                Some((
+                    col,
+                    PivotEntry::TwoByTwo(Block2x2 {
+                        first_col: col,
+                        a: self.d.diag[col],
+                        b: self.d.off_diag[col],
+                        c: self.d.diag[col + 1],
+                    }),
+                ))
+            }
+            PivotType::TwoByTwo { .. } => {
+                // Second column of a 2x2 pair — skip
+                self.col += 1;
+                self.next()
+            }
+            PivotType::Delayed => {
+                self.col += 1;
+                Some((col, PivotEntry::Delayed))
+            }
         }
     }
 }
