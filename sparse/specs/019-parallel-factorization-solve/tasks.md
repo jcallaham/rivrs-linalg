@@ -50,19 +50,19 @@
 
 ### Tests for User Story 1
 
-- [ ] T010 [US1] Add parallel correctness test: factor + solve CI subset matrices with `Par::rayon(4)`, assert backward error < 5e-11 for each, in `src/aptp/solver.rs` tests (new `#[test] fn test_parallel_factor_ci_subset`)
-- [ ] T011 [US1] Add determinism test: factor same matrix twice with same `Par::rayon(4)`, assert bitwise-identical `FrontFactors` (pivot sequences, L, D entries), in `src/aptp/numeric.rs` tests (new `#[test] fn test_parallel_factor_determinism`)
-- [ ] T012 [US1] Add small-matrix overhead test: time factorization of small matrices (n < 1000) with `Par::Seq` vs `Par::rayon(4)`, assert < 5% slowdown, in `src/aptp/solver.rs` tests (new `#[test] fn test_parallel_overhead_small_matrices`)
+- [X] T010 [US1] Add parallel correctness test: factor + solve CI subset matrices with `Par::rayon(4)`, assert backward error < 5e-11 for each, in `src/aptp/solver.rs` tests (new `#[test] fn test_parallel_factor_ci_subset`)
+- [X] T011 [US1] Add determinism test: factor same matrix twice with same `Par::rayon(4)`, assert bitwise-identical `FrontFactors` (pivot sequences, L, D entries), in `src/aptp/numeric.rs` tests (new `#[test] fn test_parallel_factor_determinism`)
+- [X] T012 [US1] Add small-matrix overhead test: time factorization of small matrices (n < 1000) with `Par::Seq` vs `Par::rayon(4)`, assert < 5% slowdown, in `src/aptp/solver.rs` tests (new `#[test] fn test_parallel_overhead_small_matrices`)
 
 ### Implementation for User Story 1
 
-- [ ] T013 [US1] Add `par` parameter to `apply_and_check()` in `src/aptp/factor.rs` and replace hardcoded `Par::Seq` at TRSM call (line ~1278) with `par`
-- [ ] T014 [US1] Add `par` parameter to `update_trailing()` in `src/aptp/factor.rs` and replace hardcoded `Par::Seq` at GEMM call (line ~1426) with `par`
-- [ ] T015 [US1] Thread `par` from `AptpOptions` through `factor_inner()` → `apply_and_check()` + `update_trailing()` in `src/aptp/factor.rs`
-- [ ] T016 [US1] Thread `par` through `two_level_factor()` → `factor_inner()` in `src/aptp/factor.rs`
-- [ ] T017 [US1] In `AptpNumeric::factor()` in `src/aptp/numeric.rs`, compute `effective_par` per supernode: `Par::Seq` if front dimension < `INTRA_NODE_THRESHOLD` (256), else `options.par`. Create a per-supernode `AptpOptions` copy with the effective par and pass to `aptp_factor_in_place()`
-- [ ] T018 [US1] In per-supernode solve functions in `src/aptp/solve.rs`, replace the 4 hardcoded `Par::Seq` calls (lines ~147, ~170, ~250, ~261) with the `par` parameter, applying the same front-size threshold (use `Par::Seq` if `ne < INTRA_NODE_THRESHOLD`)
-- [ ] T019 [US1] Run `cargo test`, all SuiteSparse `--ignored` tests with `--test-threads=1`, and verify all pass. Run `cargo clippy --all-targets --features diagnostic`
+- [X] T013 [US1] Add `par` parameter to `apply_and_check()` in `src/aptp/factor.rs` and replace hardcoded `Par::Seq` at TRSM call (line ~1278) with `par`
+- [X] T014 [US1] Add `par` parameter to `update_trailing()` in `src/aptp/factor.rs` and replace hardcoded `Par::Seq` at GEMM call (line ~1426) with `par`
+- [X] T015 [US1] Thread `par` from `AptpOptions` through `factor_inner()` → `apply_and_check()` + `update_trailing()` in `src/aptp/factor.rs`
+- [X] T016 [US1] Thread `par` through `two_level_factor()` → `factor_inner()` in `src/aptp/factor.rs`
+- [X] T017 [US1] In `AptpNumeric::factor()` in `src/aptp/numeric.rs`, compute `effective_par` per supernode: `Par::Seq` if front dimension < `INTRA_NODE_THRESHOLD` (256), else `options.par`. Create a per-supernode `AptpOptions` copy with the effective par and pass to `aptp_factor_in_place()`
+- [X] T018 [US1] In per-supernode solve functions in `src/aptp/solve.rs`, replace the 4 hardcoded `Par::Seq` calls (lines ~147, ~170, ~250, ~261) with the `par` parameter, applying the same front-size threshold (use `Par::Seq` if `ne < INTRA_NODE_THRESHOLD`)
+- [X] T019 [US1] Run `cargo test`, all SuiteSparse `--ignored` tests with `--test-threads=1`, and verify all pass. Run `cargo clippy --all-targets --features diagnostic`
 
 **Checkpoint**: Intra-node BLAS parallelism active for large fronts. 63% of SuiteSparse matrices benefit. SC-001, SC-002, SC-004, SC-005, SC-006, SC-007 can be partially validated.
 

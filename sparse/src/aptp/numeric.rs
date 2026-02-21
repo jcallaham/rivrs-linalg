@@ -33,7 +33,7 @@
 //! - Hogg, Duff & Lopez (2020), "A New Sparse LDL^T Solver Using A Posteriori
 //!   Threshold Pivoting" — APTP algorithm integration with multifrontal framework
 
-use faer::Mat;
+use faer::{Mat, Par};
 use faer::sparse::SparseColMat;
 use faer::sparse::linalg::cholesky::SymbolicCholeskyRaw;
 
@@ -52,7 +52,6 @@ const NOT_IN_FRONT: usize = usize::MAX;
 /// Front dimension below which intra-node BLAS uses `Par::Seq` regardless of
 /// the user-supplied parallelism setting. Fronts smaller than this threshold
 /// do not benefit from parallel BLAS (overhead exceeds computation).
-#[allow(dead_code)] // Used in Phase 3 (US1)
 pub(crate) const INTRA_NODE_THRESHOLD: usize = 256;
 
 // ---------------------------------------------------------------------------
@@ -505,7 +504,17 @@ impl AptpNumeric {
             #[cfg(feature = "diagnostic")]
             let kernel_start = std::time::Instant::now();
 
-            let result = aptp_factor_in_place(frontal.data.as_mut(), k, options)?;
+            // Apply intra-node threshold: small fronts use Par::Seq to avoid overhead
+            let effective_par = if m < INTRA_NODE_THRESHOLD {
+                Par::Seq
+            } else {
+                options.par
+            };
+            let per_sn_options = AptpOptions {
+                par: effective_par,
+                ..options.clone()
+            };
+            let result = aptp_factor_in_place(frontal.data.as_mut(), k, &per_sn_options)?;
             let ne = result.num_eliminated;
 
             #[cfg(feature = "diagnostic")]

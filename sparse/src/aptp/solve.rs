@@ -29,7 +29,7 @@ use faer::linalg::triangular_solve::{
 use faer::mat::{MatMut, MatRef};
 use faer::{Accum, Conj, Par};
 
-use super::numeric::{AptpNumeric, FrontFactors};
+use super::numeric::{AptpNumeric, FrontFactors, INTRA_NODE_THRESHOLD};
 use super::symbolic::AptpSymbolic;
 use crate::error::SparseError;
 
@@ -123,7 +123,7 @@ pub(crate) fn forward_solve_supernode(
     rhs: &mut [f64],
     work: &mut [f64],
     work2: &mut [f64],
-    _par: Par,
+    par: Par,
 ) {
     let ne = ff.num_eliminated();
     if ne == 0 {
@@ -133,6 +133,13 @@ pub(crate) fn forward_solve_supernode(
     let col_indices = ff.col_indices();
     let row_indices = ff.row_indices();
     let r = row_indices.len();
+
+    // Apply intra-node threshold: small fronts use Par::Seq
+    let effective_par = if ne + r < INTRA_NODE_THRESHOLD {
+        Par::Seq
+    } else {
+        par
+    };
 
     // Gather: work[i] = rhs[col_indices[i]]
     for i in 0..ne {
@@ -146,7 +153,7 @@ pub(crate) fn forward_solve_supernode(
             ff.l11().as_ref(),
             Conj::No,
             local.as_mut(),
-            Par::Seq,
+            effective_par,
         );
     }
 
@@ -169,7 +176,7 @@ pub(crate) fn forward_solve_supernode(
             local,
             Conj::No,
             1.0,
-            Par::Seq,
+            effective_par,
         );
         for j in 0..r {
             rhs[row_indices[j]] -= tmp[j];
@@ -216,7 +223,7 @@ pub(crate) fn backward_solve_supernode(
     rhs: &mut [f64],
     work: &mut [f64],
     work2: &mut [f64],
-    _par: Par,
+    par: Par,
 ) {
     let ne = ff.num_eliminated();
     if ne == 0 {
@@ -226,6 +233,13 @@ pub(crate) fn backward_solve_supernode(
     let col_indices = ff.col_indices();
     let row_indices = ff.row_indices();
     let r = row_indices.len();
+
+    // Apply intra-node threshold: small fronts use Par::Seq
+    let effective_par = if ne + r < INTRA_NODE_THRESHOLD {
+        Par::Seq
+    } else {
+        par
+    };
 
     // Gather local: work[i] = rhs[col_indices[i]]
     for i in 0..ne {
@@ -250,7 +264,7 @@ pub(crate) fn backward_solve_supernode(
             tmp,
             Conj::No,
             -1.0,
-            Par::Seq,
+            effective_par,
         );
     }
 
@@ -261,7 +275,7 @@ pub(crate) fn backward_solve_supernode(
             ff.l11().as_ref().transpose(),
             Conj::No,
             local.as_mut(),
-            Par::Seq,
+            effective_par,
         );
     }
 

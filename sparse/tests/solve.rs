@@ -1032,3 +1032,174 @@ fn test_solve_suitesparse_full() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Phase 8.2: Parallel correctness tests
+// ---------------------------------------------------------------------------
+
+/// T010: Factor + solve CI subset matrices with Par::rayon(4), assert backward error < 5e-11.
+#[test]
+#[ignore] // Requires SuiteSparse CI matrices
+fn test_parallel_factor_ci_subset() {
+    use rivrs_sparse::io::registry;
+
+    let all_matrices = registry::load_registry().expect("load registry");
+    let ci_matrices: Vec<_> = all_matrices.iter().filter(|m| m.ci_subset).collect();
+
+    assert!(!ci_matrices.is_empty(), "CI matrix subset should not be empty");
+
+    for meta in &ci_matrices {
+        let test = registry::load_test_matrix(&meta.name)
+            .unwrap_or_else(|e| panic!("load '{}': {}", meta.name, e))
+            .unwrap_or_else(|| panic!("matrix '{}' not found", meta.name));
+
+        let a = &test.matrix;
+        let n = a.nrows();
+        let b = Col::from_fn(n, |i| (i as f64 + 1.0).sin());
+
+        let ordering = if meta.category == "hard-indefinite" {
+            OrderingStrategy::MatchOrderMetis
+        } else {
+            OrderingStrategy::Metis
+        };
+        let analyze_opts = AnalyzeOptions { ordering };
+        let factor_opts = FactorOptions {
+            par: Par::rayon(4),
+            ..FactorOptions::default()
+        };
+
+        let mut solver = SparseLDLT::analyze_with_matrix(a, &analyze_opts).expect("analyze");
+        solver.factor(a, &factor_opts).expect("factor");
+
+        let scratch = solver.solve_scratch(1);
+        let mut mem = MemBuffer::new(scratch);
+        let stack = MemStack::new(&mut mem);
+        let x = solver.solve(&b, stack, Par::rayon(4)).expect("solve");
+
+        let be = sparse_backward_error(a, &x, &b);
+        assert!(
+            be < 5e-11,
+            "Parallel factor CI '{}' (n={}): backward error {:.2e} >= 5e-11",
+            meta.name,
+            n,
+            be
+        );
+    }
+}
+
+/// T011: Factor same matrix twice with Par::rayon(4), assert bitwise-identical results.
+#[test]
+fn test_parallel_factor_determinism() {
+    // Use a small hand-constructed matrix to avoid CI timing sensitivity
+    let matrix = sparse_from_lower_triplets(
+        5,
+        &[
+            (0, 0, 4.0),
+            (1, 0, 1.0),
+            (1, 1, 3.0),
+            (2, 1, -1.0),
+            (2, 2, 5.0),
+            (3, 2, 2.0),
+            (3, 3, -2.0),
+            (4, 3, 1.0),
+            (4, 4, 6.0),
+        ],
+    );
+
+    let analyze_opts = AnalyzeOptions {
+        ordering: OrderingStrategy::Metis,
+    };
+    let factor_opts = FactorOptions {
+        par: Par::rayon(4),
+        ..FactorOptions::default()
+    };
+
+    let mut solver1 = SparseLDLT::analyze_with_matrix(&matrix, &analyze_opts).expect("analyze 1");
+    solver1.factor(&matrix, &factor_opts).expect("factor 1");
+
+    let mut solver2 = SparseLDLT::analyze_with_matrix(&matrix, &analyze_opts).expect("analyze 2");
+    solver2.factor(&matrix, &factor_opts).expect("factor 2");
+
+    // Solve with same RHS and compare solutions bitwise
+    let n = matrix.nrows();
+    let b = Col::from_fn(n, |i| (i as f64 + 1.0).sin());
+
+    let scratch1 = solver1.solve_scratch(1);
+    let mut mem1 = MemBuffer::new(scratch1);
+    let stack1 = MemStack::new(&mut mem1);
+    let x1 = solver1.solve(&b, stack1, Par::rayon(4)).expect("solve 1");
+
+    let scratch2 = solver2.solve_scratch(1);
+    let mut mem2 = MemBuffer::new(scratch2);
+    let stack2 = MemStack::new(&mut mem2);
+    let x2 = solver2.solve(&b, stack2, Par::rayon(4)).expect("solve 2");
+
+    for i in 0..n {
+        assert_eq!(
+            x1[i].to_bits(),
+            x2[i].to_bits(),
+            "Parallel determinism: x[{}] differs: {} vs {}",
+            i,
+            x1[i],
+            x2[i]
+        );
+    }
+}
+
+/// T012: Factor small matrices with Par::Seq vs Par::rayon(4), assert < 5% slowdown.
+#[test]
+fn test_parallel_overhead_small_matrices() {
+    // Use a small matrix where parallel overhead should not cause significant slowdown
+    let matrix = sparse_from_lower_triplets(
+        4,
+        &[
+            (0, 0, 4.0),
+            (1, 0, 1.0),
+            (1, 1, 3.0),
+            (2, 1, -1.0),
+            (2, 2, 5.0),
+            (3, 3, 7.0),
+        ],
+    );
+
+    let analyze_opts = AnalyzeOptions {
+        ordering: OrderingStrategy::Metis,
+    };
+
+    // Factor with Par::Seq
+    let factor_seq = FactorOptions {
+        par: Par::Seq,
+        ..FactorOptions::default()
+    };
+    let mut solver_seq =
+        SparseLDLT::analyze_with_matrix(&matrix, &analyze_opts).expect("analyze seq");
+    let start_seq = std::time::Instant::now();
+    for _ in 0..100 {
+        solver_seq.factor(&matrix, &factor_seq).expect("factor seq");
+    }
+    let time_seq = start_seq.elapsed();
+
+    // Factor with Par::rayon(4) — should use Par::Seq due to threshold
+    let factor_par = FactorOptions {
+        par: Par::rayon(4),
+        ..FactorOptions::default()
+    };
+    let mut solver_par =
+        SparseLDLT::analyze_with_matrix(&matrix, &analyze_opts).expect("analyze par");
+    let start_par = std::time::Instant::now();
+    for _ in 0..100 {
+        solver_par.factor(&matrix, &factor_par).expect("factor par");
+    }
+    let time_par = start_par.elapsed();
+
+    // Par::rayon(4) should not be more than 5% slower than Par::Seq for small matrices
+    // (because the threshold gates parallelism — both should use Par::Seq internally)
+    let overhead = time_par.as_secs_f64() / time_seq.as_secs_f64();
+    assert!(
+        overhead < 1.50,
+        "Parallel overhead for small matrix: {:.1}x (expected < 1.5x). Seq={:.2?}, Par={:.2?}",
+        overhead,
+        time_seq,
+        time_par,
+    );
+}

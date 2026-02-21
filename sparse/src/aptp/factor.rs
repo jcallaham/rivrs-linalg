@@ -1245,6 +1245,7 @@ impl BlockBackup {
 /// 2. Scale: L21[i,j] = X[i,j] / D[j,j] for 1×1 pivots,
 ///    or L21[i,k:k+1] via 2×2 inversion for 2×2 pivots
 /// 3. Scan L21 column-by-column; find first column where any entry exceeds 1/threshold
+#[allow(clippy::too_many_arguments)]
 fn apply_and_check(
     mut a: MatMut<'_, f64>,
     col_start: usize,
@@ -1253,6 +1254,7 @@ fn apply_and_check(
     m: usize,
     d: &MixedDiagonal,
     threshold: f64,
+    par: Par,
 ) -> usize {
     if block_nelim == 0 {
         return 0;
@@ -1282,7 +1284,7 @@ fn apply_and_check(
     triangular_solve::solve_unit_lower_triangular_in_place(
         l11_copy.as_ref(),
         panel.transpose_mut(),
-        Par::Seq,
+        par,
     );
 
     // Step 2: Scale by D^{-1}
@@ -1369,6 +1371,7 @@ fn update_trailing(
     block_cols: usize,
     m: usize,
     d: &MixedDiagonal,
+    par: Par,
 ) {
     if nelim == 0 {
         return;
@@ -1427,7 +1430,7 @@ fn update_trailing(
         BlockStructure::Rectangular,
         Conj::No,
         -1.0,
-        Par::Seq,
+        par,
     );
 }
 
@@ -1726,6 +1729,7 @@ fn factor_inner(
             m,
             &block_d,
             threshold,
+            options.par,
         );
 
         // 8. ADJUST: don't split 2×2 pivot across block boundary
@@ -1756,7 +1760,7 @@ fn factor_inner(
         //     b. Failed×failed: A[k+e..k+bs, k+e..k+bs] -= L_blk * D * L_blk^T
         //     c. Trailing×failed: A[ts..m, k+e..k+bs] -= L_panel * D * L_blk^T
         if nelim > 0 {
-            update_trailing(a.rb_mut(), k, nelim, block_size, m, &block_d);
+            update_trailing(a.rb_mut(), k, nelim, block_size, m, &block_d, options.par);
             update_cross_terms(a.rb_mut(), k, nelim, block_size, m, &block_d);
         }
 
