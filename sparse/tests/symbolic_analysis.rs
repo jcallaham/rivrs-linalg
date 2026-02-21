@@ -82,8 +82,8 @@ fn test_analyze_suitesparse_ci_subset() {
 
     assert_eq!(
         suitesparse.len(),
-        9,
-        "expected 9 CI-subset suitesparse matrices"
+        10,
+        "expected 10 CI-subset suitesparse matrices"
     );
 
     for case in &suitesparse {

@@ -416,7 +416,8 @@
             "paper_references": [
                 "Hogg, Ovtchinnikov, Scott (2016) Table III"
             ],
-            "reference_results": {}
+            "reference_results": {},
+            "ci_subset": true
         },
         {
             "name": "Newman/astro-ph",
@@ -669,7 +670,8 @@
             "paper_references": [
                 "Duff, Pralet (2005) Table 3.1"
             ],
-            "reference_results": {}
+            "reference_results": {},
+            "ci_subset": true
         },
         {
             "name": "INPRO/msdoor",
@@ -795,8 +797,7 @@
             "paper_references": [
                 "Duff, Hogg, Lopez (2020) Table 1"
             ],
-            "reference_results": {},
-            "ci_subset": true
+            "reference_results": {}
         },
         {
             "name": "GHS_indef/spmsrtls",
@@ -881,7 +882,8 @@
             "paper_references": [
                 "Duff, Pralet (2005) Table 3.1"
             ],
-            "reference_results": {}
+            "reference_results": {},
+            "ci_subset": true
         },
         {
             "name": "TSOPF/TSOPF_FS_b162_c1",
@@ -944,7 +946,8 @@
             "paper_references": [
                 "Duff, Pralet (2005) Table 3.2"
             ],
-            "reference_results": {}
+            "reference_results": {},
+            "ci_subset": true
         },
         {
             "name": "GHS_indef/blockqp1",
@@ -965,7 +968,8 @@
             "paper_references": [
                 "Duff, Pralet (2005) Table 3.2"
             ],
-            "reference_results": {}
+            "reference_results": {},
+            "ci_subset": true
         },
         {
             "name": "GHS_indef/bratu3d",
@@ -1184,8 +1188,7 @@
                 "Hogg, Ovtchinnikov, Scott (2016) Table III",
                 "Duff, Hogg, Lopez (2020) Table 2"
             ],
-            "reference_results": {},
-            "ci_subset": true
+            "reference_results": {}
         },
         {
             "name": "GHS_indef/ncvxqp5",
@@ -1249,8 +1252,7 @@
             "paper_references": [
                 "Duff, Hogg, Lopez (2020) Table 2"
             ],
-            "reference_results": {},
-            "ci_subset": true
+            "reference_results": {}
         },
         {
             "name": "GHS_indef/turon_m",
@@ -1411,8 +1413,7 @@
             "paper_references": [
                 "Hogg, Ovtchinnikov, Scott (2016) Table III"
             ],
-            "reference_results": {},
-            "ci_subset": true
+            "reference_results": {}
         },
         {
             "name": "GHS_psdef/crankseg_1",

@@ -246,7 +246,6 @@ fn test_solve_inertia_hand_constructed() {
 
 /// Test SuiteSparse CI subset backward error.
 #[test]
-#[ignore] // Slow in debug mode — run with `cargo test -- --ignored`
 fn test_solve_suitesparse_ci() {
     use rivrs_sparse::io::registry;
 
@@ -1041,7 +1040,6 @@ fn test_solve_suitesparse_full() {
 
 /// T010: Factor + solve CI subset matrices with Par::rayon(4), assert backward error < 5e-11.
 #[test]
-#[ignore] // Requires SuiteSparse CI matrices
 fn test_parallel_factor_ci_subset() {
     use rivrs_sparse::io::registry;
 
@@ -1309,7 +1307,6 @@ fn test_parallel_correctness_mixed_sizes() {
 }
 
 /// T031: Parallel solve correctness — factor + solve CI subset with Par::rayon(4).
-#[ignore]
 #[test]
 fn test_parallel_solve_ci_subset() {
     use rivrs_sparse::io::registry;

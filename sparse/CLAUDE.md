@@ -135,12 +135,9 @@ cargo test
 # Unit tests with diagnostic feature (same tests, verifies cfg builds)
 cargo test --features diagnostic
 
-# SuiteSparse integration tests — CI subset (10 matrices, ~2min in debug)
-# These are #[ignore] tests that run the full solver pipeline per matrix
+# SuiteSparse CI subset tests (10 small matrices, ~19MB) run as regular tests.
+# Full SuiteSparse collection tests (65 matrices) are #[ignore]:
 cargo test -- --ignored --test-threads=1
-
-# SuiteSparse integration tests with diagnostic feature
-cargo test -- --ignored --test-threads=1 --features diagnostic
 
 # Run a specific test by name
 cargo test test_name
@@ -149,7 +146,7 @@ cargo test test_name
 cargo test aptp::factor
 ```
 
-**Important**: SuiteSparse ignored tests MUST use `--test-threads=1` to avoid memory pressure from concurrent large-matrix factorizations.
+**Important**: Full SuiteSparse `--ignored` tests MUST use `--test-threads=1` to avoid memory pressure from concurrent large-matrix factorizations.
 
 ### Linting
 
@@ -344,7 +341,7 @@ unit tests of the symbolic analysis and factorization kernel on small matrices.
 | Tier | Path | Contents | Size | Git status |
 |------|------|----------|------|------------|
 | Hand-constructed | `test-data/hand-constructed/` | 15 matrices + .json factorizations | ~144KB | Tracked |
-| CI subset | `test-data/suitesparse-ci/` | 10 representative SuiteSparse matrices | ~73MB | Tracked |
+| CI subset | `test-data/suitesparse-ci/` | 10 small SuiteSparse matrices (easy+hard indefinite) | ~19MB | Tracked |
 | Full suite | `test-data/suitesparse/` | 67 SuiteSparse matrices | ~500MB | Gitignored |
 
 `test-data/metadata.json` is the matrix registry with `ci_subset: true` flags. The `registry.rs` module has CI-path fallback logic.

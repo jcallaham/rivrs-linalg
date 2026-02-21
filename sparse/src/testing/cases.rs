@@ -217,10 +217,10 @@ mod tests {
     }
 
     #[test]
-    fn load_ci_subset_returns_9() {
+    fn load_ci_subset_returns_10() {
         let cases =
             load_test_cases(&TestCaseFilter::ci_subset()).expect("failed to load test cases");
-        // CI subset = 9 suitesparse matrices + 15 hand-constructed (always available)
+        // CI subset = 10 suitesparse matrices + 15 hand-constructed (always available)
         // But the filter says ci_only, so only ci_subset=true suitesparse + hand-constructed
         let suitesparse_cases: Vec<_> = cases
             .iter()
@@ -228,8 +228,8 @@ mod tests {
             .collect();
         assert_eq!(
             suitesparse_cases.len(),
-            9,
-            "expected 9 CI-subset suitesparse cases"
+            10,
+            "expected 10 CI-subset suitesparse cases"
         );
     }
 

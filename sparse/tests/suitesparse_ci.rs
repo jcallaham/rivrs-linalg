@@ -1,9 +1,10 @@
 //! Integration tests for SuiteSparse CI-subset matrices.
 //!
-//! Uses the test infrastructure harness to load all 9 CI-subset matrices
+//! Uses the test infrastructure harness to load all 10 CI-subset matrices
 //! and verify dimensions and symmetry.
 //!
-//! nd6k (103 MB) excluded from CI subset due to GitHub's 100 MB file size limit.
+//! The CI subset contains small, fast matrices (~19 MB total, <1s serial factor)
+//! spanning easy-indefinite and hard-indefinite categories.
 
 use rivrs_sparse::testing::{TestCaseFilter, load_test_cases};
 
@@ -19,8 +20,8 @@ fn load_all_ci_subset_matrices() {
 
     assert_eq!(
         suitesparse.len(),
-        9,
-        "expected 9 CI-subset suitesparse matrices, got {}",
+        10,
+        "expected 10 CI-subset suitesparse matrices, got {}",
         suitesparse.len()
     );
 
