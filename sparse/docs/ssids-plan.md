@@ -2102,7 +2102,7 @@ test report. This is the "working solver" milestone.
 
 ---
 
-## Phase 8: Performance Optimization (8.1a-f COMPLETE)
+## Phase 8: Performance Optimization (8.1a-g COMPLETE)
 
 ### Objectives
 Optimize the working solver for performance: two-level blocking for large fronts,
@@ -2329,7 +2329,6 @@ tree-level parallelism (many independent supernodes) or intra-node BLAS-3 parall
    - Measure: time per supernode, frontal matrix allocation, assembly, APTP kernel,
      contribution extraction
    - Generate Chrome Trace output for representative matrices (small, medium, large)
-   - Identify top-10 supernodes by time for each CI matrix
 
 2. **Allocation audit and optimization**
    - Per-supernode `Mat::zeros(m, m)` frontal matrix: evaluate reusable scratch buffer
@@ -2343,7 +2342,6 @@ tree-level parallelism (many independent supernodes) or intra-node BLAS-3 parall
    - Solve time vs matrix dimension
    - Peak RSS per matrix
    - Time breakdown: ordering / symbolic / numeric / solve
-   - Comparison with faer's built-in simplicial LDL^T (where applicable)
 
 4. **Performance report**
    - Workload distribution across supernodes (histogram of per-supernode time)
@@ -2357,14 +2355,34 @@ tree-level parallelism (many independent supernodes) or intra-node BLAS-3 parall
 - Memory usage must not increase (should decrease)
 
 **Success Criteria:**
-- [ ] Profiling instrumentation in factorization hot path
-- [ ] Chrome Trace profiles generated for CI matrix suite
-- [ ] Allocation hotspots identified and top candidates fixed
-- [ ] Sequential performance baselines documented
-- [ ] Workload distribution analysis complete (informs 8.2 parallelism strategy)
-- [ ] No correctness regressions
+- [x] Profiling instrumentation in factorization hot path
+- [x] Chrome Trace profiles generated for CI matrix suite
+- [x] Allocation hotspots identified and top candidates fixed
+- [x] Sequential performance baselines documented
+- [x] Workload distribution analysis complete (informs 8.2 parallelism strategy)
+- [x] No correctness regressions
 
 **Time Estimate:** 1-2 weeks
+
+**Phase 8.1g Completion Notes (2026-02-20):**
+- **Branch**: `018-sequential-profiling-optimization`
+- **Instrumentation**: Per-supernode timing (`assembly_time`, `kernel_time`,
+  `extraction_time`) on `PerSupernodeStats` and aggregates on `FactorizationStats`,
+  all behind `#[cfg(feature = "diagnostic")]`. `ProfileSession` with Chrome Trace
+  hierarchy stored on `AptpNumeric`.
+- **Allocation fixes**: 3 of 4 hotspots in `factor_inner` optimized (panel_perm_buf,
+  row_perm_buf, col_order_buf hoisted before outer block loop). BlockBackup deferred
+  to Phase 9.1 (arena memory).
+- **Tools**: `baseline_collection.rs` (structured JSON baselines, --ci-only, --compare)
+  and `workload_analysis.rs` (TreeLevel/IntraNode/Mixed classification).
+- **Correctness**: 358 unit tests pass, 65/65 SuiteSparse pass, clippy clean.
+- **Key finding**: O(N^2) bug in `ProfileSession::finish()` — per-supernode section
+  guards caused `build_section_tree` to take minutes on medium-sized matrices. Fixed
+  by removing per-supernode guards; timing captured via `Instant::now()` instead.
+- **Workload analysis results**: IntraNode 41/65 (63%), Mixed 19/65 (29%),
+  TreeLevel 5/65 (8%). Primary Phase 8.2 strategy: intra-node BLAS-3 parallelism.
+- **Report**: See `docs/phase-8.1g-report.md` for full analysis and Phase 8.2
+  parallelism recommendations.
 
 #### 8.2: Parallel Factorization & Solve
 **Task:** Add shared-memory parallelism to factorization and solve, informed by

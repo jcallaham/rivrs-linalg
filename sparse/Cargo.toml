@@ -38,6 +38,14 @@ rivrs-sparse = { path = ".", features = ["test-util"] }
 name = "export_frontal"
 required-features = ["diagnostic"]
 
+[[example]]
+name = "baseline_collection"
+required-features = ["diagnostic"]
+
+[[example]]
+name = "workload_analysis"
+required-features = ["diagnostic"]
+
 [[bench]]
 name = "solver_benchmarks"
 harness = false

@@ -126,7 +126,7 @@ fn main() {
     // --- Export assembled frontal matrix ---
     println!("\nAssembling frontal matrix for target supernode...");
     let options = AptpOptions::default();
-    let (frontal, m, k, row_indices) = AptpNumeric::export_assembled_frontal(
+    let exported = AptpNumeric::export_assembled_frontal(
         &symbolic,
         &matrix,
         &options,
@@ -134,6 +134,11 @@ fn main() {
         target_snode,
     )
     .expect("Failed to export assembled frontal matrix");
+
+    let m = exported.front_size;
+    let k = exported.num_fully_summed;
+    let row_indices = &exported.row_indices;
+    let frontal = &exported.data;
 
     println!("  Frontal matrix: m={}, k={}", m, k);
     println!(

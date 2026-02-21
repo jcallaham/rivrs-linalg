@@ -43,6 +43,9 @@ use super::pivot::{Block2x2, PivotType};
 use super::symbolic::AptpSymbolic;
 use crate::error::SparseError;
 
+#[cfg(feature = "diagnostic")]
+use crate::profiling::{FinishedSession, ProfileSession};
+
 /// Sentinel value indicating a global column is not part of the current front.
 const NOT_IN_FRONT: usize = usize::MAX;
 
@@ -213,6 +216,15 @@ pub struct PerSupernodeStats {
     pub num_2x2: usize,
     /// Maximum absolute L entry at this supernode (stability metric).
     pub max_l_entry: f64,
+    /// Wall-clock time for scatter + extend-add assembly.
+    #[cfg(feature = "diagnostic")]
+    pub assembly_time: std::time::Duration,
+    /// Wall-clock time for dense APTP kernel.
+    #[cfg(feature = "diagnostic")]
+    pub kernel_time: std::time::Duration,
+    /// Wall-clock time for front factor extraction.
+    #[cfg(feature = "diagnostic")]
+    pub extraction_time: std::time::Duration,
 }
 
 /// Aggregate statistics from multifrontal factorization.
@@ -233,6 +245,15 @@ pub struct FactorizationStats {
     pub zero_pivots: usize,
     /// Largest frontal matrix dimension encountered.
     pub max_front_size: usize,
+    /// Sum of assembly times across all supernodes.
+    #[cfg(feature = "diagnostic")]
+    pub total_assembly_time: std::time::Duration,
+    /// Sum of kernel times across all supernodes.
+    #[cfg(feature = "diagnostic")]
+    pub total_kernel_time: std::time::Duration,
+    /// Sum of extraction times across all supernodes.
+    #[cfg(feature = "diagnostic")]
+    pub total_extraction_time: std::time::Duration,
 }
 
 /// Assembled frontal matrix exported for diagnostic comparison.
@@ -270,7 +291,6 @@ pub struct ExportedFrontal {
 /// let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None).unwrap();
 /// println!("Stats: {:?}", numeric.stats());
 /// ```
-#[derive(Debug)]
 pub struct AptpNumeric {
     /// Per-supernode factors, indexed by supernode ID.
     front_factors: Vec<FrontFactors>,
@@ -280,6 +300,19 @@ pub struct AptpNumeric {
     per_supernode_stats: Vec<PerSupernodeStats>,
     /// Matrix dimension.
     n: usize,
+    /// Profiling session from factorization (Chrome Trace export).
+    #[cfg(feature = "diagnostic")]
+    profile_session: Option<FinishedSession>,
+}
+
+impl std::fmt::Debug for AptpNumeric {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AptpNumeric")
+            .field("n", &self.n)
+            .field("stats", &self.stats)
+            .field("front_factors_count", &self.front_factors.len())
+            .finish()
+    }
 }
 
 impl AptpNumeric {
@@ -303,6 +336,15 @@ impl AptpNumeric {
     /// Matrix dimension.
     pub fn n(&self) -> usize {
         self.n
+    }
+
+    /// Profiling session from factorization, for Chrome Trace export.
+    ///
+    /// Returns `None` if factorization was not profiled.
+    /// Only available with `diagnostic` feature.
+    #[cfg(feature = "diagnostic")]
+    pub fn profile_session(&self) -> Option<&FinishedSession> {
+        self.profile_session.as_ref()
     }
 
     /// Factor a sparse symmetric matrix using the multifrontal method with APTP.
@@ -374,9 +416,22 @@ impl AptpNumeric {
             total_delayed: 0,
             zero_pivots: 0,
             max_front_size: 0,
+            #[cfg(feature = "diagnostic")]
+            total_assembly_time: std::time::Duration::ZERO,
+            #[cfg(feature = "diagnostic")]
+            total_kernel_time: std::time::Duration::ZERO,
+            #[cfg(feature = "diagnostic")]
+            total_extraction_time: std::time::Duration::ZERO,
         };
 
+        // Profiling session (diagnostic only)
+        #[cfg(feature = "diagnostic")]
+        let session = ProfileSession::new();
+
         // Postorder traversal (index order = postorder for faer's supernodal layout)
+        #[cfg(feature = "diagnostic")]
+        let _factor_loop_guard = session.enter_section("factor_loop");
+
         for s in 0..n_supernodes {
             let sn = &supernodes[s];
 
@@ -410,6 +465,9 @@ impl AptpNumeric {
             }
 
             // 4. Allocate and assemble frontal matrix
+            #[cfg(feature = "diagnostic")]
+            let assembly_start = std::time::Instant::now();
+
             let mut frontal = FrontalMatrix {
                 data: Mat::zeros(m, m),
                 row_indices: frontal_rows.clone(),
@@ -434,9 +492,18 @@ impl AptpNumeric {
                 }
             }
 
+            #[cfg(feature = "diagnostic")]
+            let assembly_time = assembly_start.elapsed();
+
             // 5. Factor the frontal matrix
+            #[cfg(feature = "diagnostic")]
+            let kernel_start = std::time::Instant::now();
+
             let result = aptp_factor_in_place(frontal.data.as_mut(), k, options)?;
             let ne = result.num_eliminated;
+
+            #[cfg(feature = "diagnostic")]
+            let kernel_time = kernel_start.elapsed();
 
             // 6. Accumulate statistics
             stats.total_1x1_pivots += result.stats.num_1x1;
@@ -453,19 +520,10 @@ impl AptpNumeric {
                 }
             }
 
-            // 6b. Record per-supernode diagnostics
-            per_sn_stats.push(PerSupernodeStats {
-                snode_id: s,
-                front_size: m,
-                num_fully_summed: k,
-                num_eliminated: ne,
-                num_delayed: k - ne,
-                num_1x1: result.stats.num_1x1,
-                num_2x2: result.stats.num_2x2,
-                max_l_entry: result.stats.max_l_entry,
-            });
-
             // 7. Extract and store front factors
+            #[cfg(feature = "diagnostic")]
+            let extraction_start = std::time::Instant::now();
+
             let ff = extract_front_factors(&frontal, &result);
             front_factors_vec.push(ff);
 
@@ -481,17 +539,57 @@ impl AptpNumeric {
                 stats.zero_pivots += n_unresolved;
             }
 
+            #[cfg(feature = "diagnostic")]
+            let extraction_time = extraction_start.elapsed();
+
+            // 6b. Record per-supernode diagnostics
+            per_sn_stats.push(PerSupernodeStats {
+                snode_id: s,
+                front_size: m,
+                num_fully_summed: k,
+                num_eliminated: ne,
+                num_delayed: k - ne,
+                num_1x1: result.stats.num_1x1,
+                num_2x2: result.stats.num_2x2,
+                max_l_entry: result.stats.max_l_entry,
+                #[cfg(feature = "diagnostic")]
+                assembly_time,
+                #[cfg(feature = "diagnostic")]
+                kernel_time,
+                #[cfg(feature = "diagnostic")]
+                extraction_time,
+            });
+
             // 9. Cleanup global-to-local mapping
             for &global in &frontal_rows {
                 global_to_local[global] = NOT_IN_FRONT;
             }
         }
 
+        #[cfg(feature = "diagnostic")]
+        drop(_factor_loop_guard);
+
+        // T010: Accumulate per-supernode timing into aggregate stats
+        #[cfg(feature = "diagnostic")]
+        {
+            for sn_stat in &per_sn_stats {
+                stats.total_assembly_time += sn_stat.assembly_time;
+                stats.total_kernel_time += sn_stat.kernel_time;
+                stats.total_extraction_time += sn_stat.extraction_time;
+            }
+        }
+
+        // Finish profiling session
+        #[cfg(feature = "diagnostic")]
+        let finished_session = session.finish();
+
         Ok(AptpNumeric {
             front_factors: front_factors_vec,
             stats,
             per_supernode_stats: per_sn_stats,
             n,
+            #[cfg(feature = "diagnostic")]
+            profile_session: Some(finished_session),
         })
     }
 
