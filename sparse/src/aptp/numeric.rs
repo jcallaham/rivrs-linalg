@@ -700,11 +700,8 @@ fn factor_single_supernode(
     perm_inv: &[usize],
     options: &AptpOptions,
     scaling: Option<&[f64]>,
-    n: usize,
+    global_to_local: &mut [usize],
 ) -> Result<SupernodeResult, SparseError> {
-    // Per-task global-to-local mapping (cannot share across parallel tasks)
-    let mut global_to_local = vec![NOT_IN_FRONT; n];
-
     // 1. Collect delayed columns from children
     let mut delayed_cols: Vec<usize> = Vec::new();
     for cb in &child_contributions {
@@ -741,13 +738,13 @@ fn factor_single_supernode(
         matrix,
         perm_fwd,
         perm_inv,
-        &global_to_local,
+        global_to_local,
         sn.col_begin..sn.col_end,
         scaling,
     );
 
     for cb in child_contributions {
-        extend_add(&mut frontal, &cb, &global_to_local);
+        extend_add(&mut frontal, &cb, global_to_local);
     }
 
     #[cfg(feature = "diagnostic")]
@@ -805,7 +802,10 @@ fn factor_single_supernode(
         extraction_time,
     };
 
-    // global_to_local is dropped here (per-task allocation)
+    // Reset global_to_local entries for reuse (O(m), not O(n))
+    for &global in &frontal.row_indices {
+        global_to_local[global] = NOT_IN_FRONT;
+    }
 
     Ok(SupernodeResult {
         ff,
@@ -854,6 +854,11 @@ fn factor_tree_levelset(
     let mut all_results: Vec<(usize, FrontFactors, PerSupernodeStats)> =
         Vec::with_capacity(n_supernodes);
 
+    // Shared global-to-local buffer for the sequential path. Allocated once,
+    // reset after each supernode (O(m) per reset, not O(n) per allocation).
+    // Parallel tasks allocate their own buffers since they run concurrently.
+    let mut shared_g2l = vec![NOT_IN_FRONT; n];
+
     // Initial ready set: all leaf supernodes (no children)
     let mut ready: Vec<usize> = (0..n_supernodes)
         .filter(|&s| remaining_children[s] == 0)
@@ -876,6 +881,7 @@ fn factor_tree_levelset(
         // Factor all ready nodes (parallel if enabled and batch > 1)
         let batch_results: Vec<SupernodeResult> =
             if matches!(options.par, Par::Seq) || batch_inputs.len() == 1 {
+                // Sequential: reuse shared global-to-local buffer
                 batch_inputs
                     .into_iter()
                     .map(|(s, contribs)| {
@@ -888,26 +894,38 @@ fn factor_tree_levelset(
                             perm_inv,
                             options,
                             scaling,
-                            n,
+                            &mut shared_g2l,
                         )
                     })
                     .collect::<Result<_, _>>()?
             } else {
+                // Parallel: use thread-local buffers so each rayon worker
+                // allocates once and reuses across all waves/supernodes.
                 use rayon::iter::{IntoParallelIterator, ParallelIterator};
+                use std::cell::RefCell;
+                thread_local! {
+                    static G2L_BUF: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
+                }
                 batch_inputs
                     .into_par_iter()
                     .map(|(s, contribs)| {
-                        factor_single_supernode(
-                            s,
-                            &supernodes[s],
-                            contribs,
-                            matrix,
-                            perm_fwd,
-                            perm_inv,
-                            options,
-                            scaling,
-                            n,
-                        )
+                        G2L_BUF.with(|cell| {
+                            let mut g2l = cell.borrow_mut();
+                            if g2l.len() < n {
+                                g2l.resize(n, NOT_IN_FRONT);
+                            }
+                            factor_single_supernode(
+                                s,
+                                &supernodes[s],
+                                contribs,
+                                matrix,
+                                perm_fwd,
+                                perm_inv,
+                                options,
+                                scaling,
+                                &mut g2l,
+                            )
+                        })
                     })
                     .collect::<Result<_, _>>()?
             };
