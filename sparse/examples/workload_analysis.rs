@@ -70,12 +70,12 @@ fn front_size_bucket(size: usize) -> &'static str {
 
 fn main() {
     let all = registry::load_registry().expect("Failed to load registry");
-    let matrices: Vec<_> = all
-        .iter()
-        .filter(|m| m.source == "suitesparse")
-        .collect();
+    let matrices: Vec<_> = all.iter().filter(|m| m.source == "suitesparse").collect();
 
-    eprintln!("Workload analysis for {} SuiteSparse matrices", matrices.len());
+    eprintln!(
+        "Workload analysis for {} SuiteSparse matrices",
+        matrices.len()
+    );
     eprintln!();
 
     println!(
@@ -227,9 +227,13 @@ fn main() {
 
     println!("\n--- Parallelism Recommendation for Phase 8.2 ---");
     if class_counts[1] > class_counts[0] && class_counts[1] > class_counts[2] {
-        println!("Primary strategy: Intra-node BLAS-3 parallelism (majority of matrices have concentrated workload)");
+        println!(
+            "Primary strategy: Intra-node BLAS-3 parallelism (majority of matrices have concentrated workload)"
+        );
     } else if class_counts[0] > class_counts[1] && class_counts[0] > class_counts[2] {
-        println!("Primary strategy: Tree-level parallelism (majority of matrices have distributed workload)");
+        println!(
+            "Primary strategy: Tree-level parallelism (majority of matrices have distributed workload)"
+        );
     } else {
         println!("Mixed strategy: Both tree-level and intra-node parallelism needed");
     }

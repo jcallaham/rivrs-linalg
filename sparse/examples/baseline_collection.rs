@@ -94,9 +94,7 @@ fn main() {
     let all = registry::load_registry().expect("Failed to load registry");
     let matrices: Vec<_> = all
         .iter()
-        .filter(|m| {
-            m.source == "suitesparse" && (!ci_only || m.ci_subset)
-        })
+        .filter(|m| m.source == "suitesparse" && (!ci_only || m.ci_subset))
         .collect();
 
     eprintln!(
@@ -276,11 +274,7 @@ fn main() {
 
     let suite = BaselineSuite {
         timestamp: chrono_timestamp(),
-        platform: format!(
-            "{} {}",
-            std::env::consts::OS,
-            std::env::consts::ARCH
-        ),
+        platform: format!("{} {}", std::env::consts::OS, std::env::consts::ARCH),
         solver_version: git_hash,
         ordering_strategy: "MatchOrderMetis".to_string(),
         baselines,
@@ -306,7 +300,8 @@ fn main() {
     // Compare with previous baseline if requested
     if let Some(prev_path) = compare_path {
         let prev_json = std::fs::read_to_string(prev_path).expect("read previous baseline");
-        let prev: BaselineSuite = serde_json::from_str(&prev_json).expect("parse previous baseline");
+        let prev: BaselineSuite =
+            serde_json::from_str(&prev_json).expect("parse previous baseline");
         compare_baselines(&prev, &suite);
     }
 }
@@ -322,7 +317,11 @@ fn compare_baselines(prev: &BaselineSuite, curr: &BaselineSuite) {
     eprintln!("{}", "-".repeat(80));
 
     for cb in &curr.baselines {
-        if let Some(pb) = prev.baselines.iter().find(|b| b.matrix_name == cb.matrix_name) {
+        if let Some(pb) = prev
+            .baselines
+            .iter()
+            .find(|b| b.matrix_name == cb.matrix_name)
+        {
             let change = if pb.factor_ms > 0.001 {
                 (cb.factor_ms - pb.factor_ms) / pb.factor_ms * 100.0
             } else {
