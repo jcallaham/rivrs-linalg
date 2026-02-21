@@ -7,6 +7,7 @@
 //!   cargo run --example workload_analysis --features diagnostic --release
 
 use faer::Col;
+use faer::Par;
 use serde::{Deserialize, Serialize};
 
 use rivrs_sparse::aptp::{AnalyzeOptions, FactorOptions, SparseLDLT};
@@ -69,12 +70,19 @@ fn front_size_bucket(size: usize) -> &'static str {
 }
 
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    let ci_only = args.iter().any(|a| a == "--ci-only");
+
     let all = registry::load_registry().expect("Failed to load registry");
-    let matrices: Vec<_> = all.iter().filter(|m| m.source == "suitesparse").collect();
+    let matrices: Vec<_> = all
+        .iter()
+        .filter(|m| m.source == "suitesparse" && (!ci_only || m.ci_subset))
+        .collect();
 
     eprintln!(
-        "Workload analysis for {} SuiteSparse matrices",
-        matrices.len()
+        "Workload analysis for {} SuiteSparse matrices{}",
+        matrices.len(),
+        if ci_only { " (CI subset)" } else { "" }
     );
     eprintln!();
 
@@ -124,7 +132,7 @@ fn main() {
         let scratch = solver.solve_scratch(1);
         let mut mem = faer::dyn_stack::MemBuffer::new(scratch);
         let stack = faer::dyn_stack::MemStack::new(&mut mem);
-        let _x = solver.solve(&b, stack).ok();
+        let _x = solver.solve(&b, stack, Par::Seq).ok();
 
         let stats = solver.stats().unwrap();
         let per_sn = solver.per_supernode_stats().unwrap();

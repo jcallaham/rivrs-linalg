@@ -7,6 +7,7 @@
 //!   cargo run --release --example block_size_experiment -- <matrix.mtx>
 
 use faer::Col;
+use faer::Par;
 use faer::dyn_stack::{MemBuffer, MemStack};
 use faer::sparse::SparseColMat;
 use std::path::Path;
@@ -64,7 +65,7 @@ fn solve_with_options(
     let scratch = solver.solve_scratch(1);
     let mut mem = MemBuffer::new(scratch);
     let stack = MemStack::new(&mut mem);
-    let x = solver.solve(rhs, stack)?;
+    let x = solver.solve(rhs, stack, Par::Seq)?;
 
     Ok(backward_error(matrix, &x, rhs))
 }

@@ -10,6 +10,7 @@
 mod common;
 
 use faer::Col;
+use faer::Par;
 use faer::dyn_stack::{MemBuffer, MemStack};
 use faer::sparse::linalg::cholesky::SymmetricOrdering;
 use faer::sparse::{SparseColMat, Triplet};
@@ -69,7 +70,7 @@ fn test_aptp_solve_small_pd() {
     let scratch = rivrs_sparse::aptp::solve::aptp_solve_scratch(&numeric, 1);
     let mut mem = MemBuffer::new(scratch);
     let stack = MemStack::new(&mut mem);
-    rivrs_sparse::aptp::solve::aptp_solve(&symbolic, &numeric, &mut rhs_perm, stack)
+    rivrs_sparse::aptp::solve::aptp_solve(&symbolic, &numeric, &mut rhs_perm, stack, Par::Seq)
         .expect("solve");
 
     // Unpermute solution
@@ -315,7 +316,7 @@ fn test_solve_before_factor() {
     let mut scratch = MemBuffer::new(faer::dyn_stack::StackReq::empty());
     let stack = MemStack::new(&mut scratch);
 
-    let result = solver.solve(&b, stack);
+    let result = solver.solve(&b, stack, Par::Seq);
     assert!(
         matches!(result, Err(SparseError::SolveBeforeFactor { .. })),
         "expected SolveBeforeFactor error, got {:?}",
@@ -339,7 +340,7 @@ fn test_solve_dimension_mismatch() {
     let mut mem = MemBuffer::new(scratch_req);
     let stack = MemStack::new(&mut mem);
 
-    let result = solver.solve(&wrong_b, stack);
+    let result = solver.solve(&wrong_b, stack, Par::Seq);
     assert!(
         matches!(result, Err(SparseError::DimensionMismatch { .. })),
         "expected DimensionMismatch error, got {:?}",
@@ -459,7 +460,7 @@ fn test_solve_api_equivalence() {
     let scratch = solver.solve_scratch(1);
     let mut mem = MemBuffer::new(scratch);
     let stack = MemStack::new(&mut mem);
-    let x2 = solver.solve(&b, stack).expect("solve");
+    let x2 = solver.solve(&b, stack, Par::Seq).expect("solve");
 
     // Both should give the same result
     let diff: f64 = (0..3).map(|i| (x1[i] - x2[i]).powi(2)).sum::<f64>().sqrt();
@@ -510,7 +511,7 @@ fn test_refactor_different_values() {
     let scratch = solver.solve_scratch(1);
     let mut mem = MemBuffer::new(scratch);
     let stack = MemStack::new(&mut mem);
-    let x1 = solver.solve(&b1, stack).expect("solve 1");
+    let x1 = solver.solve(&b1, stack, Par::Seq).expect("solve 1");
     let be1 = sparse_backward_error(&a1, &x1, &b1);
     assert!(be1 < 1e-10, "refactor: backward error 1 = {:.2e}", be1);
 
@@ -524,7 +525,7 @@ fn test_refactor_different_values() {
     let scratch2 = solver.solve_scratch(1);
     let mut mem2 = MemBuffer::new(scratch2);
     let stack2 = MemStack::new(&mut mem2);
-    let x2 = solver.solve(&b2, stack2).expect("solve 2");
+    let x2 = solver.solve(&b2, stack2, Par::Seq).expect("solve 2");
     let be2 = sparse_backward_error(&a2, &x2, &b2);
     assert!(be2 < 1e-10, "refactor: backward error 2 = {:.2e}", be2);
 }
@@ -561,7 +562,7 @@ fn test_multiple_rhs_reuse() {
         let scratch = solver.solve_scratch(1);
         let mut mem = MemBuffer::new(scratch);
         let stack = MemStack::new(&mut mem);
-        let x = solver.solve(&b, stack).expect("solve");
+        let x = solver.solve(&b, stack, Par::Seq).expect("solve");
         let be = sparse_backward_error(&matrix, &x, &b);
         assert!(be < 1e-10, "RHS {}: backward error {:.2e}", idx, be);
     }
@@ -596,7 +597,9 @@ fn test_solve_scratch_sufficient() {
     let stack = MemStack::new(&mut mem);
 
     let b = Col::from_fn(3, |i| (i + 1) as f64);
-    let x = solver.solve(&b, stack).expect("solve with exact scratch");
+    let x = solver
+        .solve(&b, stack, Par::Seq)
+        .expect("solve with exact scratch");
 
     let _be = sparse_backward_error(&matrix, &x, &b);
     // Note: b is NOT A*x_exact here, so backward error may be large.
@@ -632,7 +635,7 @@ fn test_workspace_reuse() {
     let b1 = Col::from_fn(3, |i| b1_vec[i]);
     {
         let stack = MemStack::new(&mut mem);
-        let x1 = solver.solve(&b1, stack).expect("solve 1");
+        let x1 = solver.solve(&b1, stack, Par::Seq).expect("solve 1");
         let be1 = sparse_backward_error(&matrix, &x1, &b1);
         assert!(be1 < 1e-10, "workspace reuse solve 1: be = {:.2e}", be1);
     }
@@ -643,7 +646,7 @@ fn test_workspace_reuse() {
     let b2 = Col::from_fn(3, |i| b2_vec[i]);
     {
         let stack = MemStack::new(&mut mem);
-        let x2 = solver.solve(&b2, stack).expect("solve 2");
+        let x2 = solver.solve(&b2, stack, Par::Seq).expect("solve 2");
         let be2 = sparse_backward_error(&matrix, &x2, &b2);
         assert!(be2 < 1e-10, "workspace reuse solve 2: be = {:.2e}", be2);
     }
@@ -877,7 +880,7 @@ fn test_symbolic_only_analyze_amd() {
     let scratch = solver.solve_scratch(1);
     let mut mem = MemBuffer::new(scratch);
     let stack = MemStack::new(&mut mem);
-    let x = solver.solve(&b, stack).expect("solve");
+    let x = solver.solve(&b, stack, Par::Seq).expect("solve");
     let be = sparse_backward_error(&matrix, &x, &b);
     assert!(be < 1e-10, "symbolic-only AMD backward error: {:.2e}", be);
 }
@@ -1030,4 +1033,399 @@ fn test_solve_suitesparse_full() {
             suitesparse_meta.len() - missing
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 8.2: Parallel correctness tests
+// ---------------------------------------------------------------------------
+
+/// T010: Factor + solve CI subset matrices with Par::rayon(4), assert backward error < 5e-11.
+#[test]
+#[ignore] // Requires SuiteSparse CI matrices
+fn test_parallel_factor_ci_subset() {
+    use rivrs_sparse::io::registry;
+
+    let all_matrices = registry::load_registry().expect("load registry");
+    let ci_matrices: Vec<_> = all_matrices.iter().filter(|m| m.ci_subset).collect();
+
+    assert!(
+        !ci_matrices.is_empty(),
+        "CI matrix subset should not be empty"
+    );
+
+    for meta in &ci_matrices {
+        let test = registry::load_test_matrix(&meta.name)
+            .unwrap_or_else(|e| panic!("load '{}': {}", meta.name, e))
+            .unwrap_or_else(|| panic!("matrix '{}' not found", meta.name));
+
+        let a = &test.matrix;
+        let n = a.nrows();
+        let b = Col::from_fn(n, |i| (i as f64 + 1.0).sin());
+
+        let ordering = if meta.category == "hard-indefinite" {
+            OrderingStrategy::MatchOrderMetis
+        } else {
+            OrderingStrategy::Metis
+        };
+        let analyze_opts = AnalyzeOptions { ordering };
+        let factor_opts = FactorOptions {
+            par: Par::rayon(4),
+            ..FactorOptions::default()
+        };
+
+        let mut solver = SparseLDLT::analyze_with_matrix(a, &analyze_opts).expect("analyze");
+        solver.factor(a, &factor_opts).expect("factor");
+
+        let scratch = solver.solve_scratch(1);
+        let mut mem = MemBuffer::new(scratch);
+        let stack = MemStack::new(&mut mem);
+        let x = solver.solve(&b, stack, Par::rayon(4)).expect("solve");
+
+        let be = sparse_backward_error(a, &x, &b);
+        assert!(
+            be < 5e-11,
+            "Parallel factor CI '{}' (n={}): backward error {:.2e} >= 5e-11",
+            meta.name,
+            n,
+            be
+        );
+    }
+}
+
+/// T011: Factor same matrix with Par::Seq and Par::rayon(4), verify both are correct
+/// and agree to machine precision.
+///
+/// Uses a 500-node random sparse matrix (with METIS ordering) to ensure the
+/// elimination tree has multi-child supernodes that actually trigger rayon
+/// `par_iter` dispatch in `factor_subtree`.
+///
+/// Note: true parallel execution may reorder floating-point operations, so
+/// results may differ at the ULP level. We verify both solutions have excellent
+/// backward error and agree within a relative tolerance.
+#[cfg(feature = "test-util")]
+#[test]
+fn test_parallel_factor_determinism() {
+    use rand::SeedableRng;
+    use rand::rngs::StdRng;
+    use rivrs_sparse::testing::generators::{RandomMatrixConfig, generate_random_symmetric};
+
+    let mut rng = StdRng::seed_from_u64(2024);
+    let config = RandomMatrixConfig {
+        size: 500,
+        target_nnz: 5000,
+        positive_definite: false, // indefinite exercises more pivot logic
+    };
+    let matrix = generate_random_symmetric(&config, &mut rng).expect("generate matrix");
+
+    let n = matrix.nrows();
+    let x_exact: Vec<f64> = (0..n).map(|i| ((i % 7) as f64 - 3.0) / 3.0).collect();
+    let b_vec = sparse_matvec(&matrix, &x_exact);
+    let b = Col::from_fn(n, |i| b_vec[i]);
+
+    let analyze_opts = AnalyzeOptions {
+        ordering: OrderingStrategy::Metis,
+    };
+
+    // Sequential factorization + solve
+    let factor_seq = FactorOptions {
+        par: Par::Seq,
+        ..FactorOptions::default()
+    };
+    let mut solver_seq =
+        SparseLDLT::analyze_with_matrix(&matrix, &analyze_opts).expect("analyze seq");
+    solver_seq.factor(&matrix, &factor_seq).expect("factor seq");
+    let scratch = solver_seq.solve_scratch(1);
+    let mut mem = MemBuffer::new(scratch);
+    let x_seq = solver_seq
+        .solve(&b, MemStack::new(&mut mem), Par::Seq)
+        .expect("solve seq");
+    let be_seq = sparse_backward_error(&matrix, &x_seq, &b);
+
+    // Parallel factorization + solve
+    let factor_par = FactorOptions {
+        par: Par::rayon(4),
+        ..FactorOptions::default()
+    };
+    let mut solver_par =
+        SparseLDLT::analyze_with_matrix(&matrix, &analyze_opts).expect("analyze par");
+    solver_par.factor(&matrix, &factor_par).expect("factor par");
+    let mut mem2 = MemBuffer::new(scratch);
+    let x_par = solver_par
+        .solve(&b, MemStack::new(&mut mem2), Par::rayon(4))
+        .expect("solve par");
+    let be_par = sparse_backward_error(&matrix, &x_par, &b);
+
+    // Both must achieve excellent backward error
+    assert!(be_seq < 1e-10, "sequential backward error: {:.2e}", be_seq);
+    assert!(be_par < 1e-10, "parallel backward error: {:.2e}", be_par);
+
+    // Solutions should agree within machine precision (ULP-level differences
+    // from parallel FP reordering are acceptable)
+    let max_diff: f64 = (0..n)
+        .map(|i| (x_seq[i] - x_par[i]).abs())
+        .fold(0.0f64, f64::max);
+    let x_norm: f64 = (0..n).map(|i| x_seq[i].abs()).fold(0.0f64, f64::max);
+    let rel_diff = if x_norm > 0.0 {
+        max_diff / x_norm
+    } else {
+        max_diff
+    };
+    assert!(
+        rel_diff < 1e-12,
+        "Seq vs Par relative difference: {:.2e} (max_diff={:.2e})",
+        rel_diff,
+        max_diff
+    );
+}
+
+/// T012: Parallel factorization produces correct results across matrix sizes.
+///
+/// Tests both small hand-constructed matrices (where threshold gating forces
+/// Par::Seq for BLAS) AND larger generated matrices (where tree-level par_iter
+/// actually dispatches). Compares Par::Seq vs Par::rayon(4) for bitwise identity
+/// on small matrices, and checks backward error on larger ones.
+#[cfg(feature = "test-util")]
+#[test]
+fn test_parallel_correctness_mixed_sizes() {
+    use rand::SeedableRng;
+    use rand::rngs::StdRng;
+    use rivrs_sparse::io::registry;
+    use rivrs_sparse::testing::generators::{
+        RandomMatrixConfig, generate_arrow, generate_random_symmetric,
+    };
+
+    // Part 1: Small hand-constructed matrices — bitwise identity (Seq vs Par)
+    let test_names = [
+        "arrow-5-pd",
+        "tridiag-5-pd",
+        "block-diag-15",
+        "stress-delayed-pivots",
+        "arrow-10-indef",
+        "bordered-block-20",
+    ];
+
+    for name in &test_names {
+        let test = registry::load_test_matrix(name)
+            .unwrap_or_else(|e| panic!("load '{}': {}", name, e))
+            .unwrap_or_else(|| panic!("matrix '{}' not found", name));
+
+        let matrix = &test.matrix;
+        let n = matrix.nrows();
+        let analyze_opts = AnalyzeOptions::default();
+
+        let factor_seq = FactorOptions {
+            par: Par::Seq,
+            ..FactorOptions::default()
+        };
+        let mut solver_seq =
+            SparseLDLT::analyze_with_matrix(matrix, &analyze_opts).expect("analyze seq");
+        solver_seq.factor(matrix, &factor_seq).expect("factor seq");
+        let b: Col<f64> = Col::from_fn(n, |i| (i + 1) as f64);
+        let scratch_req = solver_seq.solve_scratch(1);
+        let mut mem = MemBuffer::new(scratch_req);
+        let x_seq = solver_seq
+            .solve(&b, MemStack::new(&mut mem), Par::Seq)
+            .expect("solve seq");
+
+        let factor_par = FactorOptions {
+            par: Par::rayon(4),
+            ..FactorOptions::default()
+        };
+        let mut solver_par =
+            SparseLDLT::analyze_with_matrix(matrix, &analyze_opts).expect("analyze par");
+        solver_par.factor(matrix, &factor_par).expect("factor par");
+        let mut mem2 = MemBuffer::new(scratch_req);
+        let x_par = solver_par
+            .solve(&b, MemStack::new(&mut mem2), Par::rayon(4))
+            .expect("solve par");
+
+        // Small matrices should produce identical results: intra-node BLAS
+        // is gated to Par::Seq (front < INTRA_NODE_THRESHOLD=256), and tree-level
+        // par_iter preserves ordering. The diagonal solve's gather-solve-scatter
+        // pattern may reorder operations on some platforms, so allow a tight
+        // relative tolerance rather than requiring bitwise identity.
+        let max_diff: f64 = (0..n)
+            .map(|i| (x_seq[i] - x_par[i]).abs())
+            .fold(0.0f64, f64::max);
+        let x_norm: f64 = (0..n).map(|i| x_seq[i].abs()).fold(0.0f64, f64::max);
+        let rel_diff = if x_norm > 0.0 {
+            max_diff / x_norm
+        } else {
+            max_diff
+        };
+        assert!(
+            rel_diff < 1e-14,
+            "{}: Seq vs Par relative difference: {:.2e} (max_diff={:.2e})",
+            name,
+            rel_diff,
+            max_diff
+        );
+    }
+
+    // Part 2: Larger generated matrices — these actually exercise tree-level
+    // parallelism (METIS ordering creates multi-child supernodes at n=300+).
+    let mut rng = StdRng::seed_from_u64(7777);
+
+    // Arrow matrix n=300: star-shaped elimination tree with many leaves
+    let arrow = generate_arrow(300, true, &mut rng).expect("generate arrow");
+    let b_arrow = Col::from_fn(300, |i| (i as f64 + 1.0).sin());
+    let factor_par = FactorOptions {
+        par: Par::rayon(4),
+        ..FactorOptions::default()
+    };
+    let analyze_opts = AnalyzeOptions {
+        ordering: OrderingStrategy::Metis,
+    };
+    let mut solver = SparseLDLT::analyze_with_matrix(&arrow, &analyze_opts).expect("analyze arrow");
+    solver.factor(&arrow, &factor_par).expect("factor arrow");
+    let scratch = solver.solve_scratch(1);
+    let mut mem = MemBuffer::new(scratch);
+    let x = solver
+        .solve(&b_arrow, MemStack::new(&mut mem), Par::rayon(4))
+        .expect("solve arrow");
+    let be = sparse_backward_error(&arrow, &x, &b_arrow);
+    assert!(be < 1e-10, "parallel arrow-300 backward error: {:.2e}", be);
+
+    // Random sparse indefinite n=500: diverse tree structure
+    let config = RandomMatrixConfig {
+        size: 500,
+        target_nnz: 5000,
+        positive_definite: false,
+    };
+    let random_mat = generate_random_symmetric(&config, &mut rng).expect("generate random");
+    let b_rand = Col::from_fn(500, |i| ((i % 7) as f64 - 3.0) / 3.0);
+    let mut solver =
+        SparseLDLT::analyze_with_matrix(&random_mat, &analyze_opts).expect("analyze random");
+    solver
+        .factor(&random_mat, &factor_par)
+        .expect("factor random");
+    let scratch = solver.solve_scratch(1);
+    let mut mem = MemBuffer::new(scratch);
+    let x = solver
+        .solve(&b_rand, MemStack::new(&mut mem), Par::rayon(4))
+        .expect("solve random");
+    let be = sparse_backward_error(&random_mat, &x, &b_rand);
+    assert!(be < 1e-10, "parallel random-500 backward error: {:.2e}", be);
+}
+
+/// T031: Parallel solve correctness — factor + solve CI subset with Par::rayon(4).
+#[ignore]
+#[test]
+fn test_parallel_solve_ci_subset() {
+    use rivrs_sparse::io::registry;
+
+    let reg = registry::load_registry().expect("load registry");
+    let ci_matrices: Vec<_> = reg.iter().filter(|m| m.ci_subset).collect();
+
+    let factor_opts = FactorOptions {
+        par: Par::rayon(4),
+        ..FactorOptions::default()
+    };
+    let analyze_opts = AnalyzeOptions::default();
+
+    for meta in &ci_matrices {
+        let test = registry::load_test_matrix(&meta.name)
+            .unwrap_or_else(|e| panic!("load '{}': {}", meta.name, e))
+            .unwrap_or_else(|| panic!("matrix '{}' not found", meta.name));
+        let matrix = &test.matrix;
+        let n = matrix.nrows();
+
+        let mut solver = SparseLDLT::analyze_with_matrix(matrix, &analyze_opts).expect("analyze");
+        solver.factor(matrix, &factor_opts).expect("factor");
+
+        let b = Col::from_fn(n, |i| ((i + 1) as f64).sin());
+        let scratch_req = solver.solve_scratch(1);
+        let mut mem = MemBuffer::new(scratch_req);
+        let x = solver
+            .solve(&b, MemStack::new(&mut mem), Par::rayon(4))
+            .expect("solve");
+
+        let be = rivrs_sparse::validate::sparse_backward_error(matrix, &x, &b);
+        assert!(
+            be < 5e-11,
+            "{}: parallel solve backward error {:.2e} exceeds 5e-11",
+            meta.name,
+            be
+        );
+    }
+}
+
+/// T032: Parallel solve consistency — factor+solve with Par::Seq vs Par::rayon(4),
+/// verify both are correct and agree to machine precision.
+///
+/// Uses a 500-node random matrix to exercise tree-level parallelism in both
+/// factorization and the parallel diagonal solve (n_supernodes >= 4 trigger).
+#[cfg(feature = "test-util")]
+#[test]
+fn test_parallel_solve_determinism() {
+    use rand::SeedableRng;
+    use rand::rngs::StdRng;
+    use rivrs_sparse::testing::generators::{RandomMatrixConfig, generate_random_symmetric};
+
+    let mut rng = StdRng::seed_from_u64(3141);
+    let config = RandomMatrixConfig {
+        size: 500,
+        target_nnz: 5000,
+        positive_definite: true,
+    };
+    let matrix = generate_random_symmetric(&config, &mut rng).expect("generate matrix");
+
+    let n = matrix.nrows();
+    let x_exact: Vec<f64> = (0..n).map(|i| (i as f64).sin()).collect();
+    let b_vec = sparse_matvec(&matrix, &x_exact);
+    let b = Col::from_fn(n, |i| b_vec[i]);
+
+    let analyze_opts = AnalyzeOptions {
+        ordering: OrderingStrategy::Metis,
+    };
+
+    // Sequential
+    let factor_seq = FactorOptions {
+        par: Par::Seq,
+        ..FactorOptions::default()
+    };
+    let mut solver_seq =
+        SparseLDLT::analyze_with_matrix(&matrix, &analyze_opts).expect("analyze seq");
+    solver_seq.factor(&matrix, &factor_seq).expect("factor seq");
+    let scratch = solver_seq.solve_scratch(1);
+    let mut mem = MemBuffer::new(scratch);
+    let x_seq = solver_seq
+        .solve(&b, MemStack::new(&mut mem), Par::Seq)
+        .expect("solve seq");
+    let be_seq = sparse_backward_error(&matrix, &x_seq, &b);
+
+    // Parallel
+    let factor_par = FactorOptions {
+        par: Par::rayon(4),
+        ..FactorOptions::default()
+    };
+    let mut solver_par =
+        SparseLDLT::analyze_with_matrix(&matrix, &analyze_opts).expect("analyze par");
+    solver_par.factor(&matrix, &factor_par).expect("factor par");
+    let mut mem2 = MemBuffer::new(scratch);
+    let x_par = solver_par
+        .solve(&b, MemStack::new(&mut mem2), Par::rayon(4))
+        .expect("solve par");
+    let be_par = sparse_backward_error(&matrix, &x_par, &b);
+
+    // Both must achieve excellent backward error
+    assert!(be_seq < 1e-12, "sequential backward error: {:.2e}", be_seq);
+    assert!(be_par < 1e-12, "parallel backward error: {:.2e}", be_par);
+
+    // Solutions should agree within machine precision
+    let max_diff: f64 = (0..n)
+        .map(|i| (x_seq[i] - x_par[i]).abs())
+        .fold(0.0f64, f64::max);
+    let x_norm: f64 = (0..n).map(|i| x_seq[i].abs()).fold(0.0f64, f64::max);
+    let rel_diff = if x_norm > 0.0 {
+        max_diff / x_norm
+    } else {
+        max_diff
+    };
+    assert!(
+        rel_diff < 1e-12,
+        "Seq vs Par relative difference: {:.2e} (max_diff={:.2e})",
+        rel_diff,
+        max_diff
+    );
 }

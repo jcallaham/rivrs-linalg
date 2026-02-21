@@ -38,6 +38,7 @@ use std::process::Command;
 use std::time::Instant;
 
 use faer::Col;
+use faer::Par;
 use faer::dyn_stack::{MemBuffer, MemStack};
 use faer::sparse::SparseColMat;
 use serde::{Deserialize, Serialize};
@@ -500,7 +501,9 @@ fn run_rivrs_solver(matrix: &SparseColMat<usize, f64>, name: &str) -> Result<Riv
     let scratch = solver.solve_scratch(1);
     let mut mem = MemBuffer::new(scratch);
     let stack = MemStack::new(&mut mem);
-    let x = solver.solve(&b, stack).map_err(|e| format!("solve: {e}"))?;
+    let x = solver
+        .solve(&b, stack, Par::Seq)
+        .map_err(|e| format!("solve: {e}"))?;
     let solve_s = t_solve.elapsed().as_secs_f64();
 
     let total_s = t_total.elapsed().as_secs_f64();

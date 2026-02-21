@@ -16,6 +16,7 @@
 //! Matrix names use the SuiteSparse format: "GHS_indef/dawson5", "Newman/astro-ph", etc.
 
 use faer::Col;
+use faer::Par;
 use faer::dyn_stack::{MemBuffer, MemStack};
 use faer::sparse::linalg::cholesky::SymmetricOrdering;
 
@@ -82,7 +83,7 @@ fn experiment_baseline(_name: &str, a: &faer::sparse::SparseColMat<usize, f64>, 
         let scratch = solver.solve_scratch(1);
         let mut mem = MemBuffer::new(scratch);
         let stack = MemStack::new(&mut mem);
-        match solver.solve(b, stack) {
+        match solver.solve(b, stack, Par::Seq) {
             Ok(x) => {
                 let be = sparse_backward_error(a, &x, b);
                 let stats = solver.stats().unwrap();
@@ -349,7 +350,7 @@ fn experiment_scaling_isolation(
         let scratch = solver.solve_scratch(1);
         let mut mem = MemBuffer::new(scratch);
         let stack = MemStack::new(&mut mem);
-        let x = solver.solve(b, stack).unwrap();
+        let x = solver.solve(b, stack, Par::Seq).unwrap();
         let be = sparse_backward_error(a, &x, b);
         let stats = solver.stats().unwrap();
         let status = if be < 5e-11 { "PASS" } else { "FAIL" };
@@ -382,7 +383,7 @@ fn experiment_scaling_isolation(
         let scratch = solver.solve_scratch(1);
         let mut mem = MemBuffer::new(scratch);
         let stack = MemStack::new(&mut mem);
-        let x = solver.solve(b, stack).unwrap();
+        let x = solver.solve(b, stack, Par::Seq).unwrap();
         let be = sparse_backward_error(a, &x, b);
         let stats = solver.stats().unwrap();
         let status = if be < 5e-11 { "PASS" } else { "FAIL" };
@@ -448,7 +449,7 @@ fn experiment_scaling_isolation(
         let scratch_req = aptp_solve_scratch(&numeric, 1);
         let mut mem = MemBuffer::new(scratch_req);
         let stack = MemStack::new(&mut mem);
-        aptp_solve(&symbolic, &numeric, &mut rhs_perm, stack).unwrap();
+        aptp_solve(&symbolic, &numeric, &mut rhs_perm, stack, Par::Seq).unwrap();
 
         // Unscale
         for i in 0..n {
@@ -480,7 +481,7 @@ fn experiment_scaling_isolation(
         let scratch = solver.solve_scratch(1);
         let mut mem = MemBuffer::new(scratch);
         let stack = MemStack::new(&mut mem);
-        let x = solver.solve(b, stack).unwrap();
+        let x = solver.solve(b, stack, Par::Seq).unwrap();
         let be = sparse_backward_error(a, &x, b);
         let stats = solver.stats().unwrap();
         let status = if be < 5e-11 { "PASS" } else { "FAIL" };

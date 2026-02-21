@@ -12,6 +12,7 @@
 use std::time::Instant;
 
 use faer::Col;
+use faer::Par;
 use serde::{Deserialize, Serialize};
 
 use rivrs_sparse::aptp::{AnalyzeOptions, FactorOptions, SparseLDLT};
@@ -169,7 +170,7 @@ fn main() {
         let scratch = solver.solve_scratch(1);
         let mut mem = faer::dyn_stack::MemBuffer::new(scratch);
         let stack = faer::dyn_stack::MemStack::new(&mut mem);
-        let x = match solver.solve(&b, stack) {
+        let x = match solver.solve(&b, stack, Par::Seq) {
             Ok(x) => x,
             Err(e) => {
                 eprintln!("{:<30} SOLVE FAILED: {}", meta.name, e);
