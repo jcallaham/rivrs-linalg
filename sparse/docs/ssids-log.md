@@ -1,5 +1,39 @@
 # SSIDS Development Log
 
+## Supernode Relaxation Experiment
+
+**Status**: Complete (experiment + updated plan)
+**Date**: 2026-02-21
+
+### Finding
+
+Tuning faer's `SymbolicSupernodalParams.relax` thresholds has **no effect** on c-71
+and c-big supernode counts. Even with the most aggressive settings (`(64, 1.0)` —
+merge anything up to 64 cols with 100% fill tolerance), c-71 drops from 35,372 →
+35,308 supernodes. Factor time is unchanged within noise.
+
+**Root cause**: faer's relaxed merging (`cholesky.rs:2461`) requires `child_index + 1
+== parent_index` — only the immediately preceding supernode in column order is a
+candidate for merging. For bushy assembly trees from nested dissection, most
+parent-child pairs fail this check before `relax` thresholds are ever evaluated.
+
+**SPRAL comparison**: SPRAL's `do_merge()` iterates over ALL children and merges when
+both have < `nemin=32` columns, regardless of index adjacency. This is what reduces
+c-71 from ~35K to ~7.7K supernodes.
+
+**Conclusion**: Phase 9.1a must implement custom amalgamation post-faer (SPRAL-style
+`nemin`-based merging on the assembly tree). The `SupernodeRelax` API added to
+`AptpSymbolic` remains useful for forcing supernodal mode on sparse matrices, but
+cannot fix the c-71/c-big performance gap.
+
+### Artifacts
+
+- `examples/relax_experiment.rs` — experiment driver
+- `src/aptp/symbolic.rs` — `SupernodeRelax` enum and `analyze_with_relax()`
+- `src/aptp/solver.rs` — `AnalyzeOptions.supernode_relax` field
+
+---
+
 ## SPRAL Benchmark Comparison (Pre-Phase 9)
 
 **Status**: Complete (analysis only — no code changes)

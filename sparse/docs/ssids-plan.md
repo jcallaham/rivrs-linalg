@@ -2558,35 +2558,48 @@ The SPRAL benchmark suite (`examples/spral_benchmark.rs`) identified two classes
 performance gap, each with a distinct root cause. The typical FEM/engineering matrix
 is only 5-15% slower than SPRAL — these fixes target the outliers.
 
-*9.1a: Relaxed supernode merging — fixes c-71 (24.5×) and c-big (11.1×)*
+*9.1a: Supernode amalgamation — fixes c-71 (24.5×) and c-big (11.1×)*
 
 Root cause: these Schenk optimization matrices produce narrow supernodes (avg 2.17
 columns) inside large fronts (1000-5000 rows). rivrs has 4.5× more supernodes than
-SPRAL (35,372 vs 7,697 for c-71) because faer's relaxed merging defaults are too
-conservative. The result: 78% of factorization time is assembly + extraction overhead,
-not the dense APTP kernel.
+SPRAL (35,372 vs 7,697 for c-71) because faer's relaxed merging is structurally
+unable to help. The result: 78% of factorization time is assembly + extraction
+overhead, not the dense APTP kernel.
 
-faer already implements relaxed supernode merging with configurable thresholds
-(`SymbolicSupernodalParams.relax`). rivrs currently uses the defaults:
-`[(4, 1.0), (16, 0.8), (48, 0.1), (MAX, 0.05)]`. The first step is to experiment
-with more aggressive thresholds (e.g., larger `nemin` equivalent) and measure
-the effect on c-71/c-big supernode counts and factorization time.
+**Experiment result**: Tuning faer's `relax` parameter has NO effect. Even with
+`Custom(vec![(64, 1.0), (128, 0.8), (256, 0.5), (MAX, 0.2)])` (merge anything
+up to 64 cols with 100% fill tolerance), c-71 goes from 35,372 → 35,308 supernodes
+and c-big from 171,246 → 170,872. Factor time is unchanged within noise.
 
-If tuning faer's thresholds is insufficient, consider SPRAL's merging criterion:
-merge if `cc(parent) == cc(child) - 1` (no fill) OR both nodes have < `nemin`
-columns. This would require either:
-- Passing a custom `relax` parameter to faer (easy, 1-2 lines in `symbolic.rs`)
-- Implementing custom merging logic using faer's elimination tree + column count
-  primitives from `prefactorize_symbolic_cholesky` (400-600 LOC, medium effort)
+**Root cause of faer's limitation**: faer's relaxed merging (`cholesky.rs:2461`)
+has a hard prerequisite: `child_index + 1 == parent_index`. Only children that
+are the immediately preceding supernode in column order are candidates for merging.
+For bushy assembly trees from 3D problems (nested dissection), a parent supernode
+typically has many children but at most ONE can be consecutive. All other children
+are skipped before the `relax` thresholds are ever evaluated.
 
-Note: faer does NOT expose fundamental supernodes separately from merged ones,
-and its internal layout (`col_ptr_for_val`, `row_idx`) is baked after merging.
-Post-processing faer's output to re-merge is not viable. The options are:
-(a) tune faer's existing `relax` parameter, or (b) replace faer's symbolic
-analysis with custom code that reuses faer's etree/colcount primitives.
+**SPRAL's approach** (`core_analyse.f90:806-822`): The `do_merge()` function
+iterates over ALL children of every parent and merges when EITHER:
+- `cc(par) == cc(node)-1 AND nelim(par) == 1` (structural match), OR
+- `nelim(par) < nemin AND nelim(node) < nemin` (both nodes small, `nemin=32`)
+The second condition is the powerhouse — it merges any small parent-child pair
+regardless of fill-in or index adjacency.
+
+**Implementation plan**: Custom amalgamation post-faer (Option B):
+1. Accept faer's fundamental supernodes from `factorize_symbolic_cholesky`
+2. Implement SPRAL-style `nemin`-based merge pass on the assembly tree:
+   walk in postorder, merge any parent-child pair where both have < `nemin` cols
+3. Rebuild the supernode-to-column mapping, row patterns, and `col_ptr_for_val`
+4. This requires bypassing faer's baked-in supernodal layout and maintaining
+   our own, which means owning the supernode metadata (begin/end arrays,
+   row patterns, value storage layout) rather than delegating to faer's
+   `SymbolicCholeskyRaw::Supernodal`.
+
+Estimated effort: 600-800 LOC in a new `amalgamation.rs` module.
 
 SPRAL reference: `core_analyse.f90:528-853` — `find_supernodes()` and `do_merge()`.
 faer reference: `cholesky.rs:2364-2544` — fundamental detection + relaxed merging.
+faer limitation: `cholesky.rs:2461` — consecutivity check blocks most merges.
 rivrs entry point: `src/aptp/symbolic.rs:284` — `factorize_symbolic_cholesky` call.
 
 Expected impact: 5-15× speedup on c-71/c-big by reducing supernode count 3-5×.
