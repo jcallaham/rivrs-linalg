@@ -69,12 +69,19 @@ fn front_size_bucket(size: usize) -> &'static str {
 }
 
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    let ci_only = args.iter().any(|a| a == "--ci-only");
+
     let all = registry::load_registry().expect("Failed to load registry");
-    let matrices: Vec<_> = all.iter().filter(|m| m.source == "suitesparse").collect();
+    let matrices: Vec<_> = all
+        .iter()
+        .filter(|m| m.source == "suitesparse" && (!ci_only || m.ci_subset))
+        .collect();
 
     eprintln!(
-        "Workload analysis for {} SuiteSparse matrices",
-        matrices.len()
+        "Workload analysis for {} SuiteSparse matrices{}",
+        matrices.len(),
+        if ci_only { " (CI subset)" } else { "" }
     );
     eprintln!();
 

@@ -391,3 +391,9 @@ unit tests of the symbolic analysis and factorization kernel on small matrices.
 **Next:**
 - Phase 8.2: Parallel factorization & solve (intra-node BLAS-3 parallelism first, tree-level second)
 - Phase 9: Solver hardening (arena memory, proptest, fuzzing) + release preparation
+
+## Recent Changes
+- 019-parallel-factorization-solve: Adding rayon 1.x for tree-level parallelism, faer Par enum for intra-node BLAS parallelism
+
+## Active Technologies
+- Rust 1.87+ (edition 2024), faer 0.22, rayon 1.x (019-parallel-factorization-solve)
