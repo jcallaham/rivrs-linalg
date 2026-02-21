@@ -901,31 +901,41 @@ fn factor_tree_levelset(
             } else {
                 // Parallel: use thread-local buffers so each rayon worker
                 // allocates once and reuses across all waves/supernodes.
+                // We use Cell::take/set (move semantics) instead of RefCell
+                // because factor_single_supernode may invoke rayon-parallel
+                // BLAS (Par::rayon) which can work-steal other tasks from
+                // this par_iter onto the same thread, causing re-entrant
+                // borrow panics with RefCell.
                 use rayon::iter::{IntoParallelIterator, ParallelIterator};
-                use std::cell::RefCell;
+                use std::cell::Cell;
                 thread_local! {
-                    static G2L_BUF: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
+                    static G2L_BUF: Cell<Vec<usize>> = const { Cell::new(Vec::new()) };
                 }
                 batch_inputs
                     .into_par_iter()
                     .map(|(s, contribs)| {
-                        G2L_BUF.with(|cell| {
-                            let mut g2l = cell.borrow_mut();
-                            if g2l.len() < n {
-                                g2l.resize(n, NOT_IN_FRONT);
-                            }
-                            factor_single_supernode(
-                                s,
-                                &supernodes[s],
-                                contribs,
-                                matrix,
-                                perm_fwd,
-                                perm_inv,
-                                options,
-                                scaling,
-                                &mut g2l,
-                            )
-                        })
+                        // Take the buffer out of thread-local (leaves empty Vec behind).
+                        // If another task on this thread runs while we hold the buffer
+                        // (rayon work-stealing during nested parallelism), it will get
+                        // an empty Vec, resize it, and put it back when done.
+                        let mut g2l = G2L_BUF.take();
+                        if g2l.len() < n {
+                            g2l.resize(n, NOT_IN_FRONT);
+                        }
+                        let result = factor_single_supernode(
+                            s,
+                            &supernodes[s],
+                            contribs,
+                            matrix,
+                            perm_fwd,
+                            perm_inv,
+                            options,
+                            scaling,
+                            &mut g2l,
+                        );
+                        // Put buffer back for reuse by the next task on this thread.
+                        G2L_BUF.set(g2l);
+                        result
                     })
                     .collect::<Result<_, _>>()?
             };
