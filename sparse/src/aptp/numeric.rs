@@ -415,30 +415,19 @@ impl AptpNumeric {
         #[cfg(feature = "diagnostic")]
         let _factor_loop_guard = session.enter_section("factor_loop");
 
-        // Find tree roots (supernodes with no parent)
-        let roots: Vec<usize> = (0..n_supernodes)
-            .filter(|&s| supernodes[s].parent.is_none())
-            .collect();
-
-        // Recursive tree traversal using return-value pattern (no unsafe, no shared
-        // mutable state). Each subtree returns all its node results as owned values.
-        // Root contributions are discarded (no parent to receive them).
-        let mut all_node_results: Vec<(usize, FrontFactors, PerSupernodeStats)> =
-            Vec::with_capacity(n_supernodes);
-        for &root in &roots {
-            let subtree = factor_subtree(
-                root,
-                &supernodes,
-                &children,
-                matrix,
-                &perm_fwd,
-                &perm_inv,
-                options,
-                scaling,
-                n,
-            )?;
-            all_node_results.extend(subtree.node_results);
-        }
+        // Iterative level-set factorization: process all ready (leaf) nodes first,
+        // then propagate upward. No recursion — avoids stack overflow on deep
+        // elimination trees (e.g., c-71 with 76K supernodes on rayon's 2MB stacks).
+        let all_node_results = factor_tree_levelset(
+            &supernodes,
+            &children,
+            matrix,
+            &perm_fwd,
+            &perm_inv,
+            options,
+            scaling,
+            n,
+        )?;
 
         #[cfg(feature = "diagnostic")]
         drop(_factor_loop_guard);
@@ -504,15 +493,16 @@ impl AptpNumeric {
             }
         }
         // Also count unresolved delays at root supernodes
-        for &root in &roots {
-            let sn = &supernodes[root];
-            let sn_stat = &per_sn_stats[root];
-            let m = sn_stat.front_size;
-            let ne = sn_stat.num_eliminated;
-            if sn.parent.is_none() && ne < m {
-                let k = sn_stat.num_fully_summed;
-                let n_unresolved = k - ne;
-                stats.zero_pivots += n_unresolved;
+        for (s, sn) in supernodes.iter().enumerate() {
+            if sn.parent.is_none() {
+                let sn_stat = &per_sn_stats[s];
+                let m = sn_stat.front_size;
+                let ne = sn_stat.num_eliminated;
+                if ne < m {
+                    let k = sn_stat.num_fully_summed;
+                    let n_unresolved = k - ne;
+                    stats.zero_pivots += n_unresolved;
+                }
             }
         }
 
@@ -824,32 +814,24 @@ fn factor_single_supernode(
     })
 }
 
-/// Result of factoring an entire subtree. All data flows as return values —
-/// no shared mutable state, no `unsafe`.
-struct SubtreeResult {
-    /// The contribution block this subtree's root sends to its parent.
-    contribution: Option<ContributionBlock>,
-    /// Per-supernode results for every node in this subtree (supernode index, factors, stats).
-    node_results: Vec<(usize, FrontFactors, PerSupernodeStats)>,
-}
-
-/// Recursively factor a subtree rooted at `root`.
+/// Iterative level-set factorization of the assembly tree.
 ///
-/// Processes children first (sequentially or in parallel via `par_iter`),
-/// collects their contribution blocks, then factors the root supernode.
-/// Returns all results as owned values — no shared mutable output vectors.
+/// Processes supernodes bottom-up: first all leaves (in parallel if enabled),
+/// then all nodes whose children are complete, and so on up to the roots.
+/// This avoids deep recursion that overflows rayon's 2MB worker stacks on
+/// matrices with deep elimination trees (e.g., c-71 with 76K supernodes).
 ///
-/// When `options.par` is `Par::Seq`, uses sequential recursion.
-/// When `options.par` is `Par::Rayon`, uses rayon `par_iter` to process
-/// children in parallel when there are multiple children.
+/// The parallelism is "level-set" style: at each wave, all ready nodes are
+/// independent (their children are already factored) and can be processed
+/// concurrently. This provides the same tree-level parallelism as the
+/// recursive approach but without stack depth concerns.
 ///
 /// # References
 ///
-/// - Duff, Hogg & Lopez (2020), Sections 5-6: tree-level parallelism
-/// - SPRAL `NumericSubtree.hxx`: OpenMP taskgroup for subtree parallelism (BSD-3)
+/// - Liu (1992), Section 5: level-set scheduling for multifrontal methods
+/// - Duff & Reid (1983): assembly tree parallelism
 #[allow(clippy::too_many_arguments)]
-fn factor_subtree(
-    root: usize,
+fn factor_tree_levelset(
     supernodes: &[SupernodeInfo],
     children: &[Vec<usize>],
     matrix: &SparseColMat<usize, f64>,
@@ -858,65 +840,96 @@ fn factor_subtree(
     options: &AptpOptions,
     scaling: Option<&[f64]>,
     n: usize,
-) -> Result<SubtreeResult, SparseError> {
-    let child_list = &children[root];
+) -> Result<Vec<(usize, FrontFactors, PerSupernodeStats)>, SparseError> {
+    let n_supernodes = supernodes.len();
 
-    // Process children and collect their subtree results
-    let child_subtree_results: Vec<SubtreeResult> = if child_list.is_empty() {
-        Vec::new()
-    } else if matches!(options.par, Par::Seq) || child_list.len() == 1 {
-        // Sequential: process children one at a time
-        let mut results = Vec::with_capacity(child_list.len());
-        for &child in child_list {
-            results.push(factor_subtree(
-                child, supernodes, children, matrix, perm_fwd, perm_inv, options, scaling, n,
-            )?);
-        }
-        results
-    } else {
-        // Parallel: use rayon par_iter to process independent children concurrently.
-        // Each child returns its results as owned values — no shared mutable state.
-        use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
-        child_list
-            .par_iter()
-            .map(|&child| {
-                factor_subtree(
-                    child, supernodes, children, matrix, perm_fwd, perm_inv, options, scaling, n,
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()?
-    };
+    // Track contributions from completed children
+    let mut contributions: Vec<Option<ContributionBlock>> =
+        (0..n_supernodes).map(|_| None).collect();
 
-    // Separate children's contributions from their node results
-    let mut child_contributions = Vec::new();
-    let mut all_node_results = Vec::new();
-    for child_result in child_subtree_results {
-        if let Some(cb) = child_result.contribution {
-            child_contributions.push(cb);
+    // Track how many children remain unprocessed for each supernode
+    let mut remaining_children: Vec<usize> = children.iter().map(|c| c.len()).collect();
+
+    // Collect all results
+    let mut all_results: Vec<(usize, FrontFactors, PerSupernodeStats)> =
+        Vec::with_capacity(n_supernodes);
+
+    // Initial ready set: all leaf supernodes (no children)
+    let mut ready: Vec<usize> = (0..n_supernodes)
+        .filter(|&s| remaining_children[s] == 0)
+        .collect();
+
+    while !ready.is_empty() {
+        // Collect child contributions for each ready node. Children of different
+        // ready nodes are disjoint (tree structure), so each contribution is
+        // taken exactly once.
+        let mut batch_inputs: Vec<(usize, Vec<ContributionBlock>)> =
+            Vec::with_capacity(ready.len());
+        for &s in &ready {
+            let child_contribs: Vec<ContributionBlock> = children[s]
+                .iter()
+                .filter_map(|&c| contributions[c].take())
+                .collect();
+            batch_inputs.push((s, child_contribs));
         }
-        all_node_results.extend(child_result.node_results);
+
+        // Factor all ready nodes (parallel if enabled and batch > 1)
+        let batch_results: Vec<SupernodeResult> =
+            if matches!(options.par, Par::Seq) || batch_inputs.len() == 1 {
+                batch_inputs
+                    .into_iter()
+                    .map(|(s, contribs)| {
+                        factor_single_supernode(
+                            s,
+                            &supernodes[s],
+                            contribs,
+                            matrix,
+                            perm_fwd,
+                            perm_inv,
+                            options,
+                            scaling,
+                            n,
+                        )
+                    })
+                    .collect::<Result<_, _>>()?
+            } else {
+                use rayon::iter::{IntoParallelIterator, ParallelIterator};
+                batch_inputs
+                    .into_par_iter()
+                    .map(|(s, contribs)| {
+                        factor_single_supernode(
+                            s,
+                            &supernodes[s],
+                            contribs,
+                            matrix,
+                            perm_fwd,
+                            perm_inv,
+                            options,
+                            scaling,
+                            n,
+                        )
+                    })
+                    .collect::<Result<_, _>>()?
+            };
+
+        // Store results and determine next ready set
+        let mut next_ready = Vec::new();
+        for (result, &s) in batch_results.into_iter().zip(ready.iter()) {
+            contributions[s] = result.contribution;
+            all_results.push((s, result.ff, result.stats));
+
+            if let Some(parent) = supernodes[s].parent {
+                remaining_children[parent] -= 1;
+                if remaining_children[parent] == 0 {
+                    next_ready.push(parent);
+                }
+            }
+        }
+
+        ready = next_ready;
     }
 
-    // Factor this supernode with children's contributions
-    let sn_result = factor_single_supernode(
-        root,
-        &supernodes[root],
-        child_contributions,
-        matrix,
-        perm_fwd,
-        perm_inv,
-        options,
-        scaling,
-        n,
-    )?;
-
-    // Add this node's results to the collection
-    all_node_results.push((root, sn_result.ff, sn_result.stats));
-
-    Ok(SubtreeResult {
-        contribution: sn_result.contribution,
-        node_results: all_node_results,
-    })
+    Ok(all_results)
 }
 
 // ---------------------------------------------------------------------------
