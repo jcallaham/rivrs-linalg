@@ -47,6 +47,10 @@ required-features = ["diagnostic"]
 name = "workload_analysis"
 required-features = ["diagnostic"]
 
+[[example]]
+name = "parallel_scaling"
+required-features = ["diagnostic"]
+
 [[bench]]
 name = "solver_benchmarks"
 harness = false

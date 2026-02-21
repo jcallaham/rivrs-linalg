@@ -8,7 +8,7 @@ This directory contains sparse linear algebra solver implementations for rivrs-l
 
 **Parent Project**: rivrs-linalg - Numerical Linear Algebra for Rivrs
 **Domain**: Sparse direct solvers (SSIDS, LDL^T factorization, APTP pivoting)
-**Current Status**: Phase 8.1g complete — full sequential solver with two-level APTP, 65/65 SuiteSparse matrices passing. Ready for Phase 8.2 (Parallel Factorization & Solve).
+**Current Status**: Phase 8.2 complete — parallel factorization & solve with rayon + faer Par. Intra-node BLAS parallelism for large fronts, tree-level par_iter for independent subtrees. All safe Rust (no unsafe). 65/65 SuiteSparse matrices passing.
 
 ### Development docs
 
@@ -387,9 +387,9 @@ unit tests of the symbolic analysis and factorization kernel on small matrices.
 - Phase 7: Triangular solve & solver API — aptp_solve, SparseLDLT (analyze/factor/solve), OrderingStrategy
 - Phase 8.1: Two-level APTP + BLAS-3 refactoring — TPP for small fronts, complete pivoting for large fronts, critical extract_front_factors bug fix. 65/65 SuiteSparse matrices pass.
 - Phase 8.1g: Sequential profiling & optimization — per-supernode timing instrumentation, allocation hotspot fixes, baseline collection tool, workload analysis (41/65 IntraNode, 19 Mixed, 5 TreeLevel)
+- Phase 8.2: Parallel factorization & solve — rayon + faer Par, intra-node BLAS parallelism (TRSM/GEMM) for large fronts, tree-level par_iter for independent subtrees, parallel diagonal solve. All safe Rust (no unsafe). parallel_scaling.rs benchmark tool.
 
 **Next:**
-- Phase 8.2: Parallel factorization & solve (intra-node BLAS-3 parallelism first, tree-level second)
 - Phase 9: Solver hardening (arena memory, proptest, fuzzing) + release preparation
 
 ## Recent Changes

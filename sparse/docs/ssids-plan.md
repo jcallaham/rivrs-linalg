@@ -2464,6 +2464,16 @@ speccing.
 
 **Time Estimate:** 2-3 weeks
 
+**Phase 8.2 Completion Notes (2026-02-21):**
+- **Branch**: `019-parallel-factorization-solve`
+- **API**: `par: Par` added to `FactorOptions`, `SolverOptions`, `AptpOptions` (default `Par::Seq`)
+- **Intra-node**: TRSM/GEMM in `apply_and_check`/`update_trailing` use `par`, gated by INTRA_NODE_THRESHOLD=256
+- **Tree-level**: Recursive `factor_subtree()` with `par_iter` for parallel children, return-value pattern (no unsafe)
+- **Solve**: Diagonal solve parallelized via `par_iter` gather-solve-scatter. Forward/backward sequential.
+- **Benchmark tool**: `examples/parallel_scaling.rs` produces JSON scaling report
+- **All safe Rust**: No `unsafe`, no `UnsafeCell`. Return-value pattern for contributions.
+- **Tests**: 5 new parallel tests (correctness, determinism, small matrix correctness, solve correctness, solve determinism)
+
 ### Phase 8 Exit Criteria
 
 **Required Outcomes:**

@@ -78,24 +78,64 @@ pub fn aptp_solve(
     let n_supernodes = factors.len();
 
     // Two workspace buffers for per-supernode operations. Each supernode needs
-    // at most max_front_size entries. Since supernodes are processed sequentially,
-    // we reuse these buffers across all supernodes. This avoids per-supernode
-    // heap allocations in the solve hot path.
+    // at most max_front_size entries. Since forward/backward supernodes are processed
+    // sequentially, we reuse these buffers. The diagonal solve allocates per-task
+    // workspace when parallel.
     let max_size = numeric.stats().max_front_size;
     let mut work = vec![0.0f64; max_size];
     let mut work2 = vec![0.0f64; max_size];
 
     // 1. Forward solve (postorder = index order)
+    // Sequential: data dependencies through rhs (scatter modifies entries read by later supernodes)
     for ff in factors {
         forward_solve_supernode(ff, rhs, &mut work, &mut work2, par);
     }
 
-    // 2. Diagonal solve (any order)
-    for ff in factors {
-        diagonal_solve_supernode(ff, rhs, &mut work);
+    // 2. Diagonal solve (any order — embarrassingly parallel)
+    // Each supernode reads/writes only its own col_indices, which are disjoint
+    // across supernodes. When parallel, each task allocates its own work buffer.
+    if matches!(par, Par::Seq) || n_supernodes < 4 {
+        for ff in factors {
+            diagonal_solve_supernode(ff, rhs, &mut work);
+        }
+    } else {
+        use rayon::iter::{IntoParallelIterator, ParallelIterator};
+        // Collect (supernode_index, col_indices, ne) for parallel dispatch.
+        // Each task reads/writes disjoint rhs entries, so this is safe to parallelize
+        // by pre-gathering values, solving independently, and scattering back.
+        let tasks: Vec<(usize, Vec<usize>, usize)> = factors
+            .iter()
+            .enumerate()
+            .filter(|(_, ff)| ff.num_eliminated() > 0)
+            .map(|(i, ff)| (i, ff.col_indices().to_vec(), ff.num_eliminated()))
+            .collect();
+
+        // Gather all needed rhs values into per-supernode buffers
+        let mut per_sn_values: Vec<Vec<f64>> = tasks
+            .iter()
+            .map(|(_, cols, ne)| cols[..*ne].iter().map(|&c| rhs[c]).collect())
+            .collect();
+
+        // Solve in parallel (no shared state — each buffer is independent)
+        per_sn_values
+            .iter_mut()
+            .zip(tasks.iter())
+            .collect::<Vec<_>>()
+            .into_par_iter()
+            .for_each(|(values, (sn_idx, _, _))| {
+                factors[*sn_idx].d11().solve_in_place(values);
+            });
+
+        // Scatter results back
+        for (values, (_, cols, ne)) in per_sn_values.into_iter().zip(tasks.iter()) {
+            for i in 0..*ne {
+                rhs[cols[i]] = values[i];
+            }
+        }
     }
 
     // 3. Backward solve (reverse postorder)
+    // Sequential: data dependencies through rhs (gather reads entries modified by later supernodes)
     for s in (0..n_supernodes).rev() {
         backward_solve_supernode(&factors[s], rhs, &mut work, &mut work2, par);
     }

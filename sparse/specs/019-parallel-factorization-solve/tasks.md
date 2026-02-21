@@ -78,20 +78,20 @@
 
 ### Tests for User Story 2
 
-- [ ] T020 [US2] Add regression test: verify sequential recursive traversal produces identical results to original postorder loop, in `src/aptp/numeric.rs` tests (new `#[test] fn test_recursive_factor_matches_sequential`)
-- [ ] T021 [US2] Add tree-level parallel correctness test: factor all 65 SuiteSparse matrices with `Par::rayon(4)`, assert backward error < 5e-11 for each, in `src/aptp/solver.rs` tests (new `#[ignore] #[test] fn test_parallel_tree_level_all_suitesparse`)
-- [ ] T022 [US2] Add tree-level determinism test: factor a Mixed-class matrix twice with `Par::rayon(4)`, assert bitwise-identical factors, in `src/aptp/numeric.rs` tests (new `#[test] fn test_parallel_tree_determinism`)
+- [X] T020 [US2] Add regression test: verify sequential recursive traversal produces identical results to original postorder loop, in `src/aptp/numeric.rs` tests (new `#[test] fn test_recursive_factor_matches_sequential`)
+- [X] T021 [US2] Add tree-level parallel correctness test: factor all 65 SuiteSparse matrices with `Par::rayon(4)`, assert backward error < 5e-11 for each, in `src/aptp/solver.rs` tests (new `#[ignore] #[test] fn test_parallel_tree_level_all_suitesparse`)
+- [X] T022 [US2] Add tree-level determinism test: factor a Mixed-class matrix twice with `Par::rayon(4)`, assert bitwise-identical factors, in `src/aptp/numeric.rs` tests (new `#[test] fn test_parallel_tree_determinism`)
 
 ### Implementation for User Story 2
 
-- [ ] T023 [US2] Extract the per-supernode factorization loop body in `AptpNumeric::factor()` in `src/aptp/numeric.rs` into a standalone `fn factor_supernode(s, supernodes, children, contributions, matrix, perm_fwd, perm_inv, options, scaling, global_to_local) -> (FrontFactors, Option<ContributionBlock>, PerSupernodeStats)` helper function
-- [ ] T024 [US2] Replace sequential `front_factors_vec: Vec<FrontFactors>` with pre-allocated `Vec<Option<FrontFactors>>` (indexed by supernode) in `src/aptp/numeric.rs`, and same for `per_sn_stats`
-- [ ] T025 [US2] Refactor `AptpNumeric::factor()` to use a recursive `fn factor_subtree(root, ...)` function that: (a) recursively processes children, (b) assembles and factors the root supernode, (c) stores results at index `root` in pre-allocated vectors. When `par == Par::Seq`, recurse sequentially. In `src/aptp/numeric.rs`
-- [ ] T026 [US2] Replace shared `global_to_local: Vec<usize>` with per-task allocation in `factor_supernode()` in `src/aptp/numeric.rs` — each parallel supernode allocates its own `vec![NOT_IN_FRONT; n]`, builds its mapping, and drops it after extraction
-- [ ] T027 [US2] Add `rayon::scope` dispatch in `factor_subtree()` when `par` is `Par::Rayon`: spawn each child via `s.spawn(move |_| factor_subtree(child, ...))`, implicit barrier ensures all children complete before parent assembly. In `src/aptp/numeric.rs`
-- [ ] T028 [US2] Compute aggregate `FactorizationStats` from collected `Vec<Option<PerSupernodeStats>>` after the tree traversal completes, replacing the incremental accumulation pattern. In `src/aptp/numeric.rs`
-- [ ] T029 [US2] Handle `contributions` via return-value pattern: `factor_supernode()` returns `(FrontFactors, Option<ContributionBlock>, PerSupernodeStats)` as owned values. `factor_subtree()` collects children's returned `ContributionBlock`s after the `rayon::scope` barrier (children return via scoped closures), then passes them to the parent supernode's assembly. No shared mutable `Vec<Option<ContributionBlock>>` is needed — all data flows through return values. No `unsafe` code. In `src/aptp/numeric.rs`
-- [ ] T030 [US2] Run `cargo test`, all SuiteSparse `--ignored` tests with `--test-threads=1`, and `cargo clippy --all-targets --features diagnostic`
+- [X] T023 [US2] Extract the per-supernode factorization loop body in `AptpNumeric::factor()` in `src/aptp/numeric.rs` into a standalone `fn factor_supernode(s, supernodes, children, contributions, matrix, perm_fwd, perm_inv, options, scaling, global_to_local) -> (FrontFactors, Option<ContributionBlock>, PerSupernodeStats)` helper function
+- [X] T024 [US2] Replace sequential `front_factors_vec: Vec<FrontFactors>` with pre-allocated `Vec<Option<FrontFactors>>` (indexed by supernode) in `src/aptp/numeric.rs`, and same for `per_sn_stats`
+- [X] T025 [US2] Refactor `AptpNumeric::factor()` to use a recursive `fn factor_subtree(root, ...)` function that: (a) recursively processes children, (b) assembles and factors the root supernode, (c) stores results at index `root` in pre-allocated vectors. When `par == Par::Seq`, recurse sequentially. In `src/aptp/numeric.rs`
+- [X] T026 [US2] Replace shared `global_to_local: Vec<usize>` with per-task allocation in `factor_supernode()` in `src/aptp/numeric.rs` — each parallel supernode allocates its own `vec![NOT_IN_FRONT; n]`, builds its mapping, and drops it after extraction
+- [X] T027 [US2] Add `rayon::scope` dispatch in `factor_subtree()` when `par` is `Par::Rayon`: spawn each child via `s.spawn(move |_| factor_subtree(child, ...))`, implicit barrier ensures all children complete before parent assembly. In `src/aptp/numeric.rs`
+- [X] T028 [US2] Compute aggregate `FactorizationStats` from collected `Vec<Option<PerSupernodeStats>>` after the tree traversal completes, replacing the incremental accumulation pattern. In `src/aptp/numeric.rs`
+- [X] T029 [US2] Handle `contributions` via return-value pattern: `factor_supernode()` returns `(FrontFactors, Option<ContributionBlock>, PerSupernodeStats)` as owned values. `factor_subtree()` collects children's returned `ContributionBlock`s after the `rayon::scope` barrier (children return via scoped closures), then passes them to the parent supernode's assembly. No shared mutable `Vec<Option<ContributionBlock>>` is needed — all data flows through return values. No `unsafe` code. In `src/aptp/numeric.rs`
+- [X] T030 [US2] Run `cargo test`, all SuiteSparse `--ignored` tests with `--test-threads=1`, and `cargo clippy --all-targets --features diagnostic`
 
 **FR-008 coverage**: All parallel code uses safe Rust (no `unsafe`, no `UnsafeCell`). Rust's type system statically prevents data races at compile time. The return-value pattern for contributions avoids shared mutable state entirely. No dedicated ThreadSanitizer task is needed — successful compilation is sufficient proof of FR-008 compliance.
 
@@ -109,17 +109,17 @@
 
 ### Tests for User Story 3
 
-- [ ] T031 [US3] Add parallel solve correctness test: solve CI subset with `Par::rayon(4)`, assert backward error < 5e-11, in `src/aptp/solve.rs` tests (new `#[test] fn test_parallel_solve_correctness`)
-- [ ] T032 [US3] Add parallel solve determinism test: solve same matrix twice with `Par::rayon(4)`, assert bitwise-identical solution vectors, in `src/aptp/solve.rs` tests (new `#[test] fn test_parallel_solve_determinism`)
+- [X] T031 [US3] Add parallel solve correctness test: solve CI subset with `Par::rayon(4)`, assert backward error < 5e-11, in `src/aptp/solve.rs` tests (new `#[test] fn test_parallel_solve_correctness`)
+- [X] T032 [US3] Add parallel solve determinism test: solve same matrix twice with `Par::rayon(4)`, assert bitwise-identical solution vectors, in `src/aptp/solve.rs` tests (new `#[test] fn test_parallel_solve_determinism`)
 
 ### Implementation for User Story 3
 
-- [ ] T033 [US3] Implement parallel diagonal solve in `aptp_solve()` in `src/aptp/solve.rs`: when `par` is `Par::Rayon`, use Rayon parallel iteration over supernodes for the diagonal solve phase (each supernode reads/writes only its own `col_indices`, no overlaps). Allocate per-task `work` buffer within each parallel iteration.
-- [ ] T034 [US3] Expose children map from `AptpNumeric` (or pass `AptpSymbolic` + children to `aptp_solve`) so tree-level solve can use the same tree structure as factorization. In `src/aptp/numeric.rs` and `src/aptp/solve.rs`
-- [ ] T035 [US3] Implement parallel forward solve in `aptp_solve()` in `src/aptp/solve.rs`: recursive tree traversal with `rayon::scope` — children are processed in parallel (scope barrier), then parent performs its scatter. Per-task `work`/`work2` allocation within scope closures.
-- [ ] T036 [US3] Implement parallel backward solve in `aptp_solve()` in `src/aptp/solve.rs`: reverse recursive tree traversal with `rayon::scope` — parent processes first, then children in parallel (scope barrier). Per-task workspace allocation.
-- [ ] T037 [US3] When `par == Par::Seq`, keep existing sequential solve loops (no rayon overhead). In `src/aptp/solve.rs`
-- [ ] T038 [US3] Run `cargo test`, all SuiteSparse `--ignored` tests with `--test-threads=1`, and `cargo clippy --all-targets --features diagnostic`
+- [X] T033 [US3] Implement parallel diagonal solve in `aptp_solve()` in `src/aptp/solve.rs`: when `par` is `Par::Rayon`, use Rayon parallel iteration over supernodes for the diagonal solve phase (each supernode reads/writes only its own `col_indices`, no overlaps). Allocate per-task `work` buffer within each parallel iteration.
+- [X] T034 [US3] Expose children map from `AptpNumeric` (or pass `AptpSymbolic` + children to `aptp_solve`) so tree-level solve can use the same tree structure as factorization. In `src/aptp/numeric.rs` and `src/aptp/solve.rs`
+- [X] T035 [US3] Implement parallel forward solve in `aptp_solve()` in `src/aptp/solve.rs`: recursive tree traversal with `rayon::scope` — children are processed in parallel (scope barrier), then parent performs its scatter. Per-task `work`/`work2` allocation within scope closures.
+- [X] T036 [US3] Implement parallel backward solve in `aptp_solve()` in `src/aptp/solve.rs`: reverse recursive tree traversal with `rayon::scope` — parent processes first, then children in parallel (scope barrier). Per-task workspace allocation.
+- [X] T037 [US3] When `par == Par::Seq`, keep existing sequential solve loops (no rayon overhead). In `src/aptp/solve.rs`
+- [X] T038 [US3] Run `cargo test`, all SuiteSparse `--ignored` tests with `--test-threads=1`, and `cargo clippy --all-targets --features diagnostic`
 
 **Checkpoint**: All three solve phases parallelized. Solve produces identical backward error. SC-004 (solve determinism), SC-005, SC-006 can be validated.
 
@@ -135,12 +135,12 @@
 
 ### Implementation for User Story 4
 
-- [ ] T039 [US4] Create `examples/parallel_scaling.rs` with `required-features = ["diagnostic"]`: accepts `--ci-only` / `--all` flags and `--threads 1,2,4,8` parameter. Loads matrices from registry, runs factorization and solve at each thread count, collects timing.
-- [ ] T040 [US4] Implement speedup and efficiency computation in `examples/parallel_scaling.rs`: speedup = T_1 / T_n, efficiency = speedup / n. Per-matrix and per-class (IntraNode/Mixed/TreeLevel) aggregation.
-- [ ] T041 [US4] Implement structured JSON output in `examples/parallel_scaling.rs` to `target/benchmarks/parallel/scaling-<timestamp>.json`: per-matrix records with name, n, nnz, class, and per-thread-count timing (factor_ms, solve_ms, backward_error, speedup, efficiency).
-- [ ] T042 [US4] Implement human-readable summary table in `examples/parallel_scaling.rs`: per-class average speedup at each thread count, matrices meeting SC-001/SC-002/SC-003 targets, any regressions.
-- [ ] T043 [US4] Add `[[example]]` entry for `parallel_scaling` with `required-features = ["diagnostic"]` in `Cargo.toml`
-- [ ] T044 [US4] Run the benchmark tool on CI subset with `--ci-only --threads 1,2,4,8` and verify report is produced with expected fields. Document results in `docs/phase-8.2-report.md`.
+- [X] T039 [US4] Create `examples/parallel_scaling.rs` with `required-features = ["diagnostic"]`: accepts `--ci-only` / `--all` flags and `--threads 1,2,4,8` parameter. Loads matrices from registry, runs factorization and solve at each thread count, collects timing.
+- [X] T040 [US4] Implement speedup and efficiency computation in `examples/parallel_scaling.rs`: speedup = T_1 / T_n, efficiency = speedup / n. Per-matrix and per-class (IntraNode/Mixed/TreeLevel) aggregation.
+- [X] T041 [US4] Implement structured JSON output in `examples/parallel_scaling.rs` to `target/benchmarks/parallel/scaling-<timestamp>.json`: per-matrix records with name, n, nnz, class, and per-thread-count timing (factor_ms, solve_ms, backward_error, speedup, efficiency).
+- [X] T042 [US4] Implement human-readable summary table in `examples/parallel_scaling.rs`: per-class average speedup at each thread count, matrices meeting SC-001/SC-002/SC-003 targets, any regressions.
+- [X] T043 [US4] Add `[[example]]` entry for `parallel_scaling` with `required-features = ["diagnostic"]` in `Cargo.toml`
+- [X] T044 [US4] Run the benchmark tool on CI subset with `--ci-only --threads 1,2,4,8` and verify report is produced with expected fields. Document results in `docs/phase-8.2-report.md`.
 
 **Checkpoint**: Parallel scaling report produced. SC-008 validated. Performance targets (SC-001 through SC-003) evaluated.
 
@@ -150,12 +150,12 @@
 
 **Purpose**: Documentation, cleanup, and final validation across all user stories.
 
-- [ ] T045 Update `docs/ssids-log.md` with Phase 8.2 development log entry
-- [ ] T046 Update `docs/ssids-plan.md` with Phase 8.2 completion status
-- [ ] T047 Update `CLAUDE.md` (sparse) with Phase 8.2 status, Rayon dependency, parallelism API notes
-- [ ] T048 [P] Add rustdoc documentation for all new/modified public APIs: `FactorOptions.par`, `SolverOptions.par`, `SparseLDLT::solve_in_place` `par` parameter, with `# Examples` sections showing parallel usage
-- [ ] T049 [P] Add academic attribution comments to parallel factorization and solve code: cite Duff 2020 Sections 5-6, Hogg 2016 Section 2.5/3.5, and SPRAL `NumericSubtree.hxx` (BSD-3)
-- [ ] T050 Run full validation: `cargo test`, `cargo test --features diagnostic`, `cargo test -- --ignored --test-threads=1`, `cargo clippy --all-targets --features diagnostic -- -D warnings`, `cargo fmt --check`, `cargo doc --no-deps`
+- [X] T045 Update `docs/ssids-log.md` with Phase 8.2 development log entry
+- [X] T046 Update `docs/ssids-plan.md` with Phase 8.2 completion status
+- [X] T047 Update `CLAUDE.md` (sparse) with Phase 8.2 status, Rayon dependency, parallelism API notes
+- [X] T048 [P] Add rustdoc documentation for all new/modified public APIs: `FactorOptions.par`, `SolverOptions.par`, `SparseLDLT::solve_in_place` `par` parameter, with `# Examples` sections showing parallel usage
+- [X] T049 [P] Add academic attribution comments to parallel factorization and solve code: cite Duff 2020 Sections 5-6, Hogg 2016 Section 2.5/3.5, and SPRAL `NumericSubtree.hxx` (BSD-3)
+- [X] T050 Run full validation: `cargo test`, `cargo test --features diagnostic`, `cargo test -- --ignored --test-threads=1`, `cargo clippy --all-targets --features diagnostic -- -D warnings`, `cargo fmt --check`, `cargo doc --no-deps`
 
 ---
 

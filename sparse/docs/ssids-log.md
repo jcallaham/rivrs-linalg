@@ -1,5 +1,65 @@
 # SSIDS Development Log
 
+## Phase 8.2: Parallel Factorization & Solve
+
+**Status**: Complete
+**Branch**: `019-parallel-factorization-solve`
+**Date**: 2026-02-21
+
+### Summary
+
+Added shared-memory parallelism to the multifrontal LDL^T solver using two
+strategies: intra-node BLAS-3 parallelism via faer's `Par` enum for large dense
+fronts, and tree-level parallelism via rayon's `par_iter` for independent subtrees.
+All parallel code is safe Rust — no `unsafe`, no `UnsafeCell`.
+
+### What Was Built
+
+1. **Par API surface** (`src/aptp/solver.rs`, `src/aptp/factor.rs`)
+   - Added `par: Par` field to `FactorOptions`, `SolverOptions`, `AptpOptions`
+   - Threaded `par` through the full call chain (factor → kernel, solve → per-supernode)
+   - Default `Par::Seq` preserves backward compatibility
+
+2. **Intra-node BLAS parallelism** (`src/aptp/factor.rs`, `src/aptp/solve.rs`)
+   - TRSM and GEMM calls in `apply_and_check()` and `update_trailing()` use `par`
+   - Front-size threshold (INTRA_NODE_THRESHOLD=256): small fronts always use `Par::Seq`
+   - Per-supernode solve functions also gated by threshold
+
+3. **Tree-level parallel factorization** (`src/aptp/numeric.rs`)
+   - Refactored sequential postorder loop into recursive `factor_subtree()`
+   - Return-value pattern: each subtree returns `SubtreeResult` with all node results
+   - Uses `rayon::par_iter` for parallel children (no `unsafe`, no shared mutable state)
+   - `factor_single_supernode()` helper with per-task `global_to_local` allocation
+
+4. **Parallel diagonal solve** (`src/aptp/solve.rs`)
+   - Diagonal solve phase uses rayon `par_iter` when `par != Par::Seq`
+   - Gather-solve-scatter pattern: pre-gather `rhs` values, solve in parallel, scatter back
+   - Forward/backward solve remain sequential (data dependencies through `rhs`)
+
+5. **Parallel scaling benchmark** (`examples/parallel_scaling.rs`)
+   - Measures factor + solve timing across configurable thread counts
+   - Produces structured JSON to `target/benchmarks/parallel/`
+   - Human-readable summary table with speedup and efficiency
+
+### Key Design Decisions
+
+- **Safe Rust only**: Used return-value pattern instead of unsafe disjoint slice access.
+  `factor_subtree()` returns all results as owned `SubtreeResult` values. rayon's
+  `par_iter().map().collect()` handles parallel dispatch without shared mutable state.
+- **Threshold gating**: INTRA_NODE_THRESHOLD=256 prevents rayon overhead on small fronts.
+  Both BLAS parallelism (TRSM/GEMM) and tree-level dispatch respect this threshold.
+- **Transparent faer composition**: Uses faer's `Par` enum directly, not a custom wrapper.
+
+### Tests Added
+
+- `test_parallel_factor_ci_subset` (ignored): CI subset with `Par::rayon(4)`, backward error < 5e-11
+- `test_parallel_factor_determinism`: Bitwise-identical factors at fixed thread count
+- `test_parallel_correctness_small_matrices`: All hand-constructed matrices, Seq vs Par identical
+- `test_parallel_solve_ci_subset` (ignored): CI subset solve with `Par::rayon(4)`
+- `test_parallel_solve_determinism`: Bitwise-identical solutions at fixed thread count
+
+---
+
 ## Phase 8.1g: Sequential Profiling & Optimization
 
 **Status**: Complete

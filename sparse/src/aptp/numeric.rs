@@ -33,9 +33,9 @@
 //! - Hogg, Duff & Lopez (2020), "A New Sparse LDL^T Solver Using A Posteriori
 //!   Threshold Pivoting" — APTP algorithm integration with multifrontal framework
 
-use faer::{Mat, Par};
 use faer::sparse::SparseColMat;
 use faer::sparse::linalg::cholesky::SymbolicCholeskyRaw;
+use faer::{Mat, Par};
 
 use super::diagonal::{MixedDiagonal, PivotEntry};
 use super::factor::{AptpFactorResult, AptpOptions, aptp_factor_in_place};
@@ -409,12 +409,62 @@ impl AptpNumeric {
         // Get fill-reducing permutation
         let (perm_fwd, perm_inv) = symbolic.perm_vecs();
 
-        // Allocate shared data structures
-        let mut global_to_local = vec![NOT_IN_FRONT; n];
-        let mut contributions: Vec<Option<ContributionBlock>> =
+        // Profiling session (diagnostic only)
+        #[cfg(feature = "diagnostic")]
+        let session = ProfileSession::new();
+        #[cfg(feature = "diagnostic")]
+        let _factor_loop_guard = session.enter_section("factor_loop");
+
+        // Find tree roots (supernodes with no parent)
+        let roots: Vec<usize> = (0..n_supernodes)
+            .filter(|&s| supernodes[s].parent.is_none())
+            .collect();
+
+        // Recursive tree traversal using return-value pattern (no unsafe, no shared
+        // mutable state). Each subtree returns all its node results as owned values.
+        // Root contributions are discarded (no parent to receive them).
+        let mut all_node_results: Vec<(usize, FrontFactors, PerSupernodeStats)> =
+            Vec::with_capacity(n_supernodes);
+        for &root in &roots {
+            let subtree = factor_subtree(
+                root,
+                &supernodes,
+                &children,
+                matrix,
+                &perm_fwd,
+                &perm_inv,
+                options,
+                scaling,
+                n,
+            )?;
+            all_node_results.extend(subtree.node_results);
+        }
+
+        #[cfg(feature = "diagnostic")]
+        drop(_factor_loop_guard);
+
+        // Scatter returned results into supernode-indexed vectors
+        let mut front_factors_vec: Vec<Option<FrontFactors>> =
             (0..n_supernodes).map(|_| None).collect();
-        let mut front_factors_vec = Vec::with_capacity(n_supernodes);
-        let mut per_sn_stats = Vec::with_capacity(n_supernodes);
+        let mut per_sn_stats_vec: Vec<Option<PerSupernodeStats>> =
+            (0..n_supernodes).map(|_| None).collect();
+        for (idx, ff, stats) in all_node_results {
+            front_factors_vec[idx] = Some(ff);
+            per_sn_stats_vec[idx] = Some(stats);
+        }
+
+        let front_factors: Vec<FrontFactors> = front_factors_vec
+            .into_iter()
+            .enumerate()
+            .map(|(i, opt)| opt.unwrap_or_else(|| panic!("supernode {} not factored", i)))
+            .collect();
+        let per_sn_stats: Vec<PerSupernodeStats> = per_sn_stats_vec
+            .into_iter()
+            .enumerate()
+            .map(|(i, opt)| opt.unwrap_or_else(|| panic!("supernode {} missing stats", i)))
+            .collect();
+
+        // Compute aggregate stats from per-supernode stats
         let mut stats = FactorizationStats {
             total_1x1_pivots: 0,
             total_2x2_pivots: 0,
@@ -428,169 +478,41 @@ impl AptpNumeric {
             #[cfg(feature = "diagnostic")]
             total_extraction_time: std::time::Duration::ZERO,
         };
-
-        // Profiling session (diagnostic only)
-        #[cfg(feature = "diagnostic")]
-        let session = ProfileSession::new();
-
-        // Postorder traversal (index order = postorder for faer's supernodal layout)
-        #[cfg(feature = "diagnostic")]
-        let _factor_loop_guard = session.enter_section("factor_loop");
-
-        for s in 0..n_supernodes {
-            let sn = &supernodes[s];
-
-            // 1. Collect delayed columns from children
-            let mut delayed_cols: Vec<usize> = Vec::new();
-            for &c in &children[s] {
-                if let Some(ref cb) = contributions[c] {
-                    delayed_cols.extend_from_slice(&cb.row_indices[..cb.num_delayed]);
-                }
+        for sn_stat in &per_sn_stats {
+            stats.total_1x1_pivots += sn_stat.num_1x1;
+            stats.total_2x2_pivots += sn_stat.num_2x2;
+            stats.total_delayed += sn_stat.num_delayed;
+            if sn_stat.front_size > stats.max_front_size {
+                stats.max_front_size = sn_stat.front_size;
             }
-
-            // 2. Compute frontal matrix structure
-            let sn_ncols = sn.col_end - sn.col_begin;
-            let k = sn_ncols + delayed_cols.len(); // num_fully_summed
-
-            // Row indices: fully-summed (sn columns + delayed) + off-diagonal pattern
-            let mut frontal_rows: Vec<usize> = Vec::with_capacity(k + sn.pattern.len());
-            frontal_rows.extend(sn.col_begin..sn.col_end);
-            frontal_rows.extend_from_slice(&delayed_cols);
-            frontal_rows.extend_from_slice(&sn.pattern);
-            let m = frontal_rows.len();
-
-            // Track max front size
-            if m > stats.max_front_size {
-                stats.max_front_size = m;
+            #[cfg(feature = "diagnostic")]
+            {
+                stats.total_assembly_time += sn_stat.assembly_time;
+                stats.total_kernel_time += sn_stat.kernel_time;
+                stats.total_extraction_time += sn_stat.extraction_time;
             }
+        }
 
-            // 3. Build global-to-local mapping
-            for (i, &global) in frontal_rows.iter().enumerate() {
-                global_to_local[global] = i;
-            }
-
-            // 4. Allocate and assemble frontal matrix
-            #[cfg(feature = "diagnostic")]
-            let assembly_start = std::time::Instant::now();
-
-            let mut frontal = FrontalMatrix {
-                data: Mat::zeros(m, m),
-                row_indices: frontal_rows.clone(),
-                num_fully_summed: k,
-            };
-
-            // Scatter original sparse entries (only for supernode's own columns)
-            scatter_original_entries(
-                &mut frontal,
-                matrix,
-                &perm_fwd,
-                &perm_inv,
-                &global_to_local,
-                sn.col_begin..sn.col_end,
-                scaling,
-            );
-
-            // Extend-add child contributions
-            for &c in &children[s] {
-                if let Some(cb) = contributions[c].take() {
-                    extend_add(&mut frontal, &cb, &global_to_local);
-                }
-            }
-
-            #[cfg(feature = "diagnostic")]
-            let assembly_time = assembly_start.elapsed();
-
-            // 5. Factor the frontal matrix
-            #[cfg(feature = "diagnostic")]
-            let kernel_start = std::time::Instant::now();
-
-            // Apply intra-node threshold: small fronts use Par::Seq to avoid overhead
-            let effective_par = if m < INTRA_NODE_THRESHOLD {
-                Par::Seq
-            } else {
-                options.par
-            };
-            let per_sn_options = AptpOptions {
-                par: effective_par,
-                ..options.clone()
-            };
-            let result = aptp_factor_in_place(frontal.data.as_mut(), k, &per_sn_options)?;
-            let ne = result.num_eliminated;
-
-            #[cfg(feature = "diagnostic")]
-            let kernel_time = kernel_start.elapsed();
-
-            // 6. Accumulate statistics
-            stats.total_1x1_pivots += result.stats.num_1x1;
-            stats.total_2x2_pivots += result.stats.num_2x2;
-            stats.total_delayed += result.stats.num_delayed;
-
-            // Count zero-valued 1x1 pivots (TPP accepts zero columns as 1x1 with D=0
-            // rather than delaying them, so we detect them here).
-            for (_, entry) in result.d.iter_pivots() {
+        // Count zero pivots from front factors
+        for ff in &front_factors {
+            for (_, entry) in ff.d11().iter_pivots() {
                 if let PivotEntry::OneByOne(val) = entry {
                     if val == 0.0 {
                         stats.zero_pivots += 1;
                     }
                 }
             }
-
-            // 7. Extract and store front factors
-            #[cfg(feature = "diagnostic")]
-            let extraction_start = std::time::Instant::now();
-
-            let ff = extract_front_factors(&frontal, &result);
-            front_factors_vec.push(ff);
-
-            // 8. Prepare contribution for parent (if not root and not fully eliminated)
-            if sn.parent.is_some() && ne < m {
-                contributions[s] = Some(extract_contribution(&frontal, &result));
-            } else if sn.parent.is_none() && ne < m {
-                // Root supernode with unresolved delayed columns — record as zero
-                // pivots rather than erroring. This matches SPRAL's behavior:
-                // the factorization succeeds but the matrix is rank-deficient.
-                // The solve phase must handle zero pivots appropriately.
+        }
+        // Also count unresolved delays at root supernodes
+        for &root in &roots {
+            let sn = &supernodes[root];
+            let sn_stat = &per_sn_stats[root];
+            let m = sn_stat.front_size;
+            let ne = sn_stat.num_eliminated;
+            if sn.parent.is_none() && ne < m {
+                let k = sn_stat.num_fully_summed;
                 let n_unresolved = k - ne;
                 stats.zero_pivots += n_unresolved;
-            }
-
-            #[cfg(feature = "diagnostic")]
-            let extraction_time = extraction_start.elapsed();
-
-            // 6b. Record per-supernode diagnostics
-            per_sn_stats.push(PerSupernodeStats {
-                snode_id: s,
-                front_size: m,
-                num_fully_summed: k,
-                num_eliminated: ne,
-                num_delayed: k - ne,
-                num_1x1: result.stats.num_1x1,
-                num_2x2: result.stats.num_2x2,
-                max_l_entry: result.stats.max_l_entry,
-                #[cfg(feature = "diagnostic")]
-                assembly_time,
-                #[cfg(feature = "diagnostic")]
-                kernel_time,
-                #[cfg(feature = "diagnostic")]
-                extraction_time,
-            });
-
-            // 9. Cleanup global-to-local mapping
-            for &global in &frontal_rows {
-                global_to_local[global] = NOT_IN_FRONT;
-            }
-        }
-
-        #[cfg(feature = "diagnostic")]
-        drop(_factor_loop_guard);
-
-        // T010: Accumulate per-supernode timing into aggregate stats
-        #[cfg(feature = "diagnostic")]
-        {
-            for sn_stat in &per_sn_stats {
-                stats.total_assembly_time += sn_stat.assembly_time;
-                stats.total_kernel_time += sn_stat.kernel_time;
-                stats.total_extraction_time += sn_stat.extraction_time;
             }
         }
 
@@ -599,7 +521,7 @@ impl AptpNumeric {
         let finished_session = session.finish();
 
         Ok(AptpNumeric {
-            front_factors: front_factors_vec,
+            front_factors,
             stats,
             per_supernode_stats: per_sn_stats,
             n,
@@ -761,6 +683,240 @@ impl AptpNumeric {
         // Should not reach here — we return inside the loop at s == target
         unreachable!("Target supernode {} not reached in postorder loop", target)
     }
+}
+
+// ---------------------------------------------------------------------------
+// Tree-level factorization functions
+// ---------------------------------------------------------------------------
+
+/// Result of factoring a single supernode.
+struct SupernodeResult {
+    ff: FrontFactors,
+    contribution: Option<ContributionBlock>,
+    stats: PerSupernodeStats,
+}
+
+/// Factor a single supernode given its children's contribution blocks.
+///
+/// Assembles the frontal matrix from sparse entries and child contributions,
+/// factors it with APTP, and extracts the front factors and contribution block.
+#[allow(clippy::too_many_arguments)]
+fn factor_single_supernode(
+    s: usize,
+    sn: &SupernodeInfo,
+    child_contributions: Vec<ContributionBlock>,
+    matrix: &SparseColMat<usize, f64>,
+    perm_fwd: &[usize],
+    perm_inv: &[usize],
+    options: &AptpOptions,
+    scaling: Option<&[f64]>,
+    n: usize,
+) -> Result<SupernodeResult, SparseError> {
+    // Per-task global-to-local mapping (cannot share across parallel tasks)
+    let mut global_to_local = vec![NOT_IN_FRONT; n];
+
+    // 1. Collect delayed columns from children
+    let mut delayed_cols: Vec<usize> = Vec::new();
+    for cb in &child_contributions {
+        delayed_cols.extend_from_slice(&cb.row_indices[..cb.num_delayed]);
+    }
+
+    // 2. Compute frontal matrix structure
+    let sn_ncols = sn.col_end - sn.col_begin;
+    let k = sn_ncols + delayed_cols.len(); // num_fully_summed
+
+    let mut frontal_rows: Vec<usize> = Vec::with_capacity(k + sn.pattern.len());
+    frontal_rows.extend(sn.col_begin..sn.col_end);
+    frontal_rows.extend_from_slice(&delayed_cols);
+    frontal_rows.extend_from_slice(&sn.pattern);
+    let m = frontal_rows.len();
+
+    // 3. Build global-to-local mapping
+    for (i, &global) in frontal_rows.iter().enumerate() {
+        global_to_local[global] = i;
+    }
+
+    // 4. Allocate and assemble frontal matrix
+    #[cfg(feature = "diagnostic")]
+    let assembly_start = std::time::Instant::now();
+
+    let mut frontal = FrontalMatrix {
+        data: Mat::zeros(m, m),
+        row_indices: frontal_rows,
+        num_fully_summed: k,
+    };
+
+    scatter_original_entries(
+        &mut frontal,
+        matrix,
+        perm_fwd,
+        perm_inv,
+        &global_to_local,
+        sn.col_begin..sn.col_end,
+        scaling,
+    );
+
+    for cb in child_contributions {
+        extend_add(&mut frontal, &cb, &global_to_local);
+    }
+
+    #[cfg(feature = "diagnostic")]
+    let assembly_time = assembly_start.elapsed();
+
+    // 5. Factor the frontal matrix
+    #[cfg(feature = "diagnostic")]
+    let kernel_start = std::time::Instant::now();
+
+    let effective_par = if m < INTRA_NODE_THRESHOLD {
+        Par::Seq
+    } else {
+        options.par
+    };
+    let per_sn_options = AptpOptions {
+        par: effective_par,
+        ..options.clone()
+    };
+    let result = aptp_factor_in_place(frontal.data.as_mut(), k, &per_sn_options)?;
+    let ne = result.num_eliminated;
+
+    #[cfg(feature = "diagnostic")]
+    let kernel_time = kernel_start.elapsed();
+
+    // 6. Extract front factors
+    #[cfg(feature = "diagnostic")]
+    let extraction_start = std::time::Instant::now();
+
+    let ff = extract_front_factors(&frontal, &result);
+
+    // 7. Prepare contribution for parent (if not root and not fully eliminated)
+    let contribution = if sn.parent.is_some() && ne < m {
+        Some(extract_contribution(&frontal, &result))
+    } else {
+        None
+    };
+
+    #[cfg(feature = "diagnostic")]
+    let extraction_time = extraction_start.elapsed();
+
+    let stats = PerSupernodeStats {
+        snode_id: s,
+        front_size: m,
+        num_fully_summed: k,
+        num_eliminated: ne,
+        num_delayed: k - ne,
+        num_1x1: result.stats.num_1x1,
+        num_2x2: result.stats.num_2x2,
+        max_l_entry: result.stats.max_l_entry,
+        #[cfg(feature = "diagnostic")]
+        assembly_time,
+        #[cfg(feature = "diagnostic")]
+        kernel_time,
+        #[cfg(feature = "diagnostic")]
+        extraction_time,
+    };
+
+    // global_to_local is dropped here (per-task allocation)
+
+    Ok(SupernodeResult {
+        ff,
+        contribution,
+        stats,
+    })
+}
+
+/// Result of factoring an entire subtree. All data flows as return values —
+/// no shared mutable state, no `unsafe`.
+struct SubtreeResult {
+    /// The contribution block this subtree's root sends to its parent.
+    contribution: Option<ContributionBlock>,
+    /// Per-supernode results for every node in this subtree (supernode index, factors, stats).
+    node_results: Vec<(usize, FrontFactors, PerSupernodeStats)>,
+}
+
+/// Recursively factor a subtree rooted at `root`.
+///
+/// Processes children first (sequentially or in parallel via `par_iter`),
+/// collects their contribution blocks, then factors the root supernode.
+/// Returns all results as owned values — no shared mutable output vectors.
+///
+/// When `options.par` is `Par::Seq`, uses sequential recursion.
+/// When `options.par` is `Par::Rayon`, uses rayon `par_iter` to process
+/// children in parallel when there are multiple children.
+///
+/// # References
+///
+/// - Duff, Hogg & Lopez (2020), Sections 5-6: tree-level parallelism
+/// - SPRAL `NumericSubtree.hxx`: OpenMP taskgroup for subtree parallelism (BSD-3)
+#[allow(clippy::too_many_arguments)]
+fn factor_subtree(
+    root: usize,
+    supernodes: &[SupernodeInfo],
+    children: &[Vec<usize>],
+    matrix: &SparseColMat<usize, f64>,
+    perm_fwd: &[usize],
+    perm_inv: &[usize],
+    options: &AptpOptions,
+    scaling: Option<&[f64]>,
+    n: usize,
+) -> Result<SubtreeResult, SparseError> {
+    let child_list = &children[root];
+
+    // Process children and collect their subtree results
+    let child_subtree_results: Vec<SubtreeResult> = if child_list.is_empty() {
+        Vec::new()
+    } else if matches!(options.par, Par::Seq) || child_list.len() == 1 {
+        // Sequential: process children one at a time
+        let mut results = Vec::with_capacity(child_list.len());
+        for &child in child_list {
+            results.push(factor_subtree(
+                child, supernodes, children, matrix, perm_fwd, perm_inv, options, scaling, n,
+            )?);
+        }
+        results
+    } else {
+        // Parallel: use rayon par_iter to process independent children concurrently.
+        // Each child returns its results as owned values — no shared mutable state.
+        use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+        child_list
+            .par_iter()
+            .map(|&child| {
+                factor_subtree(
+                    child, supernodes, children, matrix, perm_fwd, perm_inv, options, scaling, n,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?
+    };
+
+    // Separate children's contributions from their node results
+    let mut child_contributions = Vec::new();
+    let mut all_node_results = Vec::new();
+    for child_result in child_subtree_results {
+        if let Some(cb) = child_result.contribution {
+            child_contributions.push(cb);
+        }
+        all_node_results.extend(child_result.node_results);
+    }
+
+    // Factor this supernode with children's contributions
+    let sn_result = factor_single_supernode(
+        root,
+        &supernodes[root],
+        child_contributions,
+        matrix,
+        perm_fwd,
+        perm_inv,
+        options,
+        scaling,
+        n,
+    )?;
+
+    // Add this node's results to the collection
+    all_node_results.push((root, sn_result.ff, sn_result.stats));
+
+    Ok(SubtreeResult {
+        contribution: sn_result.contribution,
+        node_results: all_node_results,
+    })
 }
 
 // ---------------------------------------------------------------------------

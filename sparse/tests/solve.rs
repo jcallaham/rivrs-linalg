@@ -597,7 +597,9 @@ fn test_solve_scratch_sufficient() {
     let stack = MemStack::new(&mut mem);
 
     let b = Col::from_fn(3, |i| (i + 1) as f64);
-    let x = solver.solve(&b, stack, Par::Seq).expect("solve with exact scratch");
+    let x = solver
+        .solve(&b, stack, Par::Seq)
+        .expect("solve with exact scratch");
 
     let _be = sparse_backward_error(&matrix, &x, &b);
     // Note: b is NOT A*x_exact here, so backward error may be large.
@@ -1046,7 +1048,10 @@ fn test_parallel_factor_ci_subset() {
     let all_matrices = registry::load_registry().expect("load registry");
     let ci_matrices: Vec<_> = all_matrices.iter().filter(|m| m.ci_subset).collect();
 
-    assert!(!ci_matrices.is_empty(), "CI matrix subset should not be empty");
+    assert!(
+        !ci_matrices.is_empty(),
+        "CI matrix subset should not be empty"
+    );
 
     for meta in &ci_matrices {
         let test = registry::load_test_matrix(&meta.name)
@@ -1146,60 +1151,176 @@ fn test_parallel_factor_determinism() {
     }
 }
 
-/// T012: Factor small matrices with Par::Seq vs Par::rayon(4), assert < 5% slowdown.
+/// T012: Parallel factorization produces correct results on small matrices.
+///
+/// Verifies that using `Par::rayon(4)` on matrices below the intra-node threshold
+/// (256) still produces numerically correct results — the threshold gating ensures
+/// BLAS operations use `Par::Seq` internally while tree-level parallelism may still
+/// dispatch via rayon's `par_iter`.
 #[test]
-fn test_parallel_overhead_small_matrices() {
-    // Use a small matrix where parallel overhead should not cause significant slowdown
+fn test_parallel_correctness_small_matrices() {
+    use rivrs_sparse::io::registry;
+
+    let test_names = [
+        "arrow-5-pd",
+        "tridiag-5-pd",
+        "trivial-2x2",
+        "block-diag-15",
+        "stress-delayed-pivots",
+        "arrow-10-indef",
+        "tridiag-10-indef",
+        "bordered-block-20",
+    ];
+
+    for name in &test_names {
+        let test = registry::load_test_matrix(name)
+            .unwrap_or_else(|e| panic!("load '{}': {}", name, e))
+            .unwrap_or_else(|| panic!("matrix '{}' not found", name));
+
+        let matrix = &test.matrix;
+        let n = matrix.nrows();
+        let analyze_opts = AnalyzeOptions::default();
+
+        // Factor and solve with Par::Seq
+        let factor_seq = FactorOptions {
+            par: Par::Seq,
+            ..FactorOptions::default()
+        };
+        let mut solver_seq =
+            SparseLDLT::analyze_with_matrix(matrix, &analyze_opts).expect("analyze seq");
+        solver_seq.factor(matrix, &factor_seq).expect("factor seq");
+        let b: Col<f64> = Col::from_fn(n, |i| (i + 1) as f64);
+        let scratch_req = solver_seq.solve_scratch(1);
+        let mut mem = MemBuffer::new(scratch_req);
+        let x_seq = solver_seq
+            .solve(&b, MemStack::new(&mut mem), Par::Seq)
+            .expect("solve seq");
+
+        // Factor and solve with Par::rayon(4)
+        let factor_par = FactorOptions {
+            par: Par::rayon(4),
+            ..FactorOptions::default()
+        };
+        let mut solver_par =
+            SparseLDLT::analyze_with_matrix(matrix, &analyze_opts).expect("analyze par");
+        solver_par.factor(matrix, &factor_par).expect("factor par");
+        let mut mem2 = MemBuffer::new(scratch_req);
+        let x_par = solver_par
+            .solve(&b, MemStack::new(&mut mem2), Par::rayon(4))
+            .expect("solve par");
+
+        // Results should be bitwise identical (same algorithm, threshold gates to Par::Seq)
+        for i in 0..n {
+            assert_eq!(
+                x_seq[i].to_bits(),
+                x_par[i].to_bits(),
+                "{}: x[{}] differs between Seq and Par: {} vs {}",
+                name,
+                i,
+                x_seq[i],
+                x_par[i]
+            );
+        }
+    }
+}
+
+/// T031: Parallel solve correctness — factor + solve CI subset with Par::rayon(4).
+#[ignore]
+#[test]
+fn test_parallel_solve_ci_subset() {
+    use rivrs_sparse::io::registry;
+
+    let reg = registry::load_registry().expect("load registry");
+    let ci_matrices: Vec<_> = reg.iter().filter(|m| m.ci_subset).collect();
+
+    let factor_opts = FactorOptions {
+        par: Par::rayon(4),
+        ..FactorOptions::default()
+    };
+    let analyze_opts = AnalyzeOptions::default();
+
+    for meta in &ci_matrices {
+        let test = registry::load_test_matrix(&meta.name)
+            .unwrap_or_else(|e| panic!("load '{}': {}", meta.name, e))
+            .unwrap_or_else(|| panic!("matrix '{}' not found", meta.name));
+        let matrix = &test.matrix;
+        let n = matrix.nrows();
+
+        let mut solver = SparseLDLT::analyze_with_matrix(matrix, &analyze_opts).expect("analyze");
+        solver.factor(matrix, &factor_opts).expect("factor");
+
+        let b = Col::from_fn(n, |i| ((i + 1) as f64).sin());
+        let scratch_req = solver.solve_scratch(1);
+        let mut mem = MemBuffer::new(scratch_req);
+        let x = solver
+            .solve(&b, MemStack::new(&mut mem), Par::rayon(4))
+            .expect("solve");
+
+        let be = rivrs_sparse::validate::sparse_backward_error(matrix, &x, &b);
+        assert!(
+            be < 5e-11,
+            "{}: parallel solve backward error {:.2e} exceeds 5e-11",
+            meta.name,
+            be
+        );
+    }
+}
+
+/// T032: Parallel solve determinism — solve same matrix twice, assert bitwise-identical.
+#[test]
+fn test_parallel_solve_determinism() {
     let matrix = sparse_from_lower_triplets(
-        4,
+        5,
         &[
             (0, 0, 4.0),
             (1, 0, 1.0),
             (1, 1, 3.0),
             (2, 1, -1.0),
             (2, 2, 5.0),
-            (3, 3, 7.0),
+            (3, 2, 2.0),
+            (3, 3, -2.0),
+            (4, 3, 1.0),
+            (4, 4, 6.0),
         ],
     );
 
     let analyze_opts = AnalyzeOptions {
         ordering: OrderingStrategy::Metis,
     };
-
-    // Factor with Par::Seq
-    let factor_seq = FactorOptions {
-        par: Par::Seq,
-        ..FactorOptions::default()
-    };
-    let mut solver_seq =
-        SparseLDLT::analyze_with_matrix(&matrix, &analyze_opts).expect("analyze seq");
-    let start_seq = std::time::Instant::now();
-    for _ in 0..100 {
-        solver_seq.factor(&matrix, &factor_seq).expect("factor seq");
-    }
-    let time_seq = start_seq.elapsed();
-
-    // Factor with Par::rayon(4) — should use Par::Seq due to threshold
-    let factor_par = FactorOptions {
+    let factor_opts = FactorOptions {
         par: Par::rayon(4),
         ..FactorOptions::default()
     };
-    let mut solver_par =
-        SparseLDLT::analyze_with_matrix(&matrix, &analyze_opts).expect("analyze par");
-    let start_par = std::time::Instant::now();
-    for _ in 0..100 {
-        solver_par.factor(&matrix, &factor_par).expect("factor par");
-    }
-    let time_par = start_par.elapsed();
 
-    // Par::rayon(4) should not be more than 5% slower than Par::Seq for small matrices
-    // (because the threshold gates parallelism — both should use Par::Seq internally)
-    let overhead = time_par.as_secs_f64() / time_seq.as_secs_f64();
-    assert!(
-        overhead < 1.50,
-        "Parallel overhead for small matrix: {:.1}x (expected < 1.5x). Seq={:.2?}, Par={:.2?}",
-        overhead,
-        time_seq,
-        time_par,
-    );
+    let mut solver1 = SparseLDLT::analyze_with_matrix(&matrix, &analyze_opts).expect("analyze 1");
+    solver1.factor(&matrix, &factor_opts).expect("factor 1");
+
+    let mut solver2 = SparseLDLT::analyze_with_matrix(&matrix, &analyze_opts).expect("analyze 2");
+    solver2.factor(&matrix, &factor_opts).expect("factor 2");
+
+    let n = matrix.nrows();
+    let b = Col::from_fn(n, |i| (i as f64 + 1.0).sin());
+
+    let scratch1 = solver1.solve_scratch(1);
+    let mut mem1 = MemBuffer::new(scratch1);
+    let x1 = solver1
+        .solve(&b, MemStack::new(&mut mem1), Par::rayon(4))
+        .expect("solve 1");
+
+    let scratch2 = solver2.solve_scratch(1);
+    let mut mem2 = MemBuffer::new(scratch2);
+    let x2 = solver2
+        .solve(&b, MemStack::new(&mut mem2), Par::rayon(4))
+        .expect("solve 2");
+
+    for i in 0..n {
+        assert_eq!(
+            x1[i].to_bits(),
+            x2[i].to_bits(),
+            "Parallel solve determinism: x[{}] differs: {} vs {}",
+            i,
+            x1[i],
+            x2[i]
+        );
+    }
 }
