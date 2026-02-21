@@ -1604,6 +1604,12 @@ fn factor_inner(
     let mut k = 0;
     let mut end_pos = p;
 
+    // Pre-allocated buffers reused across block iterations to avoid
+    // per-block allocations in the hot loop.
+    let mut panel_perm_buf = vec![0.0f64; ib];
+    let mut row_perm_buf = vec![0.0f64; ib];
+    let mut col_order_buf = vec![0usize; ib];
+
     // BLAS-3 Factor/Apply/Update loop with ib-sized inner blocks.
     //
     // Matches SPRAL's `run_elim_pivoted_notasks` architecture:
@@ -1661,9 +1667,11 @@ fn factor_inner(
         //    according to block_perm so that TRSM sees the correct input.
         let panel_start = block_end;
         for r in panel_start..m {
-            let orig: Vec<f64> = (0..block_size).map(|i| a[(r, k + block_perm[i])]).collect();
             for i in 0..block_size {
-                a[(r, k + i)] = orig[i];
+                panel_perm_buf[i] = a[(r, k + block_perm[i])];
+            }
+            for i in 0..block_size {
+                a[(r, k + i)] = panel_perm_buf[i];
             }
         }
 
@@ -1689,21 +1697,20 @@ fn factor_inner(
         //    happens before apply_pivot_app). This ensures the matrix is in a
         //    consistent permuted state regardless of threshold outcome.
         if k > 0 {
-            let mut temp = vec![0.0f64; block_size];
             for c in 0..k {
                 for i in 0..block_size {
-                    temp[i] = a[(k + block_perm[i], c)];
+                    row_perm_buf[i] = a[(k + block_perm[i], c)];
                 }
                 for i in 0..block_size {
-                    a[(k + i, c)] = temp[i];
+                    a[(k + i, c)] = row_perm_buf[i];
                 }
             }
         }
 
         // 6. UPDATE COL_ORDER by block_perm (always, not just on success).
-        let orig_order: Vec<usize> = col_order[k..k + block_size].to_vec();
+        col_order_buf[..block_size].copy_from_slice(&col_order[k..k + block_size]);
         for i in 0..block_size {
-            col_order[k + i] = orig_order[block_perm[i]];
+            col_order[k + i] = col_order_buf[block_perm[i]];
         }
 
         // 7. APPLY: TRSM on panel below + threshold check

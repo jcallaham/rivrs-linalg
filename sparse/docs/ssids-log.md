@@ -1,5 +1,113 @@
 # SSIDS Development Log
 
+## Phase 8.1g: Sequential Profiling & Optimization
+
+**Status**: Complete
+**Branch**: `018-sequential-profiling-optimization`
+**Date**: 2026-02-20
+
+### Summary
+
+Added per-supernode timing instrumentation to the multifrontal factorization loop,
+optimized allocation hotspots in `factor_inner`, and created baseline collection and
+workload analysis tools. All instrumentation is behind `#[cfg(feature = "diagnostic")]`
+for zero-overhead production builds.
+
+### What Was Built
+
+1. **Per-supernode timing instrumentation** (`src/aptp/numeric.rs`)
+   - Extended `PerSupernodeStats` with three `Duration` fields: `assembly_time`,
+     `kernel_time`, `extraction_time` (all behind `#[cfg(feature = "diagnostic")]`)
+   - Extended `FactorizationStats` with aggregate timing: `total_assembly_time`,
+     `total_kernel_time`, `total_extraction_time`
+   - Added `ProfileSession` instrumentation with Chrome Trace hierarchy:
+     `factor_loop > supernode_{s} > {assembly, dense_kernel, extraction}`
+   - `FinishedSession` stored on `AptpNumeric` for programmatic trace access
+
+2. **Allocation hotspot optimization** (`src/aptp/factor.rs`)
+   - Hoisted `panel_perm_buf` (Vec<f64>) before outer block loop — eliminates
+     ~15K allocations per large front
+   - Hoisted `row_perm_buf` (Vec<f64>) before outer block loop
+   - Hoisted `col_order_buf` (Vec<usize>) before outer block loop — replaces
+     per-block `.to_vec()` with `copy_from_slice` reuse
+   - `BlockBackup` reuse evaluated and deferred: varying dimensions per block
+     and faer `Mat` lacking in-place resize make it impractical; deferred to
+     Phase 9.1 (arena memory)
+
+3. **Baseline collection tool** (`examples/baseline_collection.rs`)
+   - Records per-phase timing (ordering, symbolic, factor, solve), per-supernode
+     diagnostic stats, peak RSS, and backward error for SuiteSparse matrices
+   - Outputs structured JSON to `target/benchmarks/baselines/`
+   - Supports `--ci-only` for CI subset and `--compare <prev.json>` for regression
+     detection (>10% change threshold)
+
+4. **Workload analysis tool** (`examples/workload_analysis.rs`)
+   - Classifies matrices by workload distribution using per-supernode timing
+   - `ParallelismClass` enum: TreeLevel (top 10% time < 30%), IntraNode (> 80%),
+     Mixed (30-80%)
+   - Produces front size histograms and time-by-front-size breakdowns
+   - Summary classification table with Phase 8.2 parallelism recommendation
+
+### Key Design Decisions
+
+- **Feature gating**: All timing instrumentation behind `#[cfg(feature = "diagnostic")]`,
+  not `test-util`. This allows profiling release builds without pulling in test
+  infrastructure. Required restructuring `benchmarking` module: `rss` submodule always
+  available, other submodules gated behind `test-util`.
+- **Types in examples, not lib**: `PerformanceBaseline`, `WorkloadProfile`, etc. live in
+  the example files, not in the library. They're analysis tools, not solver API.
+- **Buffer hoisting scope**: Only hoisted buffers with clear per-iteration allocation
+  patterns. Left `BlockBackup` and frontal matrix allocation for Phase 9.1 arena memory.
+
+### Module Gate Changes
+
+The `profiling` and `benchmarking` modules were originally gated behind `test-util` only.
+Phase 8.1g requires profiling with `diagnostic` (for Chrome Trace in factorization) and
+`benchmarking::rss` (for peak RSS in baseline collection). Solution:
+
+- `profiling`: `#[cfg(any(feature = "test-util", feature = "diagnostic"))]`
+- `benchmarking`: same gate at module level; internally, `rss` always available,
+  `baseline`/`config`/`report`/`results`/`traits` gated behind `test-util`
+
+### Correctness Verification
+
+- 358 unit tests pass (with and without `diagnostic` feature)
+- All 65 SuiteSparse matrices pass (`--ignored` tests, debug mode)
+- Clippy clean for both `--all-targets` and `--all-targets --features diagnostic`
+- No changes to solver algorithm or numerical code — only instrumentation and buffer reuse
+
+### O(N^2) Profiling Bug (Found and Fixed)
+
+The initial implementation added per-supernode `SectionGuard` entries (supernode_N,
+assembly, dense_kernel, extraction) to `ProfileSession`. This created ~20K events
+for a 5K-supernode matrix. The `build_section_tree` algorithm in `session.finish()`
+has O(N^2) complexity in `attach_children` (scans all events per parent), causing
+factorization to take minutes instead of milliseconds with `diagnostic` enabled.
+
+**Fix**: Removed per-supernode section guards. Per-supernode timing is captured via
+`Instant::now()` and stored directly in `PerSupernodeStats`. The `ProfileSession`
+retains only the top-level `factor_loop` guard. The O(N^2) algorithm in
+`build_section_tree` should be refactored to O(N) stack-based approach in Phase 9.1.
+
+### What This Means for Phase 8.2
+
+Workload analysis results from all 65 SuiteSparse matrices:
+- **IntraNode**: 41 matrices (63%) — top 10% of fronts consume >80% of factor time
+- **Mixed**: 19 matrices (29%) — moderate concentration (30-80%)
+- **TreeLevel**: 5 matrices (8%) — evenly distributed workload
+
+**Recommendation**: Intra-node BLAS-3 parallelism first (pass `Par::rayon(n)` to
+faer dense operations in `apply_and_check`/`update_trailing`). Tree-level
+parallelism second (level-set scheduling for independent subtrees).
+
+See `docs/phase-8.1g-report.md` for complete analysis with per-matrix data.
+
+Run the tools on a development machine to collect data:
+```bash
+cargo run --example baseline_collection --features diagnostic --release
+cargo run --example workload_analysis --features diagnostic --release
+```
+
 ## Phase 8.1f: TPP as Primary for Small Fronts (65/65 SuiteSparse Pass)
 
 **Status**: Complete

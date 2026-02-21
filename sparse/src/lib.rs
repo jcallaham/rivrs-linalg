@@ -36,11 +36,11 @@ pub mod error;
 pub mod io;
 pub mod validate;
 
-#[cfg(feature = "test-util")]
+#[cfg(any(feature = "test-util", feature = "diagnostic"))]
 pub mod benchmarking;
 #[cfg(feature = "test-util")]
 pub mod debug;
-#[cfg(feature = "test-util")]
+#[cfg(any(feature = "test-util", feature = "diagnostic"))]
 pub mod profiling;
 #[cfg(feature = "test-util")]
 pub mod testing;
