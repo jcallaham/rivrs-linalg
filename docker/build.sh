@@ -7,8 +7,16 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m' # No Color
 
+# Detect host architecture and set target platform
+ARCH=$(uname -m)
+case "$ARCH" in
+	arm64|aarch64) PLATFORM="linux/arm64" ;;
+	x86_64)        PLATFORM="linux/amd64" ;;
+	*)             PLATFORM="linux/$ARCH"  ;;
+esac
+
 echo -e "${GREEN}=====================================${NC}"
-echo -e "${GREEN}rivrs-linalg Docker Build Script (ARM64)${NC}"
+echo -e "${GREEN}rivrs-linalg Docker Build Script${NC}"
 echo -e "${GREEN}=====================================${NC}"
 echo ""
 
@@ -40,17 +48,18 @@ echo "  Email: $GIT_USER_EMAIL"
 echo ""
 
 # Build the image
-echo -e "${GREEN}Building Docker image (ARM64)...${NC}"
-echo "This will take 10-15 minutes on first build (native ARM64 + Node.js)"
+echo -e "${GREEN}Building Docker image ($PLATFORM)...${NC}"
+echo "This will take 10-15 minutes on first build"
 echo ""
 echo -e "${YELLOW}Build context: repository root${NC}"
 echo -e "${YELLOW}Dockerfile: docker/Dockerfile${NC}"
+echo -e "${YELLOW}Platform: $PLATFORM${NC}"
 echo ""
 
 # Build from repository root so COPY references/ works
 cd ..
 docker build \
-	--platform linux/arm64 \
+	--platform "$PLATFORM" \
 	--build-arg RUST_VERSION=1.93.0 \
 	--build-arg CLAUDE_CODE_VERSION=latest \
 	--build-arg GIT_USER_NAME="$GIT_USER_NAME" \

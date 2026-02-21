@@ -69,7 +69,7 @@ if [ "$(id -u)" = "0" ]; then
   SUITESPARSE_DEST="/workspace/rivrs-linalg/sparse/test-data/suitesparse"
   if [ -f "$SUITESPARSE_ARCHIVE" ] && [ ! -f "$SUITESPARSE_DEST/.extracted" ]; then
     echo "Extracting SuiteSparse test matrices..."
-    mkdir -p "$SUITESPARSE_DEST"
+    su - node -c "mkdir -p '$SUITESPARSE_DEST'"
     su - node -c "tar xzf '$SUITESPARSE_ARCHIVE' -C '$SUITESPARSE_DEST'" 2>/dev/null && \
       su - node -c "touch '$SUITESPARSE_DEST/.extracted'" && \
       echo "SuiteSparse matrices extracted ($(du -sh "$SUITESPARSE_DEST" | awk '{print $1}'))" || \

@@ -2562,10 +2562,108 @@ prepare for public release (documentation, examples, packaging).
 - Decision criterion: implement if any CI matrices remain above SPRAL's 5e-11
   threshold after BLAS-3 dispatch is complete (Phase 8.1 follow-up).
 
-**Targeted performance fixes:**
-- Use Phase 1.4 profiling tools and Phase 8.2 benchmark results to identify
-  top 3 bottlenecks
-- Optimize allocation patterns, cache utilization, unnecessary copies
+**Targeted performance fixes (from SPRAL benchmark comparison):**
+
+The SPRAL benchmark suite (`examples/spral_benchmark.rs`) identified two classes of
+performance gap, each with a distinct root cause. The typical FEM/engineering matrix
+is only 5-15% slower than SPRAL — these fixes target the outliers.
+
+*9.1a: Supernode amalgamation — fixes c-71 (24.5×) and c-big (11.1×)*
+
+Root cause: these Schenk optimization matrices produce narrow supernodes (avg 2.17
+columns) inside large fronts (1000-5000 rows). rivrs has 4.5× more supernodes than
+SPRAL (35,372 vs 7,697 for c-71) because faer's relaxed merging is structurally
+unable to help. The result: 78% of factorization time is assembly + extraction
+overhead, not the dense APTP kernel.
+
+**Experiment result**: Tuning faer's `relax` parameter has NO effect. Even with
+`Custom(vec![(64, 1.0), (128, 0.8), (256, 0.5), (MAX, 0.2)])` (merge anything
+up to 64 cols with 100% fill tolerance), c-71 goes from 35,372 → 35,308 supernodes
+and c-big from 171,246 → 170,872. Factor time is unchanged within noise.
+
+**Root cause of faer's limitation**: faer's relaxed merging (`cholesky.rs:2461`)
+has a hard prerequisite: `child_index + 1 == parent_index`. Only children that
+are the immediately preceding supernode in column order are candidates for merging.
+For bushy assembly trees from 3D problems (nested dissection), a parent supernode
+typically has many children but at most ONE can be consecutive. All other children
+are skipped before the `relax` thresholds are ever evaluated.
+
+**SPRAL's approach** (`core_analyse.f90:806-822`): The `do_merge()` function
+iterates over ALL children of every parent and merges when EITHER:
+- `cc(par) == cc(node)-1 AND nelim(par) == 1` (structural match), OR
+- `nelim(par) < nemin AND nelim(node) < nemin` (both nodes small, `nemin=32`)
+The second condition is the powerhouse — it merges any small parent-child pair
+regardless of fill-in or index adjacency.
+
+**Implementation plan**: Custom amalgamation post-faer (Option B):
+1. Accept faer's fundamental supernodes from `factorize_symbolic_cholesky`
+2. Implement SPRAL-style `nemin`-based merge pass on the assembly tree:
+   walk in postorder, merge any parent-child pair where both have < `nemin` cols
+3. Rebuild the supernode-to-column mapping, row patterns, and `col_ptr_for_val`
+4. This requires bypassing faer's baked-in supernodal layout and maintaining
+   our own, which means owning the supernode metadata (begin/end arrays,
+   row patterns, value storage layout) rather than delegating to faer's
+   `SymbolicCholeskyRaw::Supernodal`.
+
+Estimated effort: 600-800 LOC in a new `amalgamation.rs` module.
+
+SPRAL reference: `core_analyse.f90:528-853` — `find_supernodes()` and `do_merge()`.
+faer reference: `cholesky.rs:2364-2544` — fundamental detection + relaxed merging.
+faer limitation: `cholesky.rs:2461` — consecutivity check blocks most merges.
+rivrs entry point: `src/aptp/symbolic.rs:284` — `factorize_symbolic_cholesky` call.
+
+Expected impact: 5-15× speedup on c-71/c-big by reducing supernode count 3-5×.
+
+*9.1b: Simplicial fast path — fixes small-matrix overhead (2-6×)*
+
+Root cause: 7 matrices (bloweybq, dixmaanl, linverse, spmsrtls, t2dal, mario001,
+rail_79841) have `num_supernodes == n` (every column is its own supernode). The
+code treats each 1-column supernode through the full frontal matrix machinery:
+~16-18 heap allocations per supernode (frontal `Mat::zeros`, `MixedDiagonal`,
+L11/D11/L21 extraction, contribution block, etc.). For bloweybq (10K supernodes),
+the kernel is only 14% of per-supernode time — the rest is allocation overhead.
+
+SPRAL handles this with `SmallLeafSubtree` — a specialized code path for small
+leaf subtrees that fits in L2 cache and processes supernodes sequentially without
+full frontal matrix construction.
+
+Options (in order of increasing effort):
+1. **Workspace reuse** (medium impact, low effort): Pre-allocate a single frontal
+   matrix workspace sized to `max_front_size` and reuse across supernodes. This
+   eliminates the ~16 per-supernode heap allocations. The contribution block
+   extraction can write into a pre-allocated buffer instead of `Mat::zeros`.
+   Key allocations to hoist out of the loop in `numeric.rs:435-567`:
+   - `Mat::zeros(m, m)` for frontal data (line 472)
+   - `MixedDiagonal::new(p)` in `factor.rs:2260`
+   - `Mat::zeros(ne, ne)` for L11 extraction (line 979)
+   - `Mat::zeros(size, size)` for contribution block (line 1112)
+2. **Simplicial fast path** (high impact, medium effort): When faer selects
+   simplicial decomposition, bypass frontal matrix machinery entirely and perform
+   column-by-column LDL^T operating directly on CSC storage. This is what SPRAL
+   and most mature solvers do for very sparse matrices.
+3. **In-place contribution block** (medium impact, medium effort): Instead of
+   copying the Schur complement into a new `Mat`, keep a view into the frontal
+   matrix's trailing submatrix. Eliminates O((m-ne)^2) copy per supernode.
+
+SPRAL references:
+- `SmallLeafSymbolicSubtree.hxx:18-109` — leaf subtree symbolic setup
+- `SmallLeafNumericSubtree.hxx:38-220` — sequential factorization without
+  full frontal matrices
+- `BlockPool.hxx:16-82` — fixed-size block pool for workspace reuse
+- `BuddyAllocator.hxx:18-148` — buddy allocator for variable-size workspace
+- `NumericSubtree.hxx:75-81` — per-thread workspace initialization
+
+rivrs entry points:
+- `src/aptp/numeric.rs:435-567` — main factorization loop (allocation hotspot)
+- `src/aptp/numeric.rs:968-1138` — `extract_front_factors` + `extract_contribution`
+
+Expected impact: workspace reuse alone should give 2-3× on these matrices;
+simplicial fast path could close the gap to within 1.5× of SPRAL.
+
+*9.1c: General allocation optimization*
+- Use Phase 1.4 profiling tools and SPRAL benchmark results to identify remaining
+  bottlenecks beyond 9.1a and 9.1b
+- Optimize cache utilization, unnecessary copies
 - Verify no performance regressions
 
 **Items from Phase 5 SPRAL comparison** *(added after Phase 5 completion)*:
@@ -2623,12 +2721,14 @@ SPRAL that deterministic tests missed.
   full analysis.
 
 **Success Criteria:**
-- [ ] Arena allocation reduces peak memory on large problems
+- [ ] Arena/workspace allocation reduces peak memory on large problems
 - [ ] Peak memory within 50% of symbolic prediction
 - [ ] Property-based tests pass on random matrices (size 5–500)
 - [ ] No panics on any invalid input (clean error returns)
 - [ ] >90% code coverage on core solver code (`aptp/`, `error.rs`, `validate.rs`)
-- [ ] Top bottlenecks identified and addressed
+- [ ] c-71 and c-big within 2× of SPRAL factor time (currently 11-25×)
+- [ ] Simplicial matrices (bloweybq, dixmaanl, etc.) within 2× of SPRAL (currently 2-6×)
+- [ ] Full SuiteSparse suite median factor time ratio < 1.3× vs SPRAL
 
 **Time Estimate:** 2 weeks
 

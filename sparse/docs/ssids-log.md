@@ -1,5 +1,99 @@
 # SSIDS Development Log
 
+## Supernode Relaxation Experiment
+
+**Status**: Complete (experiment + updated plan)
+**Date**: 2026-02-21
+
+### Finding
+
+Tuning faer's `SymbolicSupernodalParams.relax` thresholds has **no effect** on c-71
+and c-big supernode counts. Even with the most aggressive settings (`(64, 1.0)` —
+merge anything up to 64 cols with 100% fill tolerance), c-71 drops from 35,372 →
+35,308 supernodes. Factor time is unchanged within noise.
+
+**Root cause**: faer's relaxed merging (`cholesky.rs:2461`) requires `child_index + 1
+== parent_index` — only the immediately preceding supernode in column order is a
+candidate for merging. For bushy assembly trees from nested dissection, most
+parent-child pairs fail this check before `relax` thresholds are ever evaluated.
+
+**SPRAL comparison**: SPRAL's `do_merge()` iterates over ALL children and merges when
+both have < `nemin=32` columns, regardless of index adjacency. This is what reduces
+c-71 from ~35K to ~7.7K supernodes.
+
+**Conclusion**: Phase 9.1a must implement custom amalgamation post-faer (SPRAL-style
+`nemin`-based merging on the assembly tree). The `SupernodeRelax` API added to
+`AptpSymbolic` remains useful for forcing supernodal mode on sparse matrices, but
+cannot fix the c-71/c-big performance gap.
+
+### Artifacts
+
+- `examples/relax_experiment.rs` — experiment driver
+- `src/aptp/symbolic.rs` — `SupernodeRelax` enum and `analyze_with_relax()`
+- `src/aptp/solver.rs` — `AnalyzeOptions.supernode_relax` field
+
+---
+
+## SPRAL Benchmark Comparison (Pre-Phase 9)
+
+**Status**: Complete (analysis only — no code changes)
+**Date**: 2026-02-21
+
+### Summary
+
+Built a SPRAL benchmark suite (`tools/spral_benchmark.f90`, `examples/spral_benchmark.rs`)
+that runs SPRAL's SSIDS with its own MC64+METIS ordering on 65 SuiteSparse matrices.
+Side-by-side comparison with rivrs at OMP_NUM_THREADS=1 reveals the overall performance
+picture and two specific classes of outlier.
+
+### Overall Results
+
+- **Median factor time ratio (rivrs/SPRAL)**: ~1.13× (rivrs 13% slower)
+- **Bulk FEM/engineering matrices**: 1.05-1.15× — very close to SPRAL
+- **rivrs wins**: ncvxqp family (0.63-0.75×), astro-ph (0.62×), thread (0.65×)
+- **Two major outliers**: c-71 (24.5×), c-big (11.1×) — Schenk optimization matrices
+- **Small-matrix overhead**: 7 matrices at 2-6× (bloweybq, dixmaanl, linverse, etc.)
+
+### Root Cause Analysis
+
+**Outlier 1 — c-71/c-big (narrow supernodes in large fronts):**
+rivrs has 4.5× more supernodes than SPRAL (35,372 vs 7,697 for c-71) because faer's
+relaxed merging defaults are too conservative for these matrices. Average supernode
+width is 2.17 columns inside fronts of 1000-5000 rows. Assembly + extraction is 78%
+of total time; the dense kernel is only 20%. Fix: tune faer's `relax` parameter or
+implement SPRAL-style `nemin` merging (`core_analyse.f90:528-853`).
+
+**Outlier 2 — simplicial matrices (per-supernode overhead):**
+All 7 small-matrix outliers have `num_supernodes == n` (every column is its own
+supernode). The code performs ~16-18 heap allocations per supernode through the full
+frontal matrix machinery. For bloweybq, the actual kernel is 14% of per-supernode
+cost. Fix: workspace reuse (hoist allocations out of the per-supernode loop) and/or
+a simplicial fast path. SPRAL uses `SmallLeafSubtree` for this case.
+
+### Key Decision: Backward Error Norms
+
+Fixed the Fortran benchmark driver to use L2/Frobenius norms (matching rivrs and
+Duff et al 2020). The original infinity-norm produced values 100-1000× larger,
+making the comparison misleading. Both solvers achieve excellent accuracy.
+
+### Artifacts
+
+- `tools/spral_benchmark.f90` — Fortran driver (SPRAL does own ordering)
+- `examples/spral_benchmark.rs` — Rust orchestrator (tables + JSON output)
+- `tools/build_spral.sh` — Updated to compile both driver binaries
+- JSON results in `target/benchmarks/spral/`
+
+### Impact on Phase 9
+
+Added three targeted performance items to Phase 9.1 plan:
+- 9.1a: Relaxed supernode merging (c-71/c-big fix)
+- 9.1b: Simplicial fast path + workspace reuse (small-matrix fix)
+- 9.1c: General allocation optimization
+Added quantitative success criteria (c-71/c-big < 2× SPRAL, simplicial < 2×,
+median < 1.3×).
+
+---
+
 ## Phase 8.2: Parallel Factorization & Solve
 
 **Status**: Complete
@@ -53,10 +147,10 @@ All parallel code is safe Rust — no `unsafe`, no `UnsafeCell`.
 ### Tests Added
 
 - `test_parallel_factor_ci_subset` (ignored): CI subset with `Par::rayon(4)`, backward error < 5e-11
-- `test_parallel_factor_determinism`: Bitwise-identical factors at fixed thread count
-- `test_parallel_correctness_small_matrices`: All hand-constructed matrices, Seq vs Par identical
+- `test_parallel_factor_determinism`: 500-node random matrix, Seq vs Par agree within 1e-12
+- `test_parallel_correctness_mixed_sizes`: Small hand-constructed (bitwise identity) + large generated (backward error)
 - `test_parallel_solve_ci_subset` (ignored): CI subset solve with `Par::rayon(4)`
-- `test_parallel_solve_determinism`: Bitwise-identical solutions at fixed thread count
+- `test_parallel_solve_determinism`: 500-node random matrix, Seq vs Par agree within 1e-12
 
 ---
 

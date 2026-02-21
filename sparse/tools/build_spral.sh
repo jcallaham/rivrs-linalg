@@ -89,7 +89,24 @@ echo "=== Building static library ==="
 
 ar rcs libspral.a *.o
 
+echo "=== Compiling SPRAL driver binaries ==="
+SPRAL_TOOLS="$(cd "$(dirname "$0")" && pwd)"
+
+# Benchmark driver (SPRAL does its own ordering)
+gfortran -O2 -fopenmp -I $OUT -o /tmp/spral_benchmark \
+  $SPRAL_TOOLS/spral_benchmark.f90 \
+  -Wl,--whole-archive $OUT/libspral.a -Wl,--no-whole-archive \
+  $METIS_LIB -lopenblas -lstdc++ -lm -lgomp
+echo "Benchmark driver: /tmp/spral_benchmark"
+
+# Full solve driver (user-supplied ordering, for spral_solve_comparison)
+gfortran -O2 -fopenmp -I $OUT -o /tmp/spral_full_solve \
+  $SPRAL_TOOLS/spral_full_solve.f90 \
+  -Wl,--whole-archive $OUT/libspral.a -Wl,--no-whole-archive \
+  $METIS_LIB -lopenblas -lstdc++ -lm -lgomp
+echo "Full solve driver: /tmp/spral_full_solve"
+
 echo "=== Done ==="
 echo "Library: $OUT/libspral.a"
 echo "Modules: $OUT/*.mod"
-ls -la $OUT/libspral.a
+ls -la $OUT/libspral.a /tmp/spral_benchmark /tmp/spral_full_solve
