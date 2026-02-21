@@ -875,7 +875,7 @@ fn main() {
     eprintln!("JSON written to: {}", out_path.display());
 
     // Also print JSON to stdout for piping
-    println!("{json}");
+    //     println!("{json}");
 }
 
 fn chrono_timestamp() -> String {

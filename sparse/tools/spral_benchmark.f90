@@ -162,8 +162,18 @@ program spral_benchmark_driver
   end if
   write(0, '(a,i5,a,f8.3,a)') 'solve flag=', inform%flag, ' (', solve_s, 's)'
 
-  ! Compute backward error: ||Ax - b||_inf / (||A||_inf * ||x||_inf + ||b||_inf)
-  ! A is stored as lower triangle CSC, but represents full symmetric matrix
+  ! Compute backward error: ||Ax - b||_2 / (||A||_F * ||x||_2 + ||b||_2)
+  ! Uses L2/Frobenius norms to match rivrs sparse_backward_error() and
+  ! the convention in Duff, Hogg & Lopez (2020).
+  !
+  ! A is stored as lower triangle CSC, but represents full symmetric matrix.
+  ! For ||A||_F: lower-triangle storage means each off-diagonal entry appears
+  ! once, but in the full matrix it appears twice. So:
+  !   ||A||_F^2 = sum(diag^2) + 2*sum(off_diag^2)
+  ! However, rivrs stores FULL symmetric CSC (both triangles), so its
+  ! sparse_backward_error sums all stored entries: sum(v^2) which equals
+  !   sum(diag^2) + 2*sum(off_diag^2) = ||A||_F^2
+  ! We replicate that here from the lower triangle.
   ax(1:n) = 0.0_wp
   norm_a = 0.0_wp
   do j = 1, n
@@ -173,23 +183,30 @@ program spral_benchmark_driver
       i = row(k)
       ! Lower triangle: a(i,j)
       ax(i) = ax(i) + val(k) * x(j)
-      norm_a = max(norm_a, abs(val(k)))
-      if (i /= j) then
+      ! Frobenius norm: diagonal counted once, off-diagonal counted twice
+      if (i == j) then
+        norm_a = norm_a + val(k)**2
+      else
+        norm_a = norm_a + 2.0_wp * val(k)**2
         ! Upper triangle (symmetric): a(j,i)
         ax(j) = ax(j) + val(k) * x(i)
       end if
     end do
   end do
+  norm_a = sqrt(norm_a)
 
-  ! Residual r = Ax - b
+  ! Residual: ||Ax - b||_2, ||x||_2, ||b||_2
   norm_r = 0.0_wp
   norm_x = 0.0_wp
   norm_b = 0.0_wp
   do i = 1, n
-    norm_r = max(norm_r, abs(ax(i) - rhs(i)))
-    norm_x = max(norm_x, abs(x(i)))
-    norm_b = max(norm_b, abs(rhs(i)))
+    norm_r = norm_r + (ax(i) - rhs(i))**2
+    norm_x = norm_x + x(i)**2
+    norm_b = norm_b + rhs(i)**2
   end do
+  norm_r = sqrt(norm_r)
+  norm_x = sqrt(norm_x)
+  norm_b = sqrt(norm_b)
 
   if (norm_a * norm_x + norm_b > 0.0_wp) then
     be = norm_r / (norm_a * norm_x + norm_b)
