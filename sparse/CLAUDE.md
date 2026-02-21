@@ -390,7 +390,10 @@ unit tests of the symbolic analysis and factorization kernel on small matrices.
 - Phase 9: Solver hardening (arena memory, proptest, fuzzing) + release preparation
 
 ## Recent Changes
+- 020-supernode-amalgamation: Added Rust 1.87+ (edition 2024) + faer 0.22, rayon 1.x (existing)
 - 019-parallel-factorization-solve: Adding rayon 1.x for tree-level parallelism, faer Par enum for intra-node BLAS parallelism
 
 ## Active Technologies
 - Rust 1.87+ (edition 2024), faer 0.22, rayon 1.x (019-parallel-factorization-solve)
+- Rust 1.87+ (edition 2024) + faer 0.22, rayon 1.x (existing) (020-supernode-amalgamation)
+- N/A (in-memory transformation of supernode metadata) (020-supernode-amalgamation)
