@@ -6,6 +6,7 @@
 //! Usage: cargo run --example solve_timing --release
 
 use faer::Col;
+use faer::Par;
 use rivrs_sparse::aptp::SparseLDLT;
 use rivrs_sparse::io::registry;
 use rivrs_sparse::validate::sparse_backward_error;
@@ -82,7 +83,7 @@ fn main() {
         let scratch = solver.solve_scratch(1);
         let mut mem = faer::dyn_stack::MemBuffer::new(scratch);
         let stack = faer::dyn_stack::MemStack::new(&mut mem);
-        let x = match solver.solve(&b, stack) {
+        let x = match solver.solve(&b, stack, Par::Seq) {
             Ok(x) => x,
             Err(e) => {
                 println!(

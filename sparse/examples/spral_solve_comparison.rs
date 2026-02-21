@@ -33,6 +33,7 @@ use std::path::Path;
 use std::process::Command;
 
 use faer::Col;
+use faer::Par;
 use faer::dyn_stack::{MemBuffer, MemStack};
 use faer::sparse::SparseColMat;
 
@@ -220,7 +221,7 @@ fn compare_matrix(path: &Path) -> Option<()> {
         let scratch = solver.solve_scratch(1);
         let mut mem = MemBuffer::new(scratch);
         let stack = MemStack::new(&mut mem);
-        let x_col = solver.solve(&rhs_col, stack)?;
+        let x_col = solver.solve(&rhs_col, stack, Par::Seq)?;
 
         // Compute backward error
         let mut ax = vec![0.0f64; n];

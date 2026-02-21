@@ -36,6 +36,7 @@
 //! - Bunch & Kaufman (1977), "Some Stable Methods for Calculating Inertia and
 //!   Solving Symmetric Linear Systems", Math. Comp.
 
+use faer::Par;
 use faer::linalg::matmul::triangular::{self as tri_matmul, BlockStructure};
 use faer::linalg::triangular_solve;
 use faer::perm::Perm;
@@ -102,6 +103,8 @@ pub struct AptpOptions {
     pub inner_block_size: usize,
     /// Strategy for columns that APTP fails to eliminate. Default: Tpp.
     pub failed_pivot_method: FailedPivotMethod,
+    /// Parallelism control for BLAS-3 operations (TRSM, GEMM). Default: `Par::Seq`.
+    pub par: Par,
 }
 
 impl Default for AptpOptions {
@@ -113,6 +116,7 @@ impl Default for AptpOptions {
             outer_block_size: 256,
             inner_block_size: 32,
             failed_pivot_method: FailedPivotMethod::Tpp,
+            par: Par::Seq,
         }
     }
 }

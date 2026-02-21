@@ -59,6 +59,7 @@ pub fn aptp_solve(
     numeric: &AptpNumeric,
     rhs: &mut [f64],
     _stack: &mut faer::dyn_stack::MemStack,
+    par: Par,
 ) -> Result<(), SparseError> {
     let n = symbolic.nrows();
     if rhs.len() != n {
@@ -86,7 +87,7 @@ pub fn aptp_solve(
 
     // 1. Forward solve (postorder = index order)
     for ff in factors {
-        forward_solve_supernode(ff, rhs, &mut work, &mut work2);
+        forward_solve_supernode(ff, rhs, &mut work, &mut work2, par);
     }
 
     // 2. Diagonal solve (any order)
@@ -96,7 +97,7 @@ pub fn aptp_solve(
 
     // 3. Backward solve (reverse postorder)
     for s in (0..n_supernodes).rev() {
-        backward_solve_supernode(&factors[s], rhs, &mut work, &mut work2);
+        backward_solve_supernode(&factors[s], rhs, &mut work, &mut work2, par);
     }
 
     Ok(())
@@ -122,6 +123,7 @@ pub(crate) fn forward_solve_supernode(
     rhs: &mut [f64],
     work: &mut [f64],
     work2: &mut [f64],
+    _par: Par,
 ) {
     let ne = ff.num_eliminated();
     if ne == 0 {
@@ -214,6 +216,7 @@ pub(crate) fn backward_solve_supernode(
     rhs: &mut [f64],
     work: &mut [f64],
     work2: &mut [f64],
+    _par: Par,
 ) {
     let ne = ff.num_eliminated();
     if ne == 0 {
@@ -345,7 +348,7 @@ mod tests {
         let mut work = vec![0.0f64; max_size];
         let mut work2 = vec![0.0f64; max_size];
         for ff in factors {
-            forward_solve_supernode(ff, &mut rhs_perm, &mut work, &mut work2);
+            forward_solve_supernode(ff, &mut rhs_perm, &mut work, &mut work2, Par::Seq);
         }
 
         // After forward solve, rhs_perm should be L^{-1} b_perm.
@@ -356,7 +359,7 @@ mod tests {
         }
         let n_sn = factors.len();
         for s in (0..n_sn).rev() {
-            backward_solve_supernode(&factors[s], &mut rhs_perm, &mut work, &mut work2);
+            backward_solve_supernode(&factors[s], &mut rhs_perm, &mut work, &mut work2, Par::Seq);
         }
 
         let mut x_computed = vec![0.0f64; n];
@@ -432,14 +435,14 @@ mod tests {
 
         // Full pipeline
         for ff in factors {
-            forward_solve_supernode(ff, &mut rhs, &mut work, &mut work2);
+            forward_solve_supernode(ff, &mut rhs, &mut work, &mut work2, Par::Seq);
         }
         for ff in factors {
             diagonal_solve_supernode(ff, &mut rhs, &mut work);
         }
         let n_sn = factors.len();
         for s in (0..n_sn).rev() {
-            backward_solve_supernode(&factors[s], &mut rhs, &mut work, &mut work2);
+            backward_solve_supernode(&factors[s], &mut rhs, &mut work, &mut work2, Par::Seq);
         }
 
         let mut x_computed = vec![0.0f64; n];
@@ -490,14 +493,14 @@ mod tests {
         let mut work2 = vec![0.0f64; max_size];
 
         for ff in factors {
-            forward_solve_supernode(ff, &mut rhs, &mut work, &mut work2);
+            forward_solve_supernode(ff, &mut rhs, &mut work, &mut work2, Par::Seq);
         }
         for ff in factors {
             diagonal_solve_supernode(ff, &mut rhs, &mut work);
         }
         let n_sn = factors.len();
         for s in (0..n_sn).rev() {
-            backward_solve_supernode(&factors[s], &mut rhs, &mut work, &mut work2);
+            backward_solve_supernode(&factors[s], &mut rhs, &mut work, &mut work2, Par::Seq);
         }
 
         let mut x_computed = vec![0.0f64; n];
@@ -564,7 +567,7 @@ mod tests {
         let mut mem = MemBuffer::new(scratch);
         let stack = MemStack::new(&mut mem);
 
-        let result = aptp_solve(&symbolic, &numeric, &mut rhs, stack);
+        let result = aptp_solve(&symbolic, &numeric, &mut rhs, stack, Par::Seq);
         assert!(
             matches!(result, Err(SparseError::DimensionMismatch { .. })),
             "expected DimensionMismatch, got {:?}",
@@ -586,7 +589,7 @@ mod tests {
         let mut mem = MemBuffer::new(scratch);
         let stack = MemStack::new(&mut mem);
 
-        let result = aptp_solve(&symbolic, &numeric, &mut rhs, stack);
+        let result = aptp_solve(&symbolic, &numeric, &mut rhs, stack, Par::Seq);
         assert!(result.is_ok(), "0x0 solve should succeed");
     }
 }

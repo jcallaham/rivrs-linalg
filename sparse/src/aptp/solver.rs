@@ -16,6 +16,7 @@
 //! - Liu (1992), "The Multifrontal Method for Sparse Matrix Solution"
 
 use faer::Col;
+use faer::Par;
 use faer::dyn_stack::{MemBuffer, MemStack, StackReq};
 use faer::perm::Perm;
 use faer::sparse::linalg::cholesky::SymmetricOrdering;
@@ -80,6 +81,9 @@ pub struct FactorOptions {
     pub outer_block_size: usize,
     /// Inner block size (ib) for two-level APTP. Default: 32.
     pub inner_block_size: usize,
+    /// Parallelism control for dense BLAS operations within supernodes
+    /// and tree-level scheduling. Default: `Par::Seq`.
+    pub par: Par,
 }
 
 impl Default for FactorOptions {
@@ -89,6 +93,7 @@ impl Default for FactorOptions {
             fallback: AptpFallback::BunchKaufman,
             outer_block_size: 256,
             inner_block_size: 32,
+            par: Par::Seq,
         }
     }
 }
@@ -102,6 +107,8 @@ pub struct SolverOptions {
     pub threshold: f64,
     /// Fallback strategy. Default: BunchKaufman.
     pub fallback: AptpFallback,
+    /// Parallelism control for factorization and solve. Default: `Par::Seq`.
+    pub par: Par,
 }
 
 impl Default for SolverOptions {
@@ -110,6 +117,7 @@ impl Default for SolverOptions {
             ordering: OrderingStrategy::MatchOrderMetis,
             threshold: 0.01,
             fallback: AptpFallback::BunchKaufman,
+            par: Par::Seq,
         }
     }
 }
@@ -269,6 +277,7 @@ impl SparseLDLT {
             fallback: options.fallback,
             outer_block_size: options.outer_block_size,
             inner_block_size: options.inner_block_size,
+            par: options.par,
             ..AptpOptions::default()
         };
 
@@ -301,9 +310,14 @@ impl SparseLDLT {
     ///
     /// - `SparseError::SolveBeforeFactor` if `factor()` has not been called
     /// - `SparseError::DimensionMismatch` if rhs length != matrix dimension
-    pub fn solve(&self, rhs: &Col<f64>, stack: &mut MemStack) -> Result<Col<f64>, SparseError> {
+    pub fn solve(
+        &self,
+        rhs: &Col<f64>,
+        stack: &mut MemStack,
+        par: Par,
+    ) -> Result<Col<f64>, SparseError> {
         let mut result = rhs.to_owned();
-        self.solve_in_place(&mut result, stack)?;
+        self.solve_in_place(&mut result, stack, par)?;
         Ok(result)
     }
 
@@ -319,6 +333,7 @@ impl SparseLDLT {
         &self,
         rhs: &mut Col<f64>,
         stack: &mut MemStack,
+        par: Par,
     ) -> Result<(), SparseError> {
         let numeric = self
             .numeric
@@ -356,8 +371,8 @@ impl SparseLDLT {
             }
         }
 
-        // 3. Core solve: aptp_solve(symbolic, numeric, &mut rhs_perm, stack)
-        aptp_solve(&self.symbolic, numeric, &mut rhs_perm, stack)?;
+        // 3. Core solve: aptp_solve(symbolic, numeric, &mut rhs_perm, stack, par)
+        aptp_solve(&self.symbolic, numeric, &mut rhs_perm, stack, par)?;
 
         // 4. Unscale: rhs_perm[i] *= scaling[i] (symmetric: same S applied)
         if let Some(ref scaling) = self.scaling {
@@ -395,6 +410,7 @@ impl SparseLDLT {
         let factor_opts = FactorOptions {
             threshold: options.threshold,
             fallback: options.fallback,
+            par: options.par,
             ..FactorOptions::default()
         };
 
@@ -404,7 +420,7 @@ impl SparseLDLT {
         let scratch = solver.solve_scratch(1);
         let mut mem = MemBuffer::new(scratch);
         let stack = MemStack::new(&mut mem);
-        solver.solve(rhs, stack)
+        solver.solve(rhs, stack, options.par)
     }
 
     /// Get inertia from the most recent factorization.

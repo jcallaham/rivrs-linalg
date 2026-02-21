@@ -19,7 +19,7 @@
 
 **Purpose**: Add Rayon dependency and verify the build compiles cleanly.
 
-- [ ] T001 Add `rayon = "1"` to `Cargo.toml` dependencies section and verify `cargo build` succeeds
+- [X] T001 Add `rayon = "1"` to `Cargo.toml` dependencies section and verify `cargo build` succeeds
 
 ---
 
@@ -29,14 +29,14 @@
 
 **CRITICAL**: No user story work can begin until this phase is complete.
 
-- [ ] T002 Add `par: Par` field (default `Par::Seq`) to `FactorOptions` and `SolverOptions` in `src/aptp/solver.rs`, update `Default` impls
-- [ ] T003 Add `par: Par` field (default `Par::Seq`) to `AptpOptions` in `src/aptp/factor.rs`, update `Default` impl
-- [ ] T004 Thread `par` from `FactorOptions` into `AptpOptions` in `SparseLDLT::factor()` and `SparseLDLT::factor_with_options()` in `src/aptp/solver.rs`
-- [ ] T005 Add `par: Par` parameter to `aptp_solve()` and `SparseLDLT::solve_in_place()` in `src/aptp/solve.rs` and `src/aptp/solver.rs`; thread `par` to per-supernode solve functions `forward_solve_supernode()`, `backward_solve_supernode()` in `src/aptp/solve.rs`
-- [ ] T006 Update `SparseLDLT::solve_full()` in `src/aptp/solver.rs` to propagate `par` from `SolverOptions` to `solve_in_place()`
-- [ ] T007 Update all call sites across tests, examples, and benchmarks to use new signatures: `src/aptp/solve.rs` tests, `src/aptp/numeric.rs` tests, `src/aptp/solver.rs` tests, all `examples/*.rs`, `benches/solver_benchmarks.rs`
-- [ ] T008 Define `INTRA_NODE_THRESHOLD` constant (value: 256) in `src/aptp/numeric.rs`
-- [ ] T009 Run `cargo test` (all 358 tests pass), `cargo clippy --all-targets`, `cargo clippy --all-targets --features diagnostic`, and `cargo bench --no-run`
+- [X] T002 Add `par: Par` field (default `Par::Seq`) to `FactorOptions` and `SolverOptions` in `src/aptp/solver.rs`, update `Default` impls
+- [X] T003 Add `par: Par` field (default `Par::Seq`) to `AptpOptions` in `src/aptp/factor.rs`, update `Default` impl
+- [X] T004 Thread `par` from `FactorOptions` into `AptpOptions` in `SparseLDLT::factor()` and `SparseLDLT::factor_with_options()` in `src/aptp/solver.rs`
+- [X] T005 Add `par: Par` parameter to `aptp_solve()` and `SparseLDLT::solve_in_place()` in `src/aptp/solve.rs` and `src/aptp/solver.rs`; thread `par` to per-supernode solve functions `forward_solve_supernode()`, `backward_solve_supernode()` in `src/aptp/solve.rs`
+- [X] T006 Update `SparseLDLT::solve_full()` in `src/aptp/solver.rs` to propagate `par` from `SolverOptions` to `solve_in_place()`
+- [X] T007 Update all call sites across tests, examples, and benchmarks to use new signatures: `src/aptp/solve.rs` tests, `src/aptp/numeric.rs` tests, `src/aptp/solver.rs` tests, all `examples/*.rs`, `benches/solver_benchmarks.rs`
+- [X] T008 Define `INTRA_NODE_THRESHOLD` constant (value: 256) in `src/aptp/numeric.rs`
+- [X] T009 Run `cargo test` (all 358 tests pass), `cargo clippy --all-targets`, `cargo clippy --all-targets --features diagnostic`, and `cargo bench --no-run`
 
 **Checkpoint**: API surface complete. All existing tests pass with Par::Seq defaults. No behavioral change.
 

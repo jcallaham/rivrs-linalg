@@ -49,6 +49,12 @@ use crate::profiling::{FinishedSession, ProfileSession};
 /// Sentinel value indicating a global column is not part of the current front.
 const NOT_IN_FRONT: usize = usize::MAX;
 
+/// Front dimension below which intra-node BLAS uses `Par::Seq` regardless of
+/// the user-supplied parallelism setting. Fronts smaller than this threshold
+/// do not benefit from parallel BLAS (overhead exceeds computation).
+#[allow(dead_code)] // Used in Phase 3 (US1)
+pub(crate) const INTRA_NODE_THRESHOLD: usize = 256;
+
 // ---------------------------------------------------------------------------
 // Internal types
 // ---------------------------------------------------------------------------

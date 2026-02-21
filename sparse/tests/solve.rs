@@ -10,6 +10,7 @@
 mod common;
 
 use faer::Col;
+use faer::Par;
 use faer::dyn_stack::{MemBuffer, MemStack};
 use faer::sparse::linalg::cholesky::SymmetricOrdering;
 use faer::sparse::{SparseColMat, Triplet};
@@ -69,7 +70,7 @@ fn test_aptp_solve_small_pd() {
     let scratch = rivrs_sparse::aptp::solve::aptp_solve_scratch(&numeric, 1);
     let mut mem = MemBuffer::new(scratch);
     let stack = MemStack::new(&mut mem);
-    rivrs_sparse::aptp::solve::aptp_solve(&symbolic, &numeric, &mut rhs_perm, stack)
+    rivrs_sparse::aptp::solve::aptp_solve(&symbolic, &numeric, &mut rhs_perm, stack, Par::Seq)
         .expect("solve");
 
     // Unpermute solution
@@ -315,7 +316,7 @@ fn test_solve_before_factor() {
     let mut scratch = MemBuffer::new(faer::dyn_stack::StackReq::empty());
     let stack = MemStack::new(&mut scratch);
 
-    let result = solver.solve(&b, stack);
+    let result = solver.solve(&b, stack, Par::Seq);
     assert!(
         matches!(result, Err(SparseError::SolveBeforeFactor { .. })),
         "expected SolveBeforeFactor error, got {:?}",
@@ -339,7 +340,7 @@ fn test_solve_dimension_mismatch() {
     let mut mem = MemBuffer::new(scratch_req);
     let stack = MemStack::new(&mut mem);
 
-    let result = solver.solve(&wrong_b, stack);
+    let result = solver.solve(&wrong_b, stack, Par::Seq);
     assert!(
         matches!(result, Err(SparseError::DimensionMismatch { .. })),
         "expected DimensionMismatch error, got {:?}",
@@ -459,7 +460,7 @@ fn test_solve_api_equivalence() {
     let scratch = solver.solve_scratch(1);
     let mut mem = MemBuffer::new(scratch);
     let stack = MemStack::new(&mut mem);
-    let x2 = solver.solve(&b, stack).expect("solve");
+    let x2 = solver.solve(&b, stack, Par::Seq).expect("solve");
 
     // Both should give the same result
     let diff: f64 = (0..3).map(|i| (x1[i] - x2[i]).powi(2)).sum::<f64>().sqrt();
@@ -510,7 +511,7 @@ fn test_refactor_different_values() {
     let scratch = solver.solve_scratch(1);
     let mut mem = MemBuffer::new(scratch);
     let stack = MemStack::new(&mut mem);
-    let x1 = solver.solve(&b1, stack).expect("solve 1");
+    let x1 = solver.solve(&b1, stack, Par::Seq).expect("solve 1");
     let be1 = sparse_backward_error(&a1, &x1, &b1);
     assert!(be1 < 1e-10, "refactor: backward error 1 = {:.2e}", be1);
 
@@ -524,7 +525,7 @@ fn test_refactor_different_values() {
     let scratch2 = solver.solve_scratch(1);
     let mut mem2 = MemBuffer::new(scratch2);
     let stack2 = MemStack::new(&mut mem2);
-    let x2 = solver.solve(&b2, stack2).expect("solve 2");
+    let x2 = solver.solve(&b2, stack2, Par::Seq).expect("solve 2");
     let be2 = sparse_backward_error(&a2, &x2, &b2);
     assert!(be2 < 1e-10, "refactor: backward error 2 = {:.2e}", be2);
 }
@@ -561,7 +562,7 @@ fn test_multiple_rhs_reuse() {
         let scratch = solver.solve_scratch(1);
         let mut mem = MemBuffer::new(scratch);
         let stack = MemStack::new(&mut mem);
-        let x = solver.solve(&b, stack).expect("solve");
+        let x = solver.solve(&b, stack, Par::Seq).expect("solve");
         let be = sparse_backward_error(&matrix, &x, &b);
         assert!(be < 1e-10, "RHS {}: backward error {:.2e}", idx, be);
     }
@@ -596,7 +597,7 @@ fn test_solve_scratch_sufficient() {
     let stack = MemStack::new(&mut mem);
 
     let b = Col::from_fn(3, |i| (i + 1) as f64);
-    let x = solver.solve(&b, stack).expect("solve with exact scratch");
+    let x = solver.solve(&b, stack, Par::Seq).expect("solve with exact scratch");
 
     let _be = sparse_backward_error(&matrix, &x, &b);
     // Note: b is NOT A*x_exact here, so backward error may be large.
@@ -632,7 +633,7 @@ fn test_workspace_reuse() {
     let b1 = Col::from_fn(3, |i| b1_vec[i]);
     {
         let stack = MemStack::new(&mut mem);
-        let x1 = solver.solve(&b1, stack).expect("solve 1");
+        let x1 = solver.solve(&b1, stack, Par::Seq).expect("solve 1");
         let be1 = sparse_backward_error(&matrix, &x1, &b1);
         assert!(be1 < 1e-10, "workspace reuse solve 1: be = {:.2e}", be1);
     }
@@ -643,7 +644,7 @@ fn test_workspace_reuse() {
     let b2 = Col::from_fn(3, |i| b2_vec[i]);
     {
         let stack = MemStack::new(&mut mem);
-        let x2 = solver.solve(&b2, stack).expect("solve 2");
+        let x2 = solver.solve(&b2, stack, Par::Seq).expect("solve 2");
         let be2 = sparse_backward_error(&matrix, &x2, &b2);
         assert!(be2 < 1e-10, "workspace reuse solve 2: be = {:.2e}", be2);
     }
@@ -877,7 +878,7 @@ fn test_symbolic_only_analyze_amd() {
     let scratch = solver.solve_scratch(1);
     let mut mem = MemBuffer::new(scratch);
     let stack = MemStack::new(&mut mem);
-    let x = solver.solve(&b, stack).expect("solve");
+    let x = solver.solve(&b, stack, Par::Seq).expect("solve");
     let be = sparse_backward_error(&matrix, &x, &b);
     assert!(be < 1e-10, "symbolic-only AMD backward error: {:.2e}", be);
 }
