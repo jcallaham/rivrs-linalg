@@ -185,7 +185,7 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 # Create welcome script
 RUN echo '#!/bin/bash' > /usr/local/bin/welcome.sh && \
 	echo 'echo "======================================"' >> /usr/local/bin/welcome.sh && \
-	echo 'echo "rivrs-linalg Monorepo Development Environment (ARM64)"' >> /usr/local/bin/welcome.sh && \
+	echo 'echo "rivrs-linalg Monorepo Development Environment ($(uname -m))"' >> /usr/local/bin/welcome.sh && \
 	echo 'echo "======================================"' >> /usr/local/bin/welcome.sh && \
 	echo 'echo ""' >> /usr/local/bin/welcome.sh && \
 	echo 'echo "Rust:        $(rustc --version)"' >> /usr/local/bin/welcome.sh && \

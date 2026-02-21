@@ -7,6 +7,14 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m' # No Color
 
+# Detect host architecture and set target platform
+ARCH=$(uname -m)
+case "$ARCH" in
+	arm64|aarch64) PLATFORM="linux/arm64" ;;
+	x86_64)        PLATFORM="linux/amd64" ;;
+	*)             PLATFORM="linux/$ARCH"  ;;
+esac
+
 echo -e "${GREEN}=====================================${NC}"
 echo -e "${GREEN}rivrs-linalg Docker Run Script${NC}"
 echo -e "${GREEN}=====================================${NC}"
@@ -52,7 +60,7 @@ else
 	# Run the container
 	docker run -it \
 		--name rivrs-linalg \
-		--platform linux/arm64 \
+		--platform "$PLATFORM" \
 		-v rivrs-linalg-workspace:/workspace \
 		-v rivrs-linalg-cargo-cache:/home/node/.cargo/registry \
 		-v rivrs-linalg-sccache-cache:/home/node/.cache/sccache \
