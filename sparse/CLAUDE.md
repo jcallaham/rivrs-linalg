@@ -8,14 +8,13 @@ This directory contains sparse linear algebra solver implementations for rivrs-l
 
 **Parent Project**: rivrs-linalg - Numerical Linear Algebra for Rivrs
 **Domain**: Sparse direct solvers (SSIDS, LDL^T factorization, APTP pivoting)
-**Current Status**: Phase 7 complete — Triangular solve & solver API (end-to-end SparseLDLT). Default ordering: MatchOrderMetis (MC64+METIS). CI results: 4/8 pass SPRAL's 5e-11 threshold; remaining matrices need two-level APTP (Phase 8). Ready for Phase 8 (Performance Optimization).
+**Current Status**: Phase 8.1g complete — full sequential solver with two-level APTP, 65/65 SuiteSparse matrices passing. Ready for Phase 8.2 (Parallel Factorization & Solve).
 
 ### Development docs
 
-The development plan for the SSIDS solver lives in docs/ssids-plan.md and is a **living document**.
-It should not be updated with arbitrary progress (will be tracked in specs/), but should remain an updated reflection of the plan as it evolves (for instance, if some decision is made to change the plan, this should be included in the plan doc).
-
-The docs/ folder also includes a ssids-log.md that should be used as a sort of changelog for development updates, including what was built, changed, fixed and why, organized by development phases corresponding to the plan document.
+- `docs/ssids-plan.md` — **Living document** describing the overall development plan. Update when the plan itself changes (new decisions, scope adjustments), not for arbitrary progress tracking.
+- `docs/ssids-log.md` — Changelog for development updates, organized by phase. Records what was built, changed, fixed, and why.
+- `docs/phase-8.1g-report.md` — Performance analysis report with workload distribution and Phase 8.2 parallelism recommendations.
 
 ## Licensing Strategy - Clean Room Implementation
 
@@ -30,39 +29,192 @@ The docs/ folder also includes a ssids-log.md that should be used as a sort of c
 
 ## Reference Materials
 
-Available in the parent `references/` directory:
+Available in the parent `references/` directory (symlink to `/opt/references`, not git-tracked):
 
-- **faer-rs/**: Pure Rust linear algebra library - primary dependency for matrix operations and sparse infrastructure
-- **lapack/**: Reference LAPACK implementation (BSD-licensed) - consult freely for dense kernels
+- **faer-rs/**: Pure Rust linear algebra library — primary dependency
+- **lapack/**: Reference LAPACK implementation (BSD-licensed)
 - **ssids/**: Academic literature converted to Markdown format
-- **spral/**: SSIDS development plan and reference materials
-
-Key faer infrastructure to leverage:
-- CSC (Compressed Sparse Column) storage format
-- Elimination tree computation
-- AMD (Approximate Minimum Degree) ordering
-- Permutation utilities
-- Workspace management patterns
+- **spral/**: SPRAL source code (BSD-3) — primary reference implementation
 
 ## Technology Stack
 
-**Core Linear Algebra:**
-- Use `faer` for dense linear algebra and sparse infrastructure (CSC, elimination trees, ordering)
-- Reference LAPACK for dense kernel patterns
-- Reference SPRAL for sparse solver patterns
+- **Rust 1.87+** (edition 2024)
+- **faer 0.22** — dense and sparse linear algebra (CSC, elimination trees, AMD ordering, permutations, workspace management, matmul, triangular solve)
+- **metis-sys 0.3** — METIS graph partitioning (vendored C source, used for nested dissection ordering)
+- **serde + serde_json** — JSON serialization for matrix metadata, reference factorizations, Chrome Trace profiling export
+- **rand + rand_distr** — random matrix generation (optional, behind `test-util` feature)
+- **criterion 0.5** — benchmarking (dev dependency)
+- **approx** — floating-point test comparisons (dev dependency)
 
-**Future Python Bindings:**
-- PyO3 for Rust-Python integration (not yet implemented)
-- `ndarray` for zero-copy data sharing with NumPy
+### Cargo Feature Flags
+
+| Feature | Purpose | Activates |
+|---------|---------|-----------|
+| `test-util` | Test infrastructure: random matrix generators, debug displays, profiling, benchmarking modules | `rand`, `rand_distr` |
+| `diagnostic` | Per-supernode timing instrumentation in factorization. Zero overhead when disabled. | Timing fields on `PerSupernodeStats`/`FactorizationStats`, `ProfileSession` on `AptpNumeric` |
+
+The `test-util` feature is automatically enabled in tests/benchmarks via the self-referential dev-dependency in `Cargo.toml`.
+
+## Source Code Layout
+
+```
+src/
+├── lib.rs              # Crate root: SolverPhase enum, module declarations
+├── error.rs            # Error types (SolverError, thiserror)
+├── validate.rs         # sparse_backward_error() — correctness validation
+├── io.rs               # IO module root
+├── io/                 # Matrix I/O
+│   ├── mtx.rs          # MatrixMarket (.mtx) reader (mirrors for full symmetric CSC)
+│   └── registry.rs     # Test matrix registry (metadata.json, CI-path fallback)
+├── aptp/               # Core APTP solver
+│   ├── mod.rs          # Public re-exports
+│   ├── pivot.rs        # PivotType, Block2x2
+│   ├── diagonal.rs     # MixedDiagonal (D factor: mixed 1x1/2x2, solve, inertia)
+│   ├── inertia.rs      # Inertia (eigenvalue sign counts)
+│   ├── perm.rs         # perm_from_forward()
+│   ├── symbolic.rs     # AptpSymbolic (wraps faer's SymbolicCholesky + pivot buffer estimates)
+│   ├── ordering.rs     # metis_ordering(), match_order_metis() (METIS + MC64 pipeline)
+│   ├── matching.rs     # mc64_matching() — weighted bipartite matching & scaling
+│   ├── factor.rs       # Dense APTP kernel: aptp_factor_in_place(), factor_inner (BLAS-3)
+│   ├── numeric.rs      # AptpNumeric::factor() — multifrontal factorization loop
+│   ├── solve.rs        # aptp_solve() — per-supernode forward/diagonal/backward solve
+│   └── solver.rs       # SparseLDLT — user-facing API (analyze/factor/solve)
+├── profiling/          # Performance profiling (behind test-util or diagnostic)
+│   ├── session.rs      # ProfileSession, SectionGuard (RAII), FinishedSession
+│   ├── section.rs      # Section timing data structures
+│   ├── memory.rs       # MemoryTracker (RSS snapshots)
+│   └── report.rs       # Chrome Trace JSON export
+├── debug/              # Debug visualization (behind test-util)
+│   ├── sparsity.rs     # SparsityDisplay (density chars, downsampling)
+│   └── etree.rs        # ETreeDisplay (tree + stats)
+├── benchmarking/       # Benchmark infrastructure (behind test-util or diagnostic)
+│   ├── config.rs       # BenchmarkConfig
+│   ├── baseline.rs     # Baseline management
+│   ├── results.rs      # BenchmarkResult
+│   ├── report.rs       # Report generation
+│   ├── rss.rs          # read_peak_rss_kb()
+│   └── traits.rs       # BenchmarkMatrix trait
+└── testing/            # Test infrastructure (behind test-util)
+    ├── harness.rs      # SolverTest trait, MockSolver
+    ├── validator.rs    # NumericalValidator
+    ├── cases.rs        # TestCaseFilter
+    └── generators.rs   # Random matrix generators (PD, indefinite)
+```
+
+### Key Examples
+
+```
+examples/
+├── baseline_collection.rs  # Structured JSON baseline collection (requires diagnostic)
+├── workload_analysis.rs    # Workload distribution + parallelism classification (requires diagnostic)
+├── export_frontal.rs       # Chrome Trace export for frontal matrices (requires diagnostic)
+├── solve_timing.rs         # End-to-end solve timing
+├── spral_comparison.rs     # Compare against SPRAL reference results
+├── accuracy_benchmark.rs   # Backward error across SuiteSparse suite
+└── front_sizes.rs          # Front size distribution analysis
+```
+
+## Commands Reference
+
+### Building
+
+```bash
+cargo build                          # Standard build
+cargo build --features diagnostic    # Build with per-supernode timing instrumentation
+cargo build --release                # Optimized build (needed for large matrices)
+```
+
+Note: `dev` and `test` profiles already use `opt-level = 3` because faer's dense LA is unusably slow at opt-level 0.
+
+### Testing
+
+```bash
+# Unit tests (358 tests, ~40s)
+cargo test
+
+# Unit tests with diagnostic feature (same tests, verifies cfg builds)
+cargo test --features diagnostic
+
+# SuiteSparse integration tests — CI subset (10 matrices, ~2min in debug)
+# These are #[ignore] tests that run the full solver pipeline per matrix
+cargo test -- --ignored --test-threads=1
+
+# SuiteSparse integration tests with diagnostic feature
+cargo test -- --ignored --test-threads=1 --features diagnostic
+
+# Run a specific test by name
+cargo test test_name
+
+# Run tests in a specific module
+cargo test aptp::factor
+```
+
+**Important**: SuiteSparse ignored tests MUST use `--test-threads=1` to avoid memory pressure from concurrent large-matrix factorizations.
+
+### Linting
+
+```bash
+cargo fmt --check                              # Check formatting
+cargo clippy --all-targets                     # Lint without diagnostic
+cargo clippy --all-targets --features diagnostic  # Lint with diagnostic (catches cfg issues)
+```
+
+### Benchmarking
+
+```bash
+# Criterion benchmarks (compile check only — useful for CI)
+cargo bench --no-run
+
+# Run Criterion benchmarks
+cargo bench
+
+# Baseline collection — structured JSON with per-phase timing, per-supernode stats, backward error
+cargo run --example baseline_collection --features diagnostic --release -- --ci-only
+cargo run --example baseline_collection --features diagnostic --release
+
+# Compare against previous baseline
+cargo run --example baseline_collection --features diagnostic --release -- --compare target/benchmarks/baselines/prev.json
+```
+
+Baseline JSON output goes to `target/benchmarks/baselines/baseline-<timestamp>.json`.
+
+### Profiling & Analysis
+
+```bash
+# Workload analysis — classifies matrices by parallelism strategy (TreeLevel/IntraNode/Mixed)
+cargo run --example workload_analysis --features diagnostic --release
+
+# Export Chrome Trace for a specific matrix (open in chrome://tracing or Perfetto)
+cargo run --example export_frontal --features diagnostic --release
+
+# Front size distribution
+cargo run --example front_sizes --release
+
+# Solve timing
+cargo run --example solve_timing --release
+
+# Per-supernode statistics
+cargo run --example supernode_stats --release
+```
+
+### CI (GitHub Actions)
+
+The CI workflow (`.github/workflows/ci.yml` at repo root) runs on push to `main` and PRs to `main`/`ssids`:
+
+- `cargo test --all-targets` on stable + MSRV (1.87)
+- `cargo fmt --check` + `cargo clippy --all-targets -- -D warnings`
+- `cargo doc --no-deps` with `-D warnings`
+- `cargo bench --no-run` (compile check)
+
+CI does NOT run `--ignored` tests (SuiteSparse matrices not available in CI environment).
 
 ## Algorithm Architecture
 
-Following the SSIDS plan phases:
+The solver implements a multifrontal LDL^T factorization with A Posteriori Threshold Pivoting (APTP). The pipeline is:
 
-- **Symbolic analysis**: Ordering (AMD/metis), elimination tree, symbolic factorization
-- **Numeric factorization**: LDL^T with A Posteriori Threshold Pivoting (APTP)
-- **Triangular solve**: Forward/backward substitution using factored form
-- **Supernodal optimization** (future): Blocked operations on dense frontal matrices
+1. **Analyze** (`SparseLDLT::analyze_with_matrix`): Ordering (MC64 matching + METIS nested dissection), symbolic factorization (elimination tree, supernodal structure, column counts)
+2. **Factor** (`SparseLDLT::factor` → `AptpNumeric::factor`): Multifrontal assembly + dense APTP kernel per supernode (BLAS-3 pipeline: factor_block_diagonal → TRSM → threshold check → GEMM)
+3. **Solve** (`SparseLDLT::solve` → `aptp_solve`): Per-supernode forward substitution, diagonal solve (MixedDiagonal), backward substitution
 
 ### Key Algorithm: APTP (A Posteriori Threshold Pivoting)
 
@@ -71,7 +223,16 @@ Unlike traditional threshold pivoting (which decides pivots before elimination),
 2. Checks stability after the fact
 3. Falls back to 2x2 (Bunch-Kaufman) pivots or delays columns when needed
 
-This allows better data locality and parallelism while maintaining numerical stability.
+The two-level architecture uses TPP (Threshold Partial Pivoting) as the primary strategy for small blocks (< 32 columns) and complete pivoting with BLAS-3 blocking for larger fronts.
+
+### Key Types
+
+- `SparseLDLT` — user-facing solver (analyze/factor/solve), handles MC64 scaling
+- `AptpSymbolic` — wraps faer's `SymbolicCholesky` + APTP-specific pivot buffer estimates
+- `AptpNumeric` — multifrontal factorization result (per-supernode L, D, permutations)
+- `MixedDiagonal` — the D factor with mixed 1x1/2x2 blocks (`solve_in_place`, `compute_inertia`)
+- `OrderingStrategy` — `Amd`, `Metis`, `MatchOrderMetis` (default)
+- `FactorizationStats` — aggregate pivot counts, delays, max front size, timing (with `diagnostic`)
 
 ## faer Integration: Transparent Composition
 
@@ -106,13 +267,19 @@ for concepts faer doesn't have.
 **API Design:**
 - Three-phase API: analyze → factorize → solve
 - Symbolic analysis result is reusable across multiple factorizations with same sparsity pattern
-- Use builder patterns for solver configuration (pivot threshold, ordering strategy, etc.)
-- Leverage Rust's type system for safety (e.g., factorized matrix types)
+- Configuration via `AnalyzeOptions`, `FactorOptions` structs
+- `MemStack` for solve workspace (factor allocates internally)
 
 **Error Handling:**
 - Use Result types for all fallible operations
 - Distinguish structural singularity (analysis) from numerical singularity (factorization)
 - Provide informative diagnostics (pivot delays, factorization statistics)
+
+**CSC Storage Convention:**
+- All matrices store FULL symmetric CSC (both upper and lower triangles)
+- `.mtx` reader mirrors entries to produce full symmetric storage
+- `sparse_backward_error` and matvec helpers must NOT mirror entries — regular matvec is correct
+- `scatter_original_entries` in `numeric.rs` has upper-triangle skip logic to avoid double-counting during frontal matrix assembly
 
 ## Development Workflow
 
@@ -126,19 +293,16 @@ When implementing a new component:
 6. Document academic references and SPRAL routines consulted
 7. Add comprehensive tests (hand-constructed matrices, SuiteSparse collection)
 8. Benchmark against SPRAL and other solvers
-9. Create Python bindings (future)
 
-## Rust guidelines
+## Rust Guidelines
 
 - Sort imports by: std, external, workspace, crate, super
 - Limit scope to minimum necessary (private over `pub(crate)` over `pub`, etc.)
 - No `.unwrap()` in non-test code
-- Use `cargo fmt --check`, `cargo clippy`, and `cargo test` throughout development to check code quality and test status
-- Tests that run the full SuiteSparse test set use `#[ignore]` and should be run with `cargo test -- --ignored --test-threads=1` before considering an implementation complete
-- Pay special attention to Rust edition-specific reserved keywords (e.g., `gen` is reserved in Rust 2024)
+- Pay special attention to Rust edition-specific reserved keywords (e.g., `gen` is reserved in Rust 2024 — use `rng.r#gen::<f64>()`)
 - When using faer or other Rust crates, always verify API types by reading the actual source/docs before using them. Do not assume tuple-based constructors — check for dedicated types like `Triplet`.
 
-Preferences (can be violated if needed)
+Preferences (can be violated if needed):
 - Immutability over mutation
 - Iterators over manual loops
 - Enums over dynamic dispatch (e.g. `dyn` trait)
@@ -156,13 +320,6 @@ Preferences (can be violated if needed)
 
 ## Testing Strategy
 
-- Unit tests with hand-constructed matrices (known factorizations)
-- Integration tests with SuiteSparse Matrix Collection
-- Property-based tests for numerical stability
-- Comparison tests against SPRAL results
-- Benchmark suite for performance regression testing
-- Python integration tests (future)
-
 ### Validation strategy
 
 Primary correctness validation (established in Phase 0.3 decision):
@@ -171,7 +328,7 @@ Primary correctness validation (established in Phase 0.3 decision):
 2. **Backward error**: `||Ax - b|| / (||A|| ||x|| + ||b||) < 5e-11` (SPRAL's threshold)
 3. **Hand-constructed matrices**: 15 matrices with analytically known factorizations
 4. **Property-based tests**: Inertia, symmetry preservation, permutation validity
-5. **SPRAL comparison**: Deferred to Phases 2-8 (performance benchmarking, large-matrix inertia)
+5. **SPRAL comparison**: Deferred (performance benchmarking, large-matrix inertia)
 
 ### Ordering for tests and benchmarks
 
@@ -182,6 +339,16 @@ indefinite matrices (bratu3d: 53K delays, backward error 5e-3), while MatchOrder
 `OrderingStrategy::Amd` should never be used in production; it exists only for
 unit tests of the symbolic analysis and factorization kernel on small matrices.
 
+### Test matrix storage (three-tier, no Git LFS)
+
+| Tier | Path | Contents | Size | Git status |
+|------|------|----------|------|------------|
+| Hand-constructed | `test-data/hand-constructed/` | 15 matrices + .json factorizations | ~144KB | Tracked |
+| CI subset | `test-data/suitesparse-ci/` | 10 representative SuiteSparse matrices | ~73MB | Tracked |
+| Full suite | `test-data/suitesparse/` | 67 SuiteSparse matrices | ~500MB | Gitignored |
+
+`test-data/metadata.json` is the matrix registry with `ci_subset: true` flags. The `registry.rs` module has CI-path fallback logic.
+
 ### Test infrastructure
 
 - `SolverTest` trait with `MockSolver` for pre-solver validation
@@ -189,20 +356,13 @@ unit tests of the symbolic analysis and factorization kernel on small matrices.
 - `TestCaseFilter` for composable test case selection
 - Random matrix generators (PD and indefinite) behind `test-util` feature
 
-### Testing Discipline for Implementation Phases
+### Testing discipline
 
-Five principles guiding test design for Phases 3+ (implementation-heavy):
-
-1. **Validation proportional to novelty**: Code that delegates to faer gets sanity checks and is included in integration tests. Code written from scratch (permutation remapping, assembly tree derivation, APTP kernel) gets mathematical proof-level tests with exact expected values.
-
-2. **Refactor for testability**: Extract non-trivial logic into standalone functions with minimal inputs. Example: `permute_symbolic_upper_triangle` was extracted from `compute_permuted_etree_and_col_counts` so permutation correctness can be tested independently of faer's symbolic Cholesky.
-
-3. **Regression tests before refactoring**: Before optimizing or restructuring code, encode its current correct behavior with exact expected values. These regression tests catch silent breakage during future changes.
-
-4. **Cross-validation with faer**: When both our code and faer compute overlapping quantities, assert consistency. Example: `col_counts.sum() == predicted_nnz` verifies our permuted structure matches faer's internal computation.
-
-5. **Property-based testing**: For implementation-dependent outputs (supernode boundaries, assembly tree shape), test structural properties rather than exact values. Example: assembly tree parent pointers must satisfy postorder (parent > child), total children + roots = total supernodes.
-
+1. **Validation proportional to novelty**: Code that delegates to faer gets sanity checks. Code written from scratch gets mathematical proof-level tests with exact expected values.
+2. **Refactor for testability**: Extract non-trivial logic into standalone functions with minimal inputs.
+3. **Regression tests before refactoring**: Encode current correct behavior with exact expected values before optimizing.
+4. **Cross-validation with faer**: Assert consistency when both our code and faer compute overlapping quantities.
+5. **Property-based testing**: For implementation-dependent outputs, test structural properties rather than exact values.
 
 ## Documentation Standards
 
@@ -217,39 +377,17 @@ Five principles guiding test design for Phases 3+ (implementation-heavy):
 ## Current Implementation Status
 
 **Completed:**
-- ✅ Phase 0.1: Literature review and reference library
-- ✅ Phase 0.2: Test matrix collection (82 matrices)
-- ✅ Phase 0.3: Deferred (reconstruction tests adopted as primary oracle)
-- ✅ Phase 0.4: Repository setup (IO modules, validation, CI, benchmarks)
-- ✅ Phase 1.1: Test infrastructure (harness, validator, generators, test-util feature)
+- Phase 0: Foundation — literature review, test matrix collection (82 matrices), repository setup
+- Phase 1: Infrastructure — test harness, benchmarking framework (Criterion), CI (GitHub Actions), profiling & debug tools
+- Phase 2: APTP data structures — PivotType, Block2x2, MixedDiagonal, Inertia, perm_from_forward
+- Phase 3: Symbolic analysis — AptpSymbolic wrapping faer's SymbolicCholesky + pivot buffer estimates
+- Phase 4: Ordering & preprocessing — METIS ordering, MC64 matching & scaling, match-order condensation pipeline
+- Phase 5: Dense APTP kernel — aptp_factor_in_place with swap-delayed-to-end architecture
+- Phase 6: Multifrontal numeric factorization — AptpNumeric, FrontalMatrix, extend-add, scatter
+- Phase 7: Triangular solve & solver API — aptp_solve, SparseLDLT (analyze/factor/solve), OrderingStrategy
+- Phase 8.1: Two-level APTP + BLAS-3 refactoring — TPP for small fronts, complete pivoting for large fronts, critical extract_front_factors bug fix. 65/65 SuiteSparse matrices pass.
+- Phase 8.1g: Sequential profiling & optimization — per-supernode timing instrumentation, allocation hotspot fixes, baseline collection tool, workload analysis (41/65 IntraNode, 19 Mixed, 5 TreeLevel)
 
-## Active Technologies
-- Rust 1.87+ (edition 2024) + faer 0.22 (sparse/dense LA)
-- serde + serde_json (JSON parsing for metadata and reference factorizations)
-- rand + rand_distr (random matrix generation, optional via `test-util` feature)
-- approx (test comparisons, dev dependency)
-- criterion (benchmarking, dev dependency)
-- Filesystem (test-data/ directory with .mtx and .json files, metadata.json registry)
-- Rust 1.87+ (edition 2024) + faer 0.22, criterion 0.5, serde/serde_json (existing) (006-benchmarking-framework)
-- JSON files for baselines (`target/benchmarks/baselines/`), CSV for exports (006-benchmarking-framework)
-- YAML (GitHub Actions workflow) + Rust 1.87+ (edition 2024) + GitHub Actions (`actions/checkout@v4`, `dtolnay/rust-toolchain@master`, `Swatinem/rust-cache@v2`) (007-ci-setup)
-- Rust 1.87+ (edition 2024) + faer 0.22 (sparse matrix types), serde/serde_json (Chrome Trace JSON export), std only for timing/threading (no new external deps) (008-profiling-debug-tools)
-- Rust 1.87+ (edition 2024) + faer 0.22 (sparse/dense LA), serde + serde_json (serialization for Inertia) (009-aptp-data-structures)
-- N/A (in-memory data structures only) (009-aptp-data-structures)
-- Rust 1.87+ (edition 2024) + faer 0.22 (symbolic Cholesky, AMD ordering, MemStack), serde/serde_json (existing, not new) (010-aptp-symbolic)
-- Rust 1.87+ (edition 2024) + faer 0.22 (existing), metis-sys 0.3.x (new — vendored METIS 5.x C source) (011-metis-ordering)
-- N/A (in-memory graph algorithms) (011-metis-ordering)
-- Rust 1.87+ (edition 2024) + faer 0.22 (sparse matrix types, permutations), std::collections::BinaryHeap (Dijkstra priority queue) (012-mc64-matching-scaling)
-- Rust 1.87+ (edition 2024) + faer 0.22 (sparse matrix types, permutations), metis-sys 0.3.x (vendored METIS 5.x) (013-match-order-condensation)
-- Rust 1.87+ (edition 2024) + faer 0.22 (dense matrix types, matmul, triangular solve), Phase 2 types (MixedDiagonal, PivotType, Block2x2, Inertia) (014-dense-aptp-kernel)
-- N/A (in-memory dense matrices only) (014-dense-aptp-kernel)
-- Rust 1.87+ (edition 2024) + faer 0.22 (dense LA, sparse types, permutations), Phase 2/3/5 modules (existing) (015-multifrontal-factorization)
-- Rust 1.87+ (edition 2024) + faer 0.22 (dense LA, sparse types, MemStack, triangular solve, matmul), metis-sys 0.3.x (METIS ordering), serde/serde_json (existing) (016-triangular-solve-api)
-- In-memory dense matrices per supernode (`Mat<f64>`), `MixedDiagonal` for D storage (016-triangular-solve-api)
-- Rust 1.87+ (edition 2024) + faer 0.22 (dense LA: matmul, triangular_solve, Mat/MatMut/MatRef), metis-sys 0.3.x (ordering, existing) (017-two-level-aptp)
-- In-memory dense matrices (Mat<f64>) per supernode; MixedDiagonal for D (017-two-level-aptp)
-
-## Recent Changes
-- 010-aptp-symbolic: Added Rust 1.87+ (edition 2024) + faer 0.22 (symbolic Cholesky, AMD ordering, MemStack), serde/serde_json (existing, not new)
-- 009-aptp-data-structures: Added Rust 1.87+ (edition 2024) + faer 0.22 (sparse/dense LA), serde + serde_json (serialization for Inertia)
-- 009-aptp-data-structures: Added [if applicable, e.g., PostgreSQL, CoreData, files or N/A]
+**Next:**
+- Phase 8.2: Parallel factorization & solve (intra-node BLAS-3 parallelism first, tree-level second)
+- Phase 9: Solver hardening (arena memory, proptest, fuzzing) + release preparation
