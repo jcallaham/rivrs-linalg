@@ -120,10 +120,11 @@ All parallel code is safe Rust — no `unsafe`, no `UnsafeCell`.
    - Per-supernode solve functions also gated by threshold
 
 3. **Tree-level parallel factorization** (`src/aptp/numeric.rs`)
-   - Refactored sequential postorder loop into recursive `factor_subtree()`
-   - Return-value pattern: each subtree returns `SubtreeResult` with all node results
-   - Uses `rayon::par_iter` for parallel children (no `unsafe`, no shared mutable state)
-   - `factor_single_supernode()` helper with per-task `global_to_local` allocation
+   - Iterative level-set scheduling (`factor_tree_levelset`): bottom-up wave processing
+     where each wave contains all supernodes whose children are already factored
+   - Return-value pattern: each supernode returns owned `SupernodeResult` (no unsafe)
+   - Uses `rayon::par_iter` for parallel waves (no shared mutable state)
+   - `factor_single_supernode()` helper accepts shared/thread-local `global_to_local` buffer
 
 4. **Parallel diagonal solve** (`src/aptp/solve.rs`)
    - Diagonal solve phase uses rayon `par_iter` when `par != Par::Seq`
@@ -138,19 +139,86 @@ All parallel code is safe Rust — no `unsafe`, no `UnsafeCell`.
 ### Key Design Decisions
 
 - **Safe Rust only**: Used return-value pattern instead of unsafe disjoint slice access.
-  `factor_subtree()` returns all results as owned `SubtreeResult` values. rayon's
-  `par_iter().map().collect()` handles parallel dispatch without shared mutable state.
+  rayon's `par_iter().map().collect()` handles parallel dispatch without shared mutable state.
+- **Iterative level-set (not recursive)**: Initial recursive `factor_subtree()` approach
+  overflowed rayon's 2MB worker stacks on deep elimination trees (c-71: 35K supernodes).
+  Replaced with iterative `factor_tree_levelset()` (Liu 1992 level-set scheduling).
+- **Thread-local buffer reuse**: `global_to_local` buffer (O(n) per supernode) was a major
+  allocation hotspot. Sequential path uses a single shared buffer. Parallel path uses
+  `thread_local!` with `Cell<Vec<usize>>` (take/set move semantics). `Cell` instead of
+  `RefCell` avoids re-entrant borrow panics from rayon work-stealing during nested BLAS
+  parallelism (`Par::rayon` in TRSM/GEMM can steal par_iter tasks onto the same thread).
 - **Threshold gating**: INTRA_NODE_THRESHOLD=256 prevents rayon overhead on small fronts.
   Both BLAS parallelism (TRSM/GEMM) and tree-level dispatch respect this threshold.
 - **Transparent faer composition**: Uses faer's `Par` enum directly, not a custom wrapper.
+- **Tolerance, not bitwise**: Parallel BLAS reorders FP operations, so parallel results
+  differ from sequential at the ULP level. Tests use 1e-14 relative tolerance, not
+  bitwise identity. This is inherent to parallel floating-point, not a correctness issue.
+
+### Post-Review Fixes
+
+1. **Stack overflow** (c-71 at T=2,4): Recursive `factor_subtree()` → iterative `factor_tree_levelset()`
+2. **RefCell panic**: `RefCell` → `Cell<Vec>` with take/set for thread-local buffers (rayon work-stealing re-entrancy)
+3. **Performance regression**: Per-supernode O(n) allocation → shared/thread-local buffer reuse
+4. **Bitwise test failure**: `to_bits()` comparison → 1e-14 relative tolerance
+5. **spral_benchmark.rs**: Added missing `Par` argument to `solver.solve()`
 
 ### Tests Added
 
-- `test_parallel_factor_ci_subset` (ignored): CI subset with `Par::rayon(4)`, backward error < 5e-11
+- `test_parallel_factor_ci_subset`: CI subset with `Par::rayon(4)`, backward error < 5e-11
 - `test_parallel_factor_determinism`: 500-node random matrix, Seq vs Par agree within 1e-12
-- `test_parallel_correctness_mixed_sizes`: Small hand-constructed (bitwise identity) + large generated (backward error)
-- `test_parallel_solve_ci_subset` (ignored): CI subset solve with `Par::rayon(4)`
+- `test_parallel_correctness_mixed_sizes`: Small hand-constructed + large generated, Seq vs Par within 1e-14
+- `test_parallel_solve_ci_subset`: CI subset solve with `Par::rayon(4)`
 - `test_parallel_solve_determinism`: 500-node random matrix, Seq vs Par agree within 1e-12
+
+### Parallel Benchmarking Results
+
+Full SuiteSparse collection (65 matrices), factor+solve, 1/2/4/8 threads on 8-core machine.
+Selected results (full table in ssids-plan.md):
+
+```
+Matrix                           n  max_front  T1_ms    T4_ms  spdup  T8_ms  spdup
+------------------------------------------------------------------------------------
+TreeLevel-dominated (wide trees, small fronts → best scaling):
+  INPRO/msdoor              415863       1209  1335.3   341.7  3.91x  334.5  3.99x
+  GHS_psdef/ldoor           952203       2053  3706.5  1049.6  3.53x 1034.3  3.58x
+  TSOPF/TSOPF_FS_b39_c7      28216        250    48.9    12.7  3.84x   12.4  3.96x
+  BenElechi/BenElechi1      245874       1941  1558.1   428.7  3.63x  411.4  3.79x
+  Oberwolfach/filter3D      106437        810   551.8   162.9  3.39x  160.9  3.43x
+  Boeing/pwtk               217918       1152  1253.5   376.9  3.33x  359.7  3.48x
+
+Mixed (moderate fronts + tree breadth):
+  GHS_psdef/inline_1        503712       3294  5788.5  1874.6  3.09x 1754.2  3.30x
+  Schenk_AFE/af_0_k101      503625       2550  2724.1   887.1  3.07x  864.9  3.15x
+  GHS_indef/d_pretok        182730       1180   488.0   164.1  2.97x  157.8  3.09x
+  Rothberg/cfd2             123440       2146  1159.3   425.1  2.73x  410.4  2.82x
+  GHS_indef/bratu3d          27792       1496   177.2    90.3  1.96x   82.2  2.16x
+
+IntraNode-dominated (large dense fronts → Amdahl-limited):
+  PARSEC/H2O                 67024       9258 36891.2 15247.0  2.42x 13838.7  2.67x
+  GHS_indef/sparsine         50000      11125 35689.2 20181.4  1.77x 16733.3  2.13x
+  ND/nd12k                   36000       7387 12632.0  7350.3  1.72x  6090.3  2.07x
+  DNVS/thread                29736       3427  2225.2  1539.5  1.45x  1426.0  1.56x
+
+Known outliers (narrow supernodes, fix deferred to Phase 9.1a):
+  GHS_indef/c-71             76638       2902 59302.0 39525.9  1.50x 39770.4  1.49x
+  Schenk_IBMNA/c-big        345241       5299 91118.7 50643.8  1.80x 50272.6  1.81x
+```
+
+**Summary statistics:**
+- Median speedup at T=4: ~2.5× across 65 matrices
+- 15+ matrices exceed 3× at T=4
+- T=4 → T=8 gains are modest (5-15%): parallelism saturates around 4 cores
+- IntraNode-dominated matrices plateau at 1.5-2.1× (single large front is the critical path)
+- c-71/c-big remain outliers at 1.5×/1.8× due to 35K narrow supernodes
+
+### CI Subset Refresh
+
+Replaced CI subset with 10 small, fast matrices (81MB → 19MB, <8s with 4 threads).
+Un-ignored 3 CI subset solve tests so they run as part of regular `cargo test`.
+
+New set: t2dal, bloweybq, linverse, vibrobox, SiNa (easy-indefinite),
+bratu3d, cvxqp3, ncvxqp1, blockqp1, aug3dcqp (hard-indefinite).
 
 ---
 
