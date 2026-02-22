@@ -39,6 +39,8 @@
 			}
 		}
 	},
+	"capAdd": ["SYS_ADMIN", "PERFMON"],
+	"securityOpt": ["seccomp=unconfined"],
 	"remoteUser": "node",
 	"remoteEnv": {
 		"NODE_OPTIONS": "--max-old-space-size=4096",

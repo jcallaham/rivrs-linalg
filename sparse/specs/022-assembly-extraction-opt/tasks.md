@@ -78,7 +78,7 @@
 - [X] T018 [US1] Implement `extend_add_mapped` in `src/aptp/numeric.rs` — uses precomputed row mapping instead of `global_to_local` lookups; `factor_single_supernode` dispatches to it when child has zero delays
 - [X] T019 [US1] Update `factor_single_supernode` and `factor_tree_levelset` call sites in `src/aptp/numeric.rs` — `assembly_maps: &AssemblyMaps` parameter threaded through sequential and parallel paths
 - [X] T020 [US1] Run `cargo test` and `cargo test --features diagnostic` to verify all unit tests pass with precomputed maps
-- [ ] T021 [US1] Run `cargo test -- --ignored --test-threads=1` to verify all 65 SuiteSparse matrices pass with backward error < 5e-11
+- [X] T021 [US1] Run `cargo test -- --ignored --test-threads=1` to verify all 65 SuiteSparse matrices pass with backward error < 5e-11
 - [X] T022 [US1] Run `cargo clippy --all-targets` and `cargo clippy --all-targets --features diagnostic` to verify no warnings
 
 **Checkpoint**: Scatter maps precomputed during analysis and used during factorization. All tests pass. Assembly overhead reduced.

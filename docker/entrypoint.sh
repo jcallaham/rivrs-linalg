@@ -76,6 +76,9 @@ if [ "$(id -u)" = "0" ]; then
       echo "WARNING: Failed to extract SuiteSparse matrices (non-fatal)"
   fi
 
+  # Enable hardware performance counters for perf stat/record
+  sysctl -w kernel.perf_event_paranoid=-1 2>/dev/null || true
+
   # Ensure ownership is correct for volumes (may have been created with wrong permissions)
   chown -R node:node /home/node/.claude 2>/dev/null || true
   chown -R node:node /home/node/.cargo/registry 2>/dev/null || true

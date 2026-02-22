@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y \
 	ca-certificates \
 	git \
 	build-essential \
+	linux-perf \
 	gcc \
 	g++ \
 	gfortran \

@@ -34,6 +34,14 @@ services:
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
       - TERM=${TERM:-xterm-256color}
 
+    # CAP_PERFMON + CAP_SYS_ADMIN + unconfined seccomp allow perf stat/record
+    # inside the container for hardware performance counter profiling.
+    cap_add:
+      - SYS_ADMIN
+      - PERFMON
+    security_opt:
+      - seccomp:unconfined
+
     deploy:
       resources:
         limits:
