@@ -165,6 +165,43 @@ pub enum FailedPivotMethod {
 }
 
 // ---------------------------------------------------------------------------
+// Kernel workspace
+// ---------------------------------------------------------------------------
+
+/// Pre-allocated reusable buffers for the BLAS-3 inner loop.
+///
+/// Eliminates per-block heap allocations inside `factor_inner` and
+/// `two_level_factor`. Sized to `max_front × inner_block_size` and reused
+/// across all block iterations within and across supernodes.
+///
+/// # References
+///
+/// - SPRAL `NumericSubtree.hxx:75-81`: per-thread workspace pattern
+pub(crate) struct AptpKernelWorkspace {
+    /// Block backup for restore-on-failure, max_front × inner_block_size.
+    backup: Mat<f64>,
+    /// Copy of L11 block for TRSM aliasing avoidance, inner_block_size × inner_block_size.
+    l11_buf: Mat<f64>,
+    /// L·D product workspace for update_trailing/cross_terms, max_front × inner_block_size.
+    ld_buf: Mat<f64>,
+    /// Copy buffer for L21/L_panel aliasing avoidance, max_front × inner_block_size.
+    copy_buf: Mat<f64>,
+}
+
+impl AptpKernelWorkspace {
+    /// Create a new kernel workspace sized for the given maximum front and
+    /// inner block dimensions.
+    pub(crate) fn new(max_front: usize, inner_block_size: usize) -> Self {
+        Self {
+            backup: Mat::zeros(max_front, inner_block_size),
+            l11_buf: Mat::zeros(inner_block_size, inner_block_size),
+            ld_buf: Mat::zeros(max_front, inner_block_size),
+            copy_buf: Mat::zeros(max_front, inner_block_size),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Result types
 // ---------------------------------------------------------------------------
 
@@ -321,13 +358,17 @@ pub fn aptp_factor_in_place(
     // better-conditioned factors.
     //
     // See SPRAL ldlt_app.cxx Block::factor() lines 994-1020.
+    // Allocate kernel workspace once for the BLAS-3 paths (reused across
+    // all block iterations within factor_inner / two_level_factor).
+    let mut kernel_ws = AptpKernelWorkspace::new(m, options.inner_block_size);
+
     let mut result = if num_fully_summed < options.inner_block_size {
         // Small front: use TPP as primary method (matching SPRAL)
         tpp_factor_as_primary(a.rb_mut(), num_fully_summed, options)?
     } else if num_fully_summed > options.outer_block_size {
-        two_level_factor(a.rb_mut(), num_fully_summed, options)?
+        two_level_factor(a.rb_mut(), num_fully_summed, options, &mut kernel_ws)?
     } else {
-        factor_inner(a.rb_mut(), num_fully_summed, options)?
+        factor_inner(a.rb_mut(), num_fully_summed, options, &mut kernel_ws)?
     };
 
     // Fallback: TPP on remaining columns
@@ -1148,16 +1189,22 @@ fn adjust_for_2x2_boundary(effective_nelim: usize, d: &MixedDiagonal) -> usize {
 /// Used by the BLAS-3 `factor_inner` to save the block column before
 /// factoring, so it can be restored if the Apply step's threshold check
 /// reduces nelim.
-struct BlockBackup {
-    data: Mat<f64>,
+struct BlockBackup<'a> {
+    data: MatMut<'a, f64>,
 }
 
-impl BlockBackup {
+impl<'a> BlockBackup<'a> {
     /// Create a backup of the block column starting at `col_start` with `block_cols` columns.
-    /// Backs up `a[col_start.., col_start..col_start+block_cols]`.
-    fn create(a: MatRef<'_, f64>, col_start: usize, block_cols: usize, m: usize) -> Self {
+    /// Backs up `a[col_start.., col_start..col_start+block_cols]` into the provided buffer.
+    fn create(
+        a: MatRef<'_, f64>,
+        col_start: usize,
+        block_cols: usize,
+        m: usize,
+        buf: &'a mut Mat<f64>,
+    ) -> Self {
         let rows = m - col_start;
-        let mut data = Mat::zeros(rows, block_cols);
+        let mut data = buf.as_mut().submatrix_mut(0, 0, rows, block_cols);
         for j in 0..block_cols {
             for i in 0..rows {
                 data[(i, j)] = a[(col_start + i, col_start + j)];
@@ -1265,6 +1312,7 @@ fn apply_and_check(
     d: &MixedDiagonal,
     threshold: f64,
     par: Par,
+    l11_buf: &mut Mat<f64>,
 ) -> usize {
     if block_nelim == 0 {
         return 0;
@@ -1284,18 +1332,21 @@ fn apply_and_check(
 
     let panel_start = col_start + block_cols;
 
-    let l11_copy = a
-        .rb()
-        .submatrix(col_start, col_start, block_nelim, block_nelim)
-        .to_owned();
+    // Copy L11 into workspace buffer to avoid aliasing
+    {
+        let src = a
+            .rb()
+            .submatrix(col_start, col_start, block_nelim, block_nelim);
+        let mut dst = l11_buf
+            .as_mut()
+            .submatrix_mut(0, 0, block_nelim, block_nelim);
+        dst.copy_from(src);
+    }
+    let l11_ref = l11_buf.as_ref().submatrix(0, 0, block_nelim, block_nelim);
     let panel = a
         .rb_mut()
         .submatrix_mut(panel_start, col_start, panel_rows, block_nelim);
-    triangular_solve::solve_unit_lower_triangular_in_place(
-        l11_copy.as_ref(),
-        panel.transpose_mut(),
-        par,
-    );
+    triangular_solve::solve_unit_lower_triangular_in_place(l11_ref, panel.transpose_mut(), par);
 
     // Step 2: Scale by D^{-1}
     // For 1×1 pivot at column j: L21[:, j] /= D[j]
@@ -1374,6 +1425,7 @@ fn apply_and_check(
 /// and D11 is the block diagonal from the Factor phase.
 ///
 /// Uses explicit W = L21 * D11 workspace, then A -= W * L21^T (GEMM).
+#[allow(clippy::too_many_arguments)]
 fn update_trailing(
     a: MatMut<'_, f64>,
     col_start: usize,
@@ -1382,6 +1434,8 @@ fn update_trailing(
     m: usize,
     d: &MixedDiagonal,
     par: Par,
+    ld_buf: &mut Mat<f64>,
+    copy_buf: &mut Mat<f64>,
 ) {
     if nelim == 0 {
         return;
@@ -1393,8 +1447,8 @@ fn update_trailing(
         return;
     }
 
-    // Compute W = L21 * D11 (trailing_size × nelim workspace)
-    let mut w = Mat::zeros(trailing_size, nelim);
+    // Compute W = L21 * D11 using workspace buffer (trailing_size × nelim subview)
+    let mut w = ld_buf.as_mut().submatrix_mut(0, 0, trailing_size, nelim);
     let mut col = 0;
     while col < nelim {
         match d.get_pivot_type(col) {
@@ -1422,21 +1476,26 @@ fn update_trailing(
     }
 
     // GEMM: A22 -= W * L21^T (lower triangle only)
-    // Copy L21 to avoid borrow conflict (L21 and A22 overlap in `a`)
-    let l21_copy = a
-        .rb()
-        .submatrix(trailing_start, col_start, trailing_size, nelim)
-        .to_owned();
+    // Copy L21 into workspace buffer to avoid borrow conflict (L21 and A22 overlap in `a`)
+    {
+        let src = a
+            .rb()
+            .submatrix(trailing_start, col_start, trailing_size, nelim);
+        let mut dst = copy_buf.as_mut().submatrix_mut(0, 0, trailing_size, nelim);
+        dst.copy_from(src);
+    }
+    let l21_ref = copy_buf.as_ref().submatrix(0, 0, trailing_size, nelim);
+    let w_ref = ld_buf.as_ref().submatrix(0, 0, trailing_size, nelim);
     let mut a22 = a.submatrix_mut(trailing_start, trailing_start, trailing_size, trailing_size);
 
     tri_matmul::matmul_with_conj(
         a22.rb_mut(),
         BlockStructure::TriangularLower,
         Accum::Add,
-        w.as_ref(),
+        w_ref,
         BlockStructure::Rectangular,
         Conj::No,
-        l21_copy.as_ref().transpose(),
+        l21_ref.transpose(),
         BlockStructure::Rectangular,
         Conj::No,
         -1.0,
@@ -1452,16 +1511,18 @@ fn update_trailing(
 ///
 /// # SPRAL Equivalent
 /// `calcLD<OP_N>` in `spral/src/ssids/cpu/kernels/calc_ld.hxx:41+`
-fn compute_ld(l: MatRef<'_, f64>, d: &MixedDiagonal, nelim: usize) -> Mat<f64> {
+/// Compute W = L * D into a pre-allocated destination buffer.
+///
+/// Writes into `dst[0..nrows, 0..nelim]`. The destination is overwritten, not zeroed first.
+fn compute_ld_into(l: MatRef<'_, f64>, d: &MixedDiagonal, nelim: usize, mut dst: MatMut<'_, f64>) {
     let nrows = l.nrows();
-    let mut w = Mat::zeros(nrows, nelim);
     let mut col = 0;
     while col < nelim {
         match d.get_pivot_type(col) {
             PivotType::OneByOne => {
                 let d_val = d.get_1x1(col);
                 for i in 0..nrows {
-                    w[(i, col)] = l[(i, col)] * d_val;
+                    dst[(i, col)] = l[(i, col)] * d_val;
                 }
                 col += 1;
             }
@@ -1470,8 +1531,8 @@ fn compute_ld(l: MatRef<'_, f64>, d: &MixedDiagonal, nelim: usize) -> Mat<f64> {
                 for i in 0..nrows {
                     let l1 = l[(i, col)];
                     let l2 = l[(i, col + 1)];
-                    w[(i, col)] = l1 * block.a + l2 * block.b;
-                    w[(i, col + 1)] = l1 * block.b + l2 * block.c;
+                    dst[(i, col)] = l1 * block.a + l2 * block.b;
+                    dst[(i, col + 1)] = l1 * block.b + l2 * block.c;
                 }
                 col += 2;
             }
@@ -1480,7 +1541,6 @@ fn compute_ld(l: MatRef<'_, f64>, d: &MixedDiagonal, nelim: usize) -> Mat<f64> {
             }
         }
     }
-    w
 }
 
 /// Apply Schur complement updates from passed columns to failed and trailing regions.
@@ -1499,6 +1559,7 @@ fn compute_ld(l: MatRef<'_, f64>, d: &MixedDiagonal, nelim: usize) -> Mat<f64> {
 ///
 /// # SPRAL Equivalent
 /// `Block::update` with rfrom/cfrom skip (ldlt_app.cxx:1082-1153)
+#[allow(clippy::too_many_arguments)]
 fn update_cross_terms(
     mut a: MatMut<'_, f64>,
     col_start: usize,
@@ -1506,6 +1567,8 @@ fn update_cross_terms(
     block_cols: usize,
     m: usize,
     d: &MixedDiagonal,
+    ld_buf: &mut Mat<f64>,
+    copy_buf: &mut Mat<f64>,
 ) {
     if nelim == 0 || nelim >= block_cols {
         return; // No failed columns → no cross-term updates
@@ -1516,36 +1579,73 @@ fn update_cross_terms(
     let trailing_size = m - trailing_start;
 
     // L_blk: the L entries for failed rows within the diagonal block
-    // These are at a[k+e..k+bs, k..k+e]
-    let l_blk = a
-        .rb()
-        .submatrix(col_start + nelim, col_start, n_failed, nelim)
-        .to_owned();
+    // Copy to workspace to avoid aliasing: a[k+e..k+bs, k..k+e]
+    {
+        let src = a
+            .rb()
+            .submatrix(col_start + nelim, col_start, n_failed, nelim);
+        let mut dst = copy_buf.as_mut().submatrix_mut(0, 0, n_failed, nelim);
+        dst.copy_from(src);
+    }
 
-    // W_blk = L_blk * D
-    let w_blk = compute_ld(l_blk.as_ref(), d, nelim);
+    // W_blk = L_blk * D (into ld_buf)
+    {
+        let l_blk = copy_buf.as_ref().submatrix(0, 0, n_failed, nelim);
+        compute_ld_into(
+            l_blk,
+            d,
+            nelim,
+            ld_buf.as_mut().submatrix_mut(0, 0, n_failed, nelim),
+        );
+    }
 
     // Region 1: Failed×failed diagonal update
     // A[k+e..k+bs, k+e..k+bs] -= W_blk * L_blk^T (lower triangle only)
-    for j in 0..n_failed {
-        for i in j..n_failed {
-            let mut sum = 0.0;
-            for c in 0..nelim {
-                sum += w_blk[(i, c)] * l_blk[(j, c)];
+    {
+        let l_blk = copy_buf.as_ref().submatrix(0, 0, n_failed, nelim);
+        let w_blk = ld_buf.as_ref().submatrix(0, 0, n_failed, nelim);
+        for j in 0..n_failed {
+            for i in j..n_failed {
+                let mut sum = 0.0;
+                for c in 0..nelim {
+                    sum += w_blk[(i, c)] * l_blk[(j, c)];
+                }
+                a[(col_start + nelim + i, col_start + nelim + j)] -= sum;
             }
-            a[(col_start + nelim + i, col_start + nelim + j)] -= sum;
         }
     }
 
     // Region 2: Trailing×failed cross-term update
     // A[ts..m, k+e..k+bs] -= W_panel * L_blk^T
     if trailing_size > 0 {
-        let l_panel = a
-            .rb()
-            .submatrix(trailing_start, col_start, trailing_size, nelim)
-            .to_owned();
+        // Copy L_panel into workspace (offset past L_blk already in copy_buf)
+        {
+            let src = a
+                .rb()
+                .submatrix(trailing_start, col_start, trailing_size, nelim);
+            let mut dst = copy_buf
+                .as_mut()
+                .submatrix_mut(n_failed, 0, trailing_size, nelim);
+            dst.copy_from(src);
+        }
 
-        let w_panel = compute_ld(l_panel.as_ref(), d, nelim);
+        // Now both l_blk and l_panel are in copy_buf at non-overlapping offsets.
+        // Re-borrow the full copy_buf immutably to access both regions.
+        let l_blk = copy_buf.as_ref().submatrix(0, 0, n_failed, nelim);
+        let l_panel = copy_buf
+            .as_ref()
+            .submatrix(n_failed, 0, trailing_size, nelim);
+
+        // W_panel = L_panel * D (into ld_buf offset past W_blk)
+        compute_ld_into(
+            l_panel,
+            d,
+            nelim,
+            ld_buf
+                .as_mut()
+                .submatrix_mut(n_failed, 0, trailing_size, nelim),
+        );
+        let w_panel = ld_buf.as_ref().submatrix(n_failed, 0, trailing_size, nelim);
 
         for j in 0..n_failed {
             for i in 0..trailing_size {
@@ -1607,6 +1707,7 @@ fn factor_inner(
     mut a: MatMut<'_, f64>,
     num_fully_summed: usize,
     options: &AptpOptions,
+    kernel_ws: &mut AptpKernelWorkspace,
 ) -> Result<AptpFactorResult, SparseError> {
     let m = a.nrows();
     let ib = options.inner_block_size;
@@ -1651,7 +1752,7 @@ fn factor_inner(
         let block_end = k + block_size;
 
         // 1. BACKUP: save a[k..m, k..k+block_size] before factoring
-        let backup = BlockBackup::create(a.as_ref(), k, block_size, m);
+        let backup = BlockBackup::create(a.as_ref(), k, block_size, m, &mut kernel_ws.backup);
 
         // 2. FACTOR: complete pivoting on the block_size×block_size diagonal block
         //    Block-scoped swaps: only rows/columns within [0..block_end] are permuted.
@@ -1740,6 +1841,7 @@ fn factor_inner(
             &block_d,
             threshold,
             options.par,
+            &mut kernel_ws.l11_buf,
         );
 
         // 8. ADJUST: don't split 2×2 pivot across block boundary
@@ -1770,8 +1872,27 @@ fn factor_inner(
         //     b. Failed×failed: A[k+e..k+bs, k+e..k+bs] -= L_blk * D * L_blk^T
         //     c. Trailing×failed: A[ts..m, k+e..k+bs] -= L_panel * D * L_blk^T
         if nelim > 0 {
-            update_trailing(a.rb_mut(), k, nelim, block_size, m, &block_d, options.par);
-            update_cross_terms(a.rb_mut(), k, nelim, block_size, m, &block_d);
+            update_trailing(
+                a.rb_mut(),
+                k,
+                nelim,
+                block_size,
+                m,
+                &block_d,
+                options.par,
+                &mut kernel_ws.ld_buf,
+                &mut kernel_ws.copy_buf,
+            );
+            update_cross_terms(
+                a.rb_mut(),
+                k,
+                nelim,
+                block_size,
+                m,
+                &block_d,
+                &mut kernel_ws.ld_buf,
+                &mut kernel_ws.copy_buf,
+            );
         }
 
         // 11. ACCUMULATE D entries for passed columns
@@ -1884,6 +2005,7 @@ fn two_level_factor(
     mut a: MatMut<'_, f64>,
     num_fully_summed: usize,
     options: &AptpOptions,
+    kernel_ws: &mut AptpKernelWorkspace,
 ) -> Result<AptpFactorResult, SparseError> {
     let m = a.nrows();
     let nb = options.outer_block_size;
@@ -1917,7 +2039,7 @@ fn two_level_factor(
             let block_view = a
                 .rb_mut()
                 .submatrix_mut(col_start, col_start, block_m, block_m);
-            factor_inner(block_view, block_cols, options)?
+            factor_inner(block_view, block_cols, options, kernel_ws)?
         };
         let block_nelim = block_result.num_eliminated;
 

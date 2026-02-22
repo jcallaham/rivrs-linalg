@@ -1,5 +1,59 @@
 # SSIDS Development Log
 
+## Phase 9.1b: Workspace Reuse & Per-Supernode Allocation Optimization
+
+**Status**: Complete
+**Branch**: `021-workspace-reuse`
+**Date**: 2026-02-22
+
+### What Was Built
+
+Two-tier workspace reuse to eliminate per-supernode heap allocations in the
+multifrontal factorization loop:
+
+**Tier 1 — FactorizationWorkspace (numeric.rs):**
+- Pre-allocated `frontal_data: Mat<f64>` (max_front × max_front), reused across supernodes
+- `frontal_row_indices: Vec<usize>` and `delayed_cols_buf: Vec<usize>` with pre-allocated capacity
+- `global_to_local: Vec<usize>` (folded in from separate `G2L_BUF`)
+- `FrontalMatrix` changed from owned to borrowed: `data: MatMut<'a, f64>`, `row_indices: &'a [usize]`
+- Thread-local `Cell<FactorizationWorkspace>` for parallel path (matching old g2l pattern)
+- `zero_frontal(m)` zeros m×m subregion; `ensure_capacity()` for lazy thread-local resizing
+
+**Tier 2 — AptpKernelWorkspace (factor.rs):**
+- Pre-allocated BLAS-3 temporaries: `backup`, `l11_buf`, `ld_buf`, `copy_buf`
+- Allocated once per `aptp_factor_in_place` call, reused across all block iterations
+- `BlockBackup` changed from owning `Mat<f64>` to borrowing workspace `MatMut<'a, f64>`
+- `compute_ld` replaced by `compute_ld_into` (writes into provided buffer)
+- `apply_and_check`, `update_trailing`, `update_cross_terms` accept workspace buffers
+
+**Contribution copy optimization (numeric.rs):**
+- Column-major lower-triangle iteration for better cache locality with faer's column-major layout
+
+### Key Results (CI subset, 10 matrices)
+
+- **Factor speedup**: median 1.16×, mean 1.12×
+- **Assembly phase**: 1.27×–2.81× (largest benefit — allocation was dominant cost)
+- **Extraction phase**: 1.07×–3.53× on large-front matrices
+- **Kernel phase**: neutral (BLAS-bound)
+- **Backward error**: bit-exact identical on all 10 matrices
+- **Peak RSS**: ~24% reduction (199 MB → 151 MB)
+- **All 380 unit tests pass**, clippy clean, diagnostic feature verified
+
+### Key Decisions
+
+- **FrontalMatrix borrows, not views**: Changed to `MatMut<'a, f64>` + `&'a [usize]`
+  rather than full view struct. Workspace owns the data, FrontalMatrix borrows it.
+- **zero_frontal vs prepare_for_supernode**: Separated zeroing (automatic) from
+  vector management (caller responsibility) to avoid clearing row indices after
+  they've been populated.
+- **BlockBackup uses workspace**: Changed from `data: Mat<f64>` (per-block allocation)
+  to `data: MatMut<'a, f64>` (workspace subview). Eliminates the largest remaining
+  per-block allocation in factor_inner.
+- **update_cross_terms borrow restructuring**: Scoped immutable borrows of `copy_buf`
+  to allow non-overlapping mutable writes to different regions within the same buffer.
+
+---
+
 ## Phase 9.1a: Supernode Amalgamation
 
 **Status**: Complete

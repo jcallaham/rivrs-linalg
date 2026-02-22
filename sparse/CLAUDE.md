@@ -386,9 +386,10 @@ unit tests of the symbolic analysis and factorization kernel on small matrices.
 - Phase 8.1g: Sequential profiling & optimization — per-supernode timing instrumentation, allocation hotspot fixes, baseline collection tool, workload analysis (41/65 IntraNode, 19 Mixed, 5 TreeLevel)
 - Phase 8.2: Parallel factorization & solve — rayon + faer Par, intra-node BLAS parallelism (TRSM/GEMM) for large fronts, tree-level par_iter for independent subtrees, parallel diagonal solve. All safe Rust (no unsafe). parallel_scaling.rs benchmark tool.
 - Phase 9.1a: Supernode amalgamation — SPRAL-style post-faer merge pass (do_merge predicate, nemin=32 default). c-71: 35K→6.4K supernodes. 65/65 SuiteSparse pass. Non-contiguous merges via owned_ranges on SupernodeInfo. Configurable via AnalyzeOptions.nemin.
+- Phase 9.1b: Workspace reuse — Two-tier pre-allocated workspace (FactorizationWorkspace in numeric.rs, AptpKernelWorkspace in factor.rs). FrontalMatrix changed from owned to borrowed types. Thread-local workspace via Cell for parallel path. CI subset: median 1.16× factor speedup, 24% RSS reduction, bit-exact backward errors.
 
 **Next:**
-- Phase 9.1b: Workspace reuse & simplicial overhead optimization
+- Phase 9.1c: Memory and allocation analysis pass (if needed based on full SuiteSparse results)
 - Phase 9.2: Release preparation (docs, examples, crates.io)
 
 ## Recent Changes
