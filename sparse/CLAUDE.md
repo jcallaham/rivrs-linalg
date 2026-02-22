@@ -105,6 +105,7 @@ src/
 
 ```
 examples/
+├── profile_matrix.rs       # Single-matrix profiling: per-supernode timing + Chrome Trace (requires diagnostic)
 ├── baseline_collection.rs  # Structured JSON baseline collection (requires diagnostic)
 ├── workload_analysis.rs    # Workload distribution + parallelism classification (requires diagnostic)
 ├── export_frontal.rs       # Chrome Trace export for frontal matrices (requires diagnostic)
@@ -178,10 +179,20 @@ Baseline JSON output goes to `target/benchmarks/baselines/baseline-<timestamp>.j
 ### Profiling & Analysis
 
 ```bash
+# Profile a single matrix — phase timing, factor breakdown, top supernodes by time
+cargo run --example profile_matrix --features diagnostic --release -- <matrix-name>
+cargo run --example profile_matrix --features diagnostic --release -- --path <file.mtx>
+
+# Export Chrome Trace for a single matrix (open in https://ui.perfetto.dev)
+cargo run --example profile_matrix --features diagnostic --release -- <matrix-name> --trace /tmp/trace.json
+
+# List available matrices
+cargo run --example profile_matrix --features diagnostic --release -- --list
+
 # Workload analysis — classifies matrices by parallelism strategy (TreeLevel/IntraNode/Mixed)
 cargo run --example workload_analysis --features diagnostic --release
 
-# Export Chrome Trace for a specific matrix (open in chrome://tracing or Perfetto)
+# Export assembled frontal matrix for SPRAL comparison (open in chrome://tracing or Perfetto)
 cargo run --example export_frontal --features diagnostic --release
 
 # Front size distribution
