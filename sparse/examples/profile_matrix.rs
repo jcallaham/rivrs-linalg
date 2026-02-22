@@ -61,11 +61,12 @@ fn main() {
     let matrix_name = args
         .iter()
         .skip(1)
-        .find(|a| !a.starts_with("--") && {
-            // Skip values that follow --trace or --path
-            let prev_idx = args.iter().position(|x| std::ptr::eq(x, *a)).unwrap();
-            prev_idx == 0
-                || (args[prev_idx - 1] != "--trace" && args[prev_idx - 1] != "--path")
+        .find(|a| {
+            !a.starts_with("--") && {
+                // Skip values that follow --trace or --path
+                let prev_idx = args.iter().position(|x| std::ptr::eq(x, *a)).unwrap();
+                prev_idx == 0 || (args[prev_idx - 1] != "--trace" && args[prev_idx - 1] != "--path")
+            }
         })
         .cloned();
 
@@ -164,7 +165,8 @@ fn main() {
 
     // --- Factorization summary ---
     eprintln!("=== Factorization Summary ===");
-    eprintln!("  Supernodes:     {} (before amalg: {}, merges: {})",
+    eprintln!(
+        "  Supernodes:     {} (before amalg: {}, merges: {})",
         stats.supernodes_after_amalgamation,
         stats.supernodes_before_amalgamation,
         stats.merges_performed,
@@ -184,10 +186,23 @@ fn main() {
         let accounted = asm_ms + kern_ms + ext_ms;
         eprintln!();
         eprintln!("=== Factor Time Breakdown ===");
-        eprintln!("  Assembly:    {:>10.2} ms  ({:>5.1}%)", asm_ms, asm_ms / factor_ms * 100.0);
-        eprintln!("  Kernel:      {:>10.2} ms  ({:>5.1}%)", kern_ms, kern_ms / factor_ms * 100.0);
-        eprintln!("  Extraction:  {:>10.2} ms  ({:>5.1}%)", ext_ms, ext_ms / factor_ms * 100.0);
-        eprintln!("  Unaccounted: {:>10.2} ms  ({:>5.1}%)",
+        eprintln!(
+            "  Assembly:    {:>10.2} ms  ({:>5.1}%)",
+            asm_ms,
+            asm_ms / factor_ms * 100.0
+        );
+        eprintln!(
+            "  Kernel:      {:>10.2} ms  ({:>5.1}%)",
+            kern_ms,
+            kern_ms / factor_ms * 100.0
+        );
+        eprintln!(
+            "  Extraction:  {:>10.2} ms  ({:>5.1}%)",
+            ext_ms,
+            ext_ms / factor_ms * 100.0
+        );
+        eprintln!(
+            "  Unaccounted: {:>10.2} ms  ({:>5.1}%)",
             factor_ms - accounted,
             (factor_ms - accounted) / factor_ms * 100.0,
         );
@@ -211,7 +226,10 @@ fn main() {
 
 fn print_top_supernodes(per_sn: &[PerSupernodeStats], top_n: usize, _factor_ms: f64) {
     eprintln!();
-    eprintln!("=== Top {} Supernodes by Front Size ===", top_n.min(per_sn.len()));
+    eprintln!(
+        "=== Top {} Supernodes by Front Size ===",
+        top_n.min(per_sn.len())
+    );
 
     #[cfg(feature = "diagnostic")]
     {
@@ -232,15 +250,27 @@ fn print_top_supernodes(per_sn: &[PerSupernodeStats], top_n: usize, _factor_ms: 
 
         eprintln!(
             "  {:>5} {:>6} {:>5} {:>4} {:>4} {:>10} {:>10} {:>10} {:>10} {:>6}",
-            "snode", "front", "elim", "dlyd", "2x2",
-            "asm_ms", "kern_ms", "ext_ms", "total_ms", "cum%",
+            "snode",
+            "front",
+            "elim",
+            "dlyd",
+            "2x2",
+            "asm_ms",
+            "kern_ms",
+            "ext_ms",
+            "total_ms",
+            "cum%",
         );
         eprintln!("  {}", "-".repeat(85));
 
         let mut cumulative_us = 0.0;
         for (_, s, t_us) in ranked.iter().take(top_n) {
             cumulative_us += t_us;
-            let cum_pct = if total_us > 0.0 { cumulative_us / total_us * 100.0 } else { 0.0 };
+            let cum_pct = if total_us > 0.0 {
+                cumulative_us / total_us * 100.0
+            } else {
+                0.0
+            };
             eprintln!(
                 "  {:>5} {:>6} {:>5} {:>4} {:>4} {:>10.3} {:>10.3} {:>10.3} {:>10.3} {:>5.1}%",
                 s.snode_id,
@@ -284,12 +314,7 @@ fn print_top_supernodes(per_sn: &[PerSupernodeStats], top_n: usize, _factor_ms: 
         for s in ranked.iter().take(top_n) {
             eprintln!(
                 "  {:>5} {:>6} {:>5} {:>4} {:>4} {:>8.2e}",
-                s.snode_id,
-                s.front_size,
-                s.num_eliminated,
-                s.num_delayed,
-                s.num_2x2,
-                s.max_l_entry,
+                s.snode_id, s.front_size, s.num_eliminated, s.num_delayed, s.num_2x2, s.max_l_entry,
             );
         }
     }
@@ -384,7 +409,10 @@ fn list_matrices() {
         std::process::exit(1);
     });
 
-    eprintln!("{:<30} {:>8} {:>10} {:>6} {:>20}", "Name", "n", "nnz", "CI?", "Category");
+    eprintln!(
+        "{:<30} {:>8} {:>10} {:>6} {:>20}",
+        "Name", "n", "nnz", "CI?", "Category"
+    );
     eprintln!("{}", "-".repeat(80));
     for m in &all {
         eprintln!(
