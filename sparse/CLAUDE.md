@@ -404,8 +404,10 @@ unit tests of the symbolic analysis and factorization kernel on small matrices.
 - Phase 9.2: Release preparation (docs, examples, crates.io)
 
 ## Recent Changes
+- 022-assembly-extraction-opt: Added Rust 1.87+ (edition 2024) + faer 0.22 (existing — no new deps)
 - 021-workspace-reuse: Added N/A (internal optimization; no new technologies)
 - 020-supernode-amalgamation: Added Rust 1.87+ (edition 2024) + faer 0.22, rayon 1.x (existing)
-- 019-parallel-factorization-solve: Adding rayon 1.x for tree-level parallelism, faer Par enum for intra-node BLAS parallelism
 
 ## Active Technologies
+- Rust 1.87+ (edition 2024) + faer 0.22 (existing — no new deps) (022-assembly-extraction-opt)
+- N/A (in-memory index arrays stored alongside symbolic analysis result) (022-assembly-extraction-opt)
