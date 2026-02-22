@@ -2565,10 +2565,10 @@ production-grade solver.
 
 ### Deliverables
 
-#### 9.1: Performance — Supernode Amalgamation & Allocation Optimization
+#### 9.1: Performance — Supernode Amalgamation & Factorization Overhead
 
-**Task:** Close the two profiling-identified performance gaps that account for
-nearly all outlier slowdowns vs SPRAL.
+**Task:** Close profiling-identified performance gaps vs SPRAL through
+structural optimization, workspace reuse, and assembly/extraction efficiency.
 
 *9.1a: Supernode amalgamation — fixes c-71 (24.5×) and c-big (11.1×)*
 
@@ -2717,39 +2717,137 @@ CI subset results (10 matrices):
 - blockqp1 regression (0.74×): 19,991 tiny supernodes (max_front=44), absolute
   difference only 18.7ms — likely measurement noise on very small kernel times.
 
-Full SuiteSparse results pending (requires `--ignored` tests with full collection).
+**Full SuiteSparse results (65 matrices, sequential):**
+- Median ratio vs SPRAL: 1.01× (down from ~1.13× post-amalgamation)
+- 29/65 matrices beat SPRAL (ratio < 1.0×)
+- c-71: 4.06× (was 5.48×), c-big: 4.19× (was 6.29×)
+- Simplicial outliers improved: dixmaanl 2.40×, mario001 3.33×, rail_79841 2.12×,
+  spmsrtls 2.26×, bloweybq 1.99×, linverse 2.17×
+- Best matrices: thread 0.66×, cvxqp3 0.55×, astro-ph 0.50×
+- All 65/65 backward errors well within 5e-11
+- Workspace reuse was the largest single contributor to closing the median gap
 
-*9.1c: Memory and allocation analysis pass*
+*9.1c: Assembly/extraction optimization for high-front low-elimination matrices*
 
-After 9.1a and 9.1b, perform a careful profiling pass across the full SuiteSparse
-suite to identify remaining allocation hotspots and memory inefficiencies:
-- Profile for hot-loop allocations (heap allocations inside per-supernode loops),
-  unnecessary `Vec` resizing, and large one-shot allocations that could be reused
-- Check for unnecessary copies (especially `Mat` → `Mat` in extraction paths)
-- Evaluate cache utilization on bulk FEM matrices (the 1.05-1.15× gap vs SPRAL)
-- Use `diagnostic` feature timing data and system allocator profiling (e.g.,
-  `jemalloc`/DHAT) to find remaining overhead
-- Fix anything with clear impact; document remaining items as post-release work
-- The goal is to move the median from 1.13× to <1.0× where possible — even if
-  the practical difference is small, "faster than SPRAL in pure Rust" is a
-  compelling narrative for the Rust ecosystem
+**Post-9.1b profiling findings** (from `profile_matrix` diagnostic tool):
 
-Verify no performance regressions after each optimization.
+Per-supernode profiling of c-71 and c-big reveals that the remaining 4× gap vs
+SPRAL is NOT the dense APTP kernel — it is assembly and extraction overhead:
 
-**Success Criteria:**
-- [X] c-71 and c-big within 10× of SPRAL factor time (was 25-30×, now 5.5-6.3× after 9.1a)
-- [ ] c-71 and c-big within 2× of SPRAL factor time (currently 5.5-6.3× after amalgamation)
-- [ ] Simplicial matrices (bloweybq, dixmaanl, etc.) within 1.5× of SPRAL (currently 2.0-2.5×)
-- [ ] Full SuiteSparse suite median factor time ratio ≤ 1.0× vs SPRAL (currently ~1.13×; stretch: < 0.9×)
+| Matrix | Assembly | Kernel | Extraction | Unaccounted |
+|--------|----------|--------|------------|-------------|
+| c-71 | 37.7% | 23.0% | 34.8% | 4.5% |
+| c-big | 36.6% | 22.6% | 37.0% | 3.9% |
+| ncvxqp7 (0.74×) | 11.7% | 66.3% | 15.6% | 6.4% |
+
+Root cause: c-71/c-big supernodes have huge fronts (2000-5300) but tiny
+elimination counts (5-54 per supernode), giving elim/front ratios under 1%.
+Every supernode pays O(F²) for assembly (zeroing + scatter + extend_add) and
+O((F-E)²) ≈ O(F²) for contribution block copy, but only eliminates a handful
+of columns. The workload is highly distributed — top 20 of 6,350 supernodes
+account for only 11% of c-71's factor time. No single hot supernode to optimize.
+
+Contrast with ncvxqp7 (which beats SPRAL at 0.74×): top 20 of 2,194 supernodes
+account for 81.5% of factor time, with elim/front ratios of 16-100%. The kernel
+dominates because assembly/extraction costs are well-amortized.
+
+**Optimization targets** (in priority order):
+
+1. **Contribution block extraction**: `extract_contribution` copies (F-E)² entries
+   into an owned `Mat::zeros` — the single largest per-supernode cost on c-71/c-big.
+   With elim=22 on front=2501, contribution size is 2479² ≈ 6.1M entries copied.
+   Investigate SPRAL's approach: does it avoid the copy via direct assembly from
+   child factor storage, or use more efficient bulk copy (e.g., column-slice copy
+   via faer's `copy_from`)?
+
+2. **Assembly path**: `extend_add` does element-by-element scatter into the frontal
+   matrix. Consider batch assembly or precomputed scatter indices to reduce per-entry
+   overhead. Also profile `scatter_original_entries_multi` — the multi-range column
+   ownership from amalgamation adds overhead on every entry.
+
+3. **Frontal matrix zeroing**: `zero_frontal(m)` zeros the full m×m lower triangle
+   before each supernode. For front=2501, that's ~3.1M entries zeroed. Consider
+   lazy zeroing (only zero columns that will be used), or zero only the exact
+   subregion touched by assembly.
+
+4. **Amalgamation tuning**: With elim/front ratios under 1%, the current nemin=32
+   threshold may be too conservative for these matrix structures. Profile whether
+   higher nemin values (64, 128) improve the elim/front ratio without excessive
+   fill-in. This could reduce the total number of O(F²) assembly/extraction passes.
+
+SPRAL references:
+- `NumericSubtree.hxx:267-340` — assembly path (node_ilist, aval, amap)
+- `factor_cpu.cxx:73-168` — factor_subtree with workspace reuse
+- `SmallLeafNumericSubtree.hxx:38-220` — sequential leaf factorization
+
+Expected impact: 1.5-2× speedup on c-71/c-big by reducing assembly/extraction
+overhead. If contribution copy alone is halved, c-71 should approach 3× and
+c-big should approach 3×.
+
+*9.1d: Small leaf subtree fast path*
+
+**Motivation** (from post-9.1b profiling):
+
+Simplicial matrices (dixmaanl, mario001, bloweybq, linverse, spmsrtls,
+rail_79841) remain 1.5-3.3× slower than SPRAL despite amalgamation and workspace
+reuse. These matrices produce many tiny supernodes (max_front < 100) where the
+full frontal matrix machinery is disproportionately expensive.
+
+dixmaanl profile: max_front=68, 1,605 supernodes, 23.3% unaccounted time
+(per-supernode overhead on tiny fronts). First supernode alone takes 6.6ms
+(18.3% of total 47ms factor time) — likely first-use/setup overhead.
+
+**SPRAL's approach**: `SmallLeafNumericSubtree` processes leaf subtrees without
+full frontal matrix assembly:
+- Operates on subtrees where all supernodes are below a size threshold
+- Uses simplified assembly (direct scatter from original matrix entries)
+- Avoids the extend_add → frontal → extract_contribution round-trip
+- Sequential processing within each leaf subtree
+
+**Implementation plan**:
+1. Identify leaf subtrees where all supernodes have front_size < threshold
+   (e.g., 256, matching INTRA_NODE_THRESHOLD)
+2. Implement a simplified factorization path for these subtrees that avoids
+   full frontal matrix allocation and contribution block copying
+3. Benchmark against full-machinery path on simplicial matrices
+
+SPRAL references:
+- `SmallLeafSymbolicSubtree.hxx:18-109` — leaf subtree identification and
+  symbolic setup (threshold-based classification)
+- `SmallLeafNumericSubtree.hxx:38-220` — sequential factorization without
+  full frontal matrices (simplified assembly, no contribution block copy)
+- `NumericSubtree.hxx:53-89` — threshold selection and subtree classification
+
+Expected impact: 1.5-2× speedup on simplicial matrices, bringing dixmaanl,
+mario001, etc. within 1.5× of SPRAL. Limited impact on bulk FEM or large
+supernodal matrices (they don't hit this path).
+
+**Phase 9.1 Success Criteria:**
+- [X] c-71 and c-big within 10× of SPRAL factor time (was 25-30×, now 4× after 9.1a+b)
+- [ ] c-71 and c-big within 2× of SPRAL factor time (currently 4× — target of 9.1c)
+- [ ] Simplicial matrices (bloweybq, dixmaanl, etc.) within 1.5× of SPRAL (currently 2-3× — target of 9.1d)
+- [ ] Full SuiteSparse suite median factor time ratio ≤ 1.0× vs SPRAL (currently 1.01×)
 - [ ] No regressions on any matrix in the benchmark suite
-- [ ] Memory allocation analysis documented (hotspots identified and addressed or deferred)
+- [ ] Per-supernode profiling analysis documented (assembly/extraction/kernel breakdown for key matrices)
+- [ ] Allocation analysis complete: remaining hotspots identified and either addressed or documented as post-release
 
-**Post-amalgamation baseline (sequential, single thread):**
-- Median ratio vs SPRAL: ~1.13×
-- c-71: 5.48× (was 29.75×), c-big: 6.29× (was 11.11×)
-- 10 matrices beat SPRAL (ratio < 1.0×)
-- Worst simplicial: dixmaanl 2.51×, rail_79841 2.24×, mario001 2.13×
-- G3_circuit (1.6M nodes): 1.51×
+**Phase 9.1 Exit Criteria:**
+
+Phase 9.1 is complete when:
+1. Per-supernode profiling has been run on representative matrices from each
+   performance category (supernodal outliers, simplicial, bulk FEM)
+2. Assembly/extraction vs kernel breakdown is documented for key outliers
+3. Remaining allocation hotspots have been profiled (e.g., via DHAT or diagnostic
+   timing) and either optimized or explicitly deferred with rationale
+4. No matrix in the 65-matrix suite has regressed vs the post-9.1b baseline
+
+**Post-9.1b baseline (sequential, single thread):**
+- Median ratio vs SPRAL: 1.01×
+- c-71: 4.06× (was 29.75× pre-9.1a), c-big: 4.19× (was 11.11× pre-9.1a)
+- 29/65 matrices beat SPRAL (ratio < 1.0×)
+- Worst simplicial: mario001 3.33×, dixmaanl 2.40×, spmsrtls 2.26×
+- G3_circuit (1.6M nodes): 1.39×
+- Best: thread 0.66×, astro-ph 0.50×, cvxqp3 0.55×
 
 #### 9.2: Robustness — Testing & Hardening
 
@@ -2848,9 +2946,10 @@ for production readiness, but may be valuable later:
   show problematic delay propagation. Revisit if new matrices or orderings cause issues.
 - **D storage format (flat d[2n] array)**: Solve is 1-5% of factor time. Not a
   bottleneck. Consider if solve-heavy workloads emerge (many RHS per factorization).
-- **Arena allocation for frontal matrices**: Phase 8.2 fixed `global_to_local`.
-  Phase 9.1c memory analysis will identify if per-front `Mat::zeros` is still a
-  meaningful hotspot. If so, arena allocation can be added post-release.
+- **Arena allocation for frontal matrices**: Phase 9.1b implemented workspace reuse
+  (pre-allocated `FactorizationWorkspace`), eliminating per-supernode `Mat::zeros`.
+  Post-9.1b profiling shows assembly/extraction O(F²) overhead is the bottleneck,
+  not allocation. Arena allocation is not needed.
 - **Peak memory tracking / symbolic prediction validation**: Nice diagnostic, not
   blocking. Can be added alongside crates.io publish.
 
@@ -2858,22 +2957,25 @@ for production readiness, but may be valuable later:
 
 **Required Outcomes:**
 1. Solver competitive with SPRAL on performance (median ≤ 1.0×, no outliers > 2×)
-2. Solver robust against adversarial and edge-case inputs (no panics)
-3. Test suite comprehensive, lean, and aligned with SPRAL coverage
-4. Documentation and examples ready for public use
-5. Published on crates.io
+2. Per-supernode profiling and allocation analysis documented for key matrix categories
+3. Solver robust against adversarial and edge-case inputs (no panics)
+4. Test suite comprehensive, lean, and aligned with SPRAL coverage
+5. Documentation and examples ready for public use
+6. Published on crates.io
 
 **Validation Questions:**
 - Is the solver production-grade for use as a foundation layer?
 - Can the Rust community benchmark it favorably against SPRAL?
 - Can a new user solve a problem from the README alone?
 - Are there remaining robustness risks?
+- Has profiling been used to confirm that remaining performance gaps are understood
+  and either addressed or explicitly deferred?
 
 **Checkpoint:** Run full SuiteSparse benchmark suite (SPRAL comparison). Run
 torture tests and property-based tests. Verify all examples compile and run.
 Publish to crates.io.
 
-**Time Estimate:** 5-7 weeks total (9.1: 2-3, 9.2: 1-2, 9.3: 1-2)
+**Time Estimate:** 6-9 weeks total (9.1: 3-4, 9.2: 1-2, 9.3: 1-2)
 
 ---
 
