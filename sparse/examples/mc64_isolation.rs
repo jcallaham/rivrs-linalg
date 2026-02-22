@@ -65,7 +65,10 @@ fn experiment_baseline(_name: &str, a: &faer::sparse::SparseColMat<usize, f64>, 
         ("Metis", OrderingStrategy::Metis),
         ("MatchOrderMetis", OrderingStrategy::MatchOrderMetis),
     ] {
-        let opts = AnalyzeOptions { ordering };
+        let opts = AnalyzeOptions {
+            ordering,
+            ..Default::default()
+        };
         let mut solver = match SparseLDLT::analyze_with_matrix(a, &opts) {
             Ok(s) => s,
             Err(e) => {
@@ -337,6 +340,7 @@ fn experiment_scaling_isolation(
     {
         let opts = AnalyzeOptions {
             ordering: OrderingStrategy::MatchOrderMetis,
+            ..Default::default()
         };
         let mut solver = match SparseLDLT::analyze_with_matrix(a, &opts) {
             Ok(s) => s,
@@ -377,6 +381,7 @@ fn experiment_scaling_isolation(
 
         let opts = AnalyzeOptions {
             ordering: OrderingStrategy::UserSupplied(perm),
+            ..Default::default()
         };
         let mut solver = SparseLDLT::analyze_with_matrix(a, &opts).unwrap();
         solver.factor(a, &FactorOptions::default()).unwrap();
@@ -428,13 +433,14 @@ fn experiment_scaling_isolation(
         let elim_scaling: Vec<f64> = (0..n).map(|i| scaling[perm_fwd[i]]).collect();
 
         let aptp_options = AptpOptions::default();
-        let numeric = match AptpNumeric::factor(&symbolic, a, &aptp_options, Some(&elim_scaling)) {
-            Ok(num) => num,
-            Err(e) => {
-                println!("{:<40} factor error: {}", "Metis ord + MC64 scale", e);
-                return;
-            }
-        };
+        let numeric =
+            match AptpNumeric::factor(&symbolic, a, &aptp_options, Some(&elim_scaling), 32) {
+                Ok(num) => num,
+                Err(e) => {
+                    println!("{:<40} factor error: {}", "Metis ord + MC64 scale", e);
+                    return;
+                }
+            };
 
         // Solve manually with scaling
         let mut rhs_perm = vec![0.0f64; n];
@@ -475,6 +481,7 @@ fn experiment_scaling_isolation(
     {
         let opts = AnalyzeOptions {
             ordering: OrderingStrategy::Metis,
+            ..Default::default()
         };
         let mut solver = SparseLDLT::analyze_with_matrix(a, &opts).unwrap();
         solver.factor(a, &FactorOptions::default()).unwrap();

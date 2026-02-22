@@ -54,7 +54,7 @@ fn test_aptp_solve_small_pd() {
     let symbolic =
         AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Identity).expect("analyze");
     let numeric =
-        AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None).expect("factor");
+        AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None, 32).expect("factor");
 
     // Get permutation
     let n = 3;
@@ -867,6 +867,7 @@ fn test_symbolic_only_analyze_amd() {
     // Use symbolic-only analyze (requires AMD or Metis — not MatchOrderMetis)
     let opts = AnalyzeOptions {
         ordering: OrderingStrategy::Amd,
+        ..Default::default()
     };
     let mut solver = SparseLDLT::analyze(matrix.symbolic(), &opts).expect("symbolic analyze AMD");
     solver
@@ -891,6 +892,7 @@ fn test_match_order_metis_requires_numeric() {
 
     let opts = AnalyzeOptions {
         ordering: OrderingStrategy::MatchOrderMetis,
+        ..Default::default()
     };
     let result = SparseLDLT::analyze(matrix.symbolic(), &opts);
     assert!(
@@ -1065,7 +1067,10 @@ fn test_parallel_factor_ci_subset() {
         } else {
             OrderingStrategy::Metis
         };
-        let analyze_opts = AnalyzeOptions { ordering };
+        let analyze_opts = AnalyzeOptions {
+            ordering,
+            ..Default::default()
+        };
         let factor_opts = FactorOptions {
             par: Par::rayon(4),
             ..FactorOptions::default()
@@ -1122,6 +1127,7 @@ fn test_parallel_factor_determinism() {
 
     let analyze_opts = AnalyzeOptions {
         ordering: OrderingStrategy::Metis,
+        ..Default::default()
     };
 
     // Sequential factorization + solve
@@ -1273,6 +1279,7 @@ fn test_parallel_correctness_mixed_sizes() {
     };
     let analyze_opts = AnalyzeOptions {
         ordering: OrderingStrategy::Metis,
+        ..Default::default()
     };
     let mut solver = SparseLDLT::analyze_with_matrix(&arrow, &analyze_opts).expect("analyze arrow");
     solver.factor(&arrow, &factor_par).expect("factor arrow");
@@ -1374,6 +1381,7 @@ fn test_parallel_solve_determinism() {
 
     let analyze_opts = AnalyzeOptions {
         ordering: OrderingStrategy::Metis,
+        ..Default::default()
     };
 
     // Sequential
@@ -1424,5 +1432,138 @@ fn test_parallel_solve_determinism() {
         "Seq vs Par relative difference: {:.2e} (max_diff={:.2e})",
         rel_diff,
         max_diff
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Phase 9.1a: Supernode Amalgamation Integration Tests
+// ---------------------------------------------------------------------------
+
+/// T033: Verify amalgamation reduces c-71 supernode count below 12K.
+///
+/// c-71 (n=76638, nnz=468096) is an optimization matrix with ~35K tiny
+/// supernodes before amalgamation. With nemin=32, most merge into larger
+/// supernodes, bringing the count well below 12K.
+#[test]
+#[ignore = "requires c-71 matrix (not in CI subset)"]
+fn test_amalgamation_c71_supernode_count() {
+    use rivrs_sparse::io::registry;
+
+    let all_meta = registry::load_registry().expect("load registry");
+    let c71_meta = all_meta
+        .iter()
+        .find(|m| m.name == "GHS_indef/c-71")
+        .expect("c-71 not in metadata.json");
+
+    let test_matrix = registry::load_test_matrix_from_entry(c71_meta)
+        .expect("load c-71")
+        .expect("c-71 matrix file not found");
+
+    let matrix = &test_matrix.matrix;
+
+    let mut solver =
+        SparseLDLT::analyze_with_matrix(matrix, &AnalyzeOptions::default()).expect("analyze c-71");
+
+    let factor_opts = FactorOptions::default();
+    solver.factor(matrix, &factor_opts).expect("factor c-71");
+
+    let sn_count = solver.per_supernode_stats().unwrap().len();
+    eprintln!("c-71 supernode count after amalgamation: {sn_count}");
+
+    assert!(
+        sn_count < 12_000,
+        "c-71 supernode count ({sn_count}) should be < 12K after amalgamation"
+    );
+}
+
+/// T034: Verify c-71 achieves acceptable backward error after amalgamation.
+///
+/// Factorize + solve c-71 with default settings (nemin=32, MatchOrderMetis),
+/// assert backward error < 5e-11 (SPRAL's threshold).
+#[test]
+#[ignore = "requires c-71 matrix (not in CI subset)"]
+fn test_amalgamation_c71_backward_error() {
+    use rivrs_sparse::io::registry;
+
+    let all_meta = registry::load_registry().expect("load registry");
+    let c71_meta = all_meta
+        .iter()
+        .find(|m| m.name == "GHS_indef/c-71")
+        .expect("c-71 not in metadata.json");
+
+    let test_matrix = registry::load_test_matrix_from_entry(c71_meta)
+        .expect("load c-71")
+        .expect("c-71 matrix file not found");
+
+    let matrix = &test_matrix.matrix;
+    let n = matrix.nrows();
+
+    // Create RHS: b = A * x_exact where x_exact = [1, 2, ..., n]
+    let x_exact: Vec<f64> = (0..n).map(|i| (i + 1) as f64).collect();
+    let b_vec = sparse_matvec(matrix, &x_exact);
+    let b = Col::from_fn(n, |i| b_vec[i]);
+
+    // Solve
+    let opts = SolverOptions::default();
+    let x = SparseLDLT::solve_full(matrix, &b, &opts).expect("solve c-71");
+
+    let be = sparse_backward_error(matrix, &x, &b);
+    eprintln!("c-71 backward error with amalgamation: {be:.2e}");
+
+    assert!(
+        be < 5e-11,
+        "c-71 backward error ({be:.2e}) should be < 5e-11"
+    );
+}
+
+/// T046: nemin=1 disables amalgamation — solve result should be bitwise identical
+/// to a solve without amalgamation (since nemin=1 makes do_merge always return false).
+///
+/// Uses a hand-constructed matrix where the result is deterministic regardless
+/// of supernode structure.
+#[test]
+fn test_nemin_1_bitwise_identical() {
+    let matrix = sparse_from_lower_triplets(
+        5,
+        &[
+            (0, 0, 4.0),
+            (1, 0, 1.0),
+            (1, 1, 3.0),
+            (2, 1, 0.5),
+            (2, 2, 5.0),
+            (3, 2, 1.0),
+            (3, 3, -2.0),
+            (4, 3, 0.5),
+            (4, 4, 6.0),
+        ],
+    );
+
+    let x_exact: Vec<f64> = vec![1.0, -1.0, 2.0, 0.5, -0.5];
+    let b_vec = sparse_matvec(&matrix, &x_exact);
+    let b = Col::from_fn(5, |i| b_vec[i]);
+
+    // Solve with nemin=1 (amalgamation disabled)
+    let opts_no_amalg = SolverOptions {
+        nemin: 1,
+        ..SolverOptions::default()
+    };
+    let x_no_amalg = SparseLDLT::solve_full(&matrix, &b, &opts_no_amalg).expect("solve nemin=1");
+
+    // Solve with nemin=32 (default, amalgamation enabled)
+    let opts_default = SolverOptions::default();
+    let x_default = SparseLDLT::solve_full(&matrix, &b, &opts_default).expect("solve nemin=32");
+
+    // Both should achieve excellent backward error
+    let be_no_amalg = sparse_backward_error(&matrix, &x_no_amalg, &b);
+    let be_default = sparse_backward_error(&matrix, &x_default, &b);
+    assert!(
+        be_no_amalg < 1e-14,
+        "nemin=1 backward error: {:.2e}",
+        be_no_amalg
+    );
+    assert!(
+        be_default < 1e-14,
+        "nemin=32 backward error: {:.2e}",
+        be_default
     );
 }

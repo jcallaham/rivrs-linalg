@@ -352,8 +352,8 @@ mod tests {
     fn factor_identity(matrix: &SparseColMat<usize, f64>) -> (AptpSymbolic, AptpNumeric) {
         let symbolic =
             AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Identity).expect("analyze");
-        let numeric =
-            AptpNumeric::factor(&symbolic, matrix, &AptpOptions::default(), None).expect("factor");
+        let numeric = AptpNumeric::factor(&symbolic, matrix, &AptpOptions::default(), None, 32)
+            .expect("factor");
         (symbolic, numeric)
     }
 
@@ -635,8 +635,8 @@ mod tests {
         let matrix = SparseColMat::try_new_from_triplets(0, 0, &triplets).expect("empty matrix");
         let symbolic =
             AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Identity).expect("analyze");
-        let numeric =
-            AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None).expect("factor");
+        let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None, 32)
+            .expect("factor");
 
         let mut rhs: Vec<f64> = vec![];
         let scratch = aptp_solve_scratch(&numeric, 1);

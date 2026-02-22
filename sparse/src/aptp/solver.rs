@@ -60,12 +60,22 @@ pub enum OrderingStrategy {
 pub struct AnalyzeOptions {
     /// Fill-reducing ordering strategy.
     pub ordering: OrderingStrategy,
+    /// Minimum supernode size for amalgamation. Supernodes with fewer than
+    /// `nemin` eliminated columns may be merged with their parent. Default: 32.
+    ///
+    /// Setting `nemin = 1` disables amalgamation entirely.
+    ///
+    /// # SPRAL Equivalent
+    ///
+    /// Corresponds to `options%nemin` (`datatypes.f90:21`).
+    pub nemin: usize,
 }
 
 impl Default for AnalyzeOptions {
     fn default() -> Self {
         Self {
             ordering: OrderingStrategy::MatchOrderMetis,
+            nemin: 32,
         }
     }
 }
@@ -109,6 +119,9 @@ pub struct SolverOptions {
     pub fallback: AptpFallback,
     /// Parallelism control for factorization and solve. Default: `Par::Seq`.
     pub par: Par,
+    /// Minimum supernode size for amalgamation. Default: 32.
+    /// Setting `nemin = 1` disables amalgamation.
+    pub nemin: usize,
 }
 
 impl Default for SolverOptions {
@@ -118,6 +131,7 @@ impl Default for SolverOptions {
             threshold: 0.01,
             fallback: AptpFallback::BunchKaufman,
             par: Par::Seq,
+            nemin: 32,
         }
     }
 }
@@ -155,17 +169,24 @@ pub struct SparseLDLT {
     scaling: Option<Vec<f64>>,
     /// Cached forward permutation (perm_fwd[new] = old). Computed once during analyze.
     perm_fwd: Vec<usize>,
+    /// Minimum supernode size for amalgamation.
+    nemin: usize,
 }
 
 impl SparseLDLT {
     /// Build a `SparseLDLT` with cached permutation vectors from symbolic analysis.
-    fn new_with_cached_perm(symbolic: AptpSymbolic, scaling: Option<Vec<f64>>) -> Self {
+    fn new_with_cached_perm(
+        symbolic: AptpSymbolic,
+        scaling: Option<Vec<f64>>,
+        nemin: usize,
+    ) -> Self {
         let (perm_fwd, _) = symbolic.perm_vecs();
         SparseLDLT {
             symbolic,
             numeric: None,
             scaling,
             perm_fwd,
+            nemin,
         }
     }
 
@@ -190,7 +211,7 @@ impl SparseLDLT {
         match &options.ordering {
             OrderingStrategy::Amd => {
                 let symbolic = AptpSymbolic::analyze(matrix, SymmetricOrdering::Amd)?;
-                Ok(Self::new_with_cached_perm(symbolic, None))
+                Ok(Self::new_with_cached_perm(symbolic, None, options.nemin))
             }
             OrderingStrategy::Metis => {
                 // Build a dummy matrix for METIS (needs SymbolicSparseColMatRef)
@@ -212,7 +233,7 @@ impl SparseLDLT {
                 let perm = metis_ordering(dummy_matrix.symbolic())?;
                 let symbolic =
                     AptpSymbolic::analyze(matrix, SymmetricOrdering::Custom(perm.as_ref()))?;
-                Ok(Self::new_with_cached_perm(symbolic, None))
+                Ok(Self::new_with_cached_perm(symbolic, None, options.nemin))
             }
             OrderingStrategy::MatchOrderMetis => {
                 Err(SparseError::AnalysisFailure {
@@ -222,7 +243,7 @@ impl SparseLDLT {
             OrderingStrategy::UserSupplied(perm) => {
                 let symbolic =
                     AptpSymbolic::analyze(matrix, SymmetricOrdering::Custom(perm.as_ref()))?;
-                Ok(Self::new_with_cached_perm(symbolic, None))
+                Ok(Self::new_with_cached_perm(symbolic, None, options.nemin))
             }
         }
     }
@@ -251,7 +272,11 @@ impl SparseLDLT {
                 let (perm_fwd, _) = symbolic.perm_vecs();
                 let elim_scaling: Vec<f64> = (0..n).map(|i| result.scaling[perm_fwd[i]]).collect();
 
-                Ok(Self::new_with_cached_perm(symbolic, Some(elim_scaling)))
+                Ok(Self::new_with_cached_perm(
+                    symbolic,
+                    Some(elim_scaling),
+                    options.nemin,
+                ))
             }
             // All other orderings don't need numeric values
             _ => Self::analyze(matrix.symbolic(), options),
@@ -286,6 +311,7 @@ impl SparseLDLT {
             matrix,
             &aptp_options,
             self.scaling.as_deref(),
+            self.nemin,
         )?;
         self.numeric = Some(numeric);
         Ok(())
@@ -406,6 +432,7 @@ impl SparseLDLT {
     ) -> Result<Col<f64>, SparseError> {
         let analyze_opts = AnalyzeOptions {
             ordering: options.ordering.clone(),
+            nemin: options.nemin,
         };
         let factor_opts = FactorOptions {
             threshold: options.threshold,

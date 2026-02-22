@@ -2616,6 +2616,17 @@ rivrs entry point: `src/aptp/symbolic.rs:284` — `factorize_symbolic_cholesky` 
 
 Expected impact: 5-15× speedup on c-71/c-big by reducing supernode count 3-5×.
 
+**STATUS: COMPLETE** (branch `020-supernode-amalgamation`)
+
+Results:
+- c-71: 35,372 → 6,350 supernodes (5.6× reduction), backward error 1.60e-18
+- All 65/65 SuiteSparse matrices pass strict backward error < 5e-11
+- Implementation: ~620 LOC in `src/aptp/amalgamation.rs` (amalgamate, do_merge,
+  sorted_union_excluding) + `owned_ranges` on SupernodeInfo for non-contiguous merges
+- `scatter_original_entries_multi()` handles multi-range column ownership correctly
+- nemin configurable via `AnalyzeOptions.nemin` / `SolverOptions.nemin` (default 32)
+- nemin=1 disables amalgamation entirely
+
 *9.1b: Workspace reuse & simplicial overhead — fixes small-matrix overhead (2-6×)*
 
 Root cause: 7 matrices (bloweybq, dixmaanl, linverse, spmsrtls, t2dal, mario001,

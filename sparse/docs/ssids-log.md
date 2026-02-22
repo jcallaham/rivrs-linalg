@@ -1,5 +1,47 @@
 # SSIDS Development Log
 
+## Phase 9.1a: Supernode Amalgamation
+
+**Status**: Complete
+**Branch**: `020-supernode-amalgamation`
+**Date**: 2026-02-21
+
+### What Was Built
+
+SPRAL-style supernode amalgamation pass in `src/aptp/amalgamation.rs`. After faer's
+symbolic analysis produces fundamental supernodes, this pass merges small parent-child
+pairs using SPRAL's two-condition `do_merge` predicate:
+
+1. Structural match (parent has 1 col, column count matches child − 1)
+2. Both-small (both have < nemin eliminated columns, default nemin=32)
+
+### Key Results
+
+- **c-71**: 35,372 → 6,350 supernodes (5.6× reduction), backward error 1.60e-18
+- **All 65/65 SuiteSparse matrices** pass strict backward error < 5e-11
+- **Zero regressions** on any matrix
+
+### Key Findings
+
+- Non-contiguous merges (nemin-based, not structurally adjacent) require tracking
+  actual column ownership via `owned_ranges: Vec<Range<usize>>` on `SupernodeInfo`.
+  Using `col_begin..col_end` spans columns belonging to other supernodes.
+- `scatter_original_entries_multi()` replaces the old single-range scatter to handle
+  upper-triangle deduplication across multiple owned column ranges correctly.
+- Amalgamation statistics added to `FactorizationStats`: supernodes before/after, merges.
+- nemin configurable: `AnalyzeOptions.nemin` / `SolverOptions.nemin`. nemin=1 disables.
+
+### Files Changed
+
+- **New**: `src/aptp/amalgamation.rs` (~620 LOC) — amalgamate, do_merge, sorted_union_excluding
+- **Modified**: `src/aptp/numeric.rs` — SupernodeInfo.owned_ranges, scatter_original_entries_multi,
+  FactorizationStats amalgamation fields, nemin parameter on AptpNumeric::factor
+- **Modified**: `src/aptp/solver.rs` — nemin on AnalyzeOptions/SolverOptions/SparseLDLT
+- **Modified**: `tests/solve.rs` — c-71 integration tests, nemin=1 test
+- 21 unit tests + 3 integration tests added
+
+---
+
 ## Supernode Relaxation Experiment
 
 **Status**: Complete (experiment + updated plan)

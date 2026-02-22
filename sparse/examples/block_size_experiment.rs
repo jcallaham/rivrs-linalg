@@ -52,6 +52,7 @@ fn solve_with_options(
     let _n = matrix.nrows();
     let analyze_opts = AnalyzeOptions {
         ordering: OrderingStrategy::MatchOrderMetis,
+        ..Default::default()
     };
     let factor_opts = FactorOptions {
         outer_block_size: outer_bs,

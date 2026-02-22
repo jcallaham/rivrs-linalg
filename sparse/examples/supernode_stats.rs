@@ -25,6 +25,7 @@ fn main() {
     // Analyze
     let analyze_opts = AnalyzeOptions {
         ordering: OrderingStrategy::MatchOrderMetis,
+        ..Default::default()
     };
     eprintln!("Analyzing (MatchOrderMetis)...");
     let mut solver = SparseLDLT::analyze_with_matrix(&matrix, &analyze_opts).unwrap();

@@ -120,7 +120,10 @@ fn run_solve(
     let b = Col::from_fn(n, |i| b_vec[i]);
 
     // Analyze + factor
-    let opts = rivrs_sparse::aptp::AnalyzeOptions { ordering };
+    let opts = rivrs_sparse::aptp::AnalyzeOptions {
+        ordering,
+        ..Default::default()
+    };
     let mut solver = match SparseLDLT::analyze_with_matrix(a, &opts) {
         Ok(s) => s,
         Err(e) => {
