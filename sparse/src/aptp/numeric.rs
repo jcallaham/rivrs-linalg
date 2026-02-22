@@ -582,6 +582,25 @@ pub struct PerSupernodeStats {
     /// Wall-clock time for front factor extraction.
     #[cfg(feature = "diagnostic")]
     pub extraction_time: std::time::Duration,
+    // -- Sub-phase timing (finer-grained diagnostic breakdown) --
+    /// Wall-clock time for zeroing the frontal matrix (memset-equivalent).
+    #[cfg(feature = "diagnostic")]
+    pub zero_time: std::time::Duration,
+    /// Wall-clock time for building the global-to-local mapping.
+    #[cfg(feature = "diagnostic")]
+    pub g2l_time: std::time::Duration,
+    /// Wall-clock time for scattering original CSC entries into the frontal matrix.
+    #[cfg(feature = "diagnostic")]
+    pub scatter_time: std::time::Duration,
+    /// Wall-clock time for extend-add (merging child contributions).
+    #[cfg(feature = "diagnostic")]
+    pub extend_add_time: std::time::Duration,
+    /// Wall-clock time for extracting L11, D11, L21 from the factored frontal matrix.
+    #[cfg(feature = "diagnostic")]
+    pub extract_factors_time: std::time::Duration,
+    /// Wall-clock time for extracting the contribution block.
+    #[cfg(feature = "diagnostic")]
+    pub extract_contrib_time: std::time::Duration,
 }
 
 /// Aggregate statistics from multifrontal factorization.
@@ -617,6 +636,25 @@ pub struct FactorizationStats {
     /// Sum of extraction times across all supernodes.
     #[cfg(feature = "diagnostic")]
     pub total_extraction_time: std::time::Duration,
+    // -- Sub-phase totals --
+    /// Sum of zeroing times across all supernodes.
+    #[cfg(feature = "diagnostic")]
+    pub total_zero_time: std::time::Duration,
+    /// Sum of g2l build times across all supernodes.
+    #[cfg(feature = "diagnostic")]
+    pub total_g2l_time: std::time::Duration,
+    /// Sum of scatter times across all supernodes.
+    #[cfg(feature = "diagnostic")]
+    pub total_scatter_time: std::time::Duration,
+    /// Sum of extend-add times across all supernodes.
+    #[cfg(feature = "diagnostic")]
+    pub total_extend_add_time: std::time::Duration,
+    /// Sum of factor extraction times across all supernodes.
+    #[cfg(feature = "diagnostic")]
+    pub total_extract_factors_time: std::time::Duration,
+    /// Sum of contribution extraction times across all supernodes.
+    #[cfg(feature = "diagnostic")]
+    pub total_extract_contrib_time: std::time::Duration,
 }
 
 /// Assembled frontal matrix exported for diagnostic comparison.
@@ -838,6 +876,18 @@ impl AptpNumeric {
             total_kernel_time: std::time::Duration::ZERO,
             #[cfg(feature = "diagnostic")]
             total_extraction_time: std::time::Duration::ZERO,
+            #[cfg(feature = "diagnostic")]
+            total_zero_time: std::time::Duration::ZERO,
+            #[cfg(feature = "diagnostic")]
+            total_g2l_time: std::time::Duration::ZERO,
+            #[cfg(feature = "diagnostic")]
+            total_scatter_time: std::time::Duration::ZERO,
+            #[cfg(feature = "diagnostic")]
+            total_extend_add_time: std::time::Duration::ZERO,
+            #[cfg(feature = "diagnostic")]
+            total_extract_factors_time: std::time::Duration::ZERO,
+            #[cfg(feature = "diagnostic")]
+            total_extract_contrib_time: std::time::Duration::ZERO,
         };
         for sn_stat in &per_sn_stats {
             stats.total_1x1_pivots += sn_stat.num_1x1;
@@ -851,6 +901,12 @@ impl AptpNumeric {
                 stats.total_assembly_time += sn_stat.assembly_time;
                 stats.total_kernel_time += sn_stat.kernel_time;
                 stats.total_extraction_time += sn_stat.extraction_time;
+                stats.total_zero_time += sn_stat.zero_time;
+                stats.total_g2l_time += sn_stat.g2l_time;
+                stats.total_scatter_time += sn_stat.scatter_time;
+                stats.total_extend_add_time += sn_stat.extend_add_time;
+                stats.total_extract_factors_time += sn_stat.extract_factors_time;
+                stats.total_extract_contrib_time += sn_stat.extract_contrib_time;
             }
         }
 
@@ -1120,12 +1176,25 @@ fn factor_single_supernode(
     if m > workspace.frontal_data.nrows() {
         workspace.frontal_data = Mat::zeros(m, m);
     }
+
+    #[cfg(feature = "diagnostic")]
+    let zero_start = std::time::Instant::now();
+
     workspace.zero_frontal(m);
 
+    #[cfg(feature = "diagnostic")]
+    let zero_time = zero_start.elapsed();
+
     // 4. Build global-to-local mapping
+    #[cfg(feature = "diagnostic")]
+    let g2l_start = std::time::Instant::now();
+
     for (i, &global) in workspace.frontal_row_indices.iter().enumerate() {
         workspace.global_to_local[global] = i;
     }
+
+    #[cfg(feature = "diagnostic")]
+    let g2l_time = g2l_start.elapsed();
 
     // 5. Assemble frontal matrix using workspace buffer
     #[cfg(feature = "diagnostic")]
@@ -1138,6 +1207,10 @@ fn factor_single_supernode(
         row_indices: &workspace.frontal_row_indices,
         num_fully_summed: k,
     };
+
+    // 5a. Scatter original CSC entries
+    #[cfg(feature = "diagnostic")]
+    let scatter_start = std::time::Instant::now();
 
     // Use precomputed amap when no delays shift row positions
     if ndelay_in == 0 {
@@ -1180,7 +1253,13 @@ fn factor_single_supernode(
         );
     }
 
-    // Extend-add: merge child contributions into parent frontal matrix
+    #[cfg(feature = "diagnostic")]
+    let scatter_time = scatter_start.elapsed();
+
+    // 5b. Extend-add: merge child contributions into parent frontal matrix
+    #[cfg(feature = "diagnostic")]
+    let ea_start_time = std::time::Instant::now();
+
     let ea_children_begin = assembly_maps.ea_snode_child_begin[s];
     let mut ea_child_idx = ea_children_begin;
 
@@ -1197,6 +1276,9 @@ fn factor_single_supernode(
         }
         ea_child_idx += 1;
     }
+
+    #[cfg(feature = "diagnostic")]
+    let extend_add_time = ea_start_time.elapsed();
 
     #[cfg(feature = "diagnostic")]
     let assembly_time = assembly_start.elapsed();
@@ -1227,6 +1309,8 @@ fn factor_single_supernode(
     // 7. Extract front factors (reads from workspace frontal data)
     #[cfg(feature = "diagnostic")]
     let extraction_start = std::time::Instant::now();
+    #[cfg(feature = "diagnostic")]
+    let extract_factors_start = std::time::Instant::now();
 
     // Use owned Mat<f64> directly for col_as_slice-based bulk extraction
     let ff = extract_front_factors(
@@ -1237,7 +1321,13 @@ fn factor_single_supernode(
         &result,
     );
 
+    #[cfg(feature = "diagnostic")]
+    let extract_factors_time = extract_factors_start.elapsed();
+
     // 8. Prepare contribution for parent (if not root and not fully eliminated)
+    #[cfg(feature = "diagnostic")]
+    let extract_contrib_start = std::time::Instant::now();
+
     let contribution = if sn.parent.is_some() && ne < m {
         Some(extract_contribution(
             &workspace.frontal_data,
@@ -1249,6 +1339,9 @@ fn factor_single_supernode(
     } else {
         None
     };
+
+    #[cfg(feature = "diagnostic")]
+    let extract_contrib_time = extract_contrib_start.elapsed();
 
     #[cfg(feature = "diagnostic")]
     let extraction_time = extraction_start.elapsed();
@@ -1268,6 +1361,18 @@ fn factor_single_supernode(
         kernel_time,
         #[cfg(feature = "diagnostic")]
         extraction_time,
+        #[cfg(feature = "diagnostic")]
+        zero_time,
+        #[cfg(feature = "diagnostic")]
+        g2l_time,
+        #[cfg(feature = "diagnostic")]
+        scatter_time,
+        #[cfg(feature = "diagnostic")]
+        extend_add_time,
+        #[cfg(feature = "diagnostic")]
+        extract_factors_time,
+        #[cfg(feature = "diagnostic")]
+        extract_contrib_time,
     };
 
     // Reset global_to_local entries for reuse (O(m), not O(n))
