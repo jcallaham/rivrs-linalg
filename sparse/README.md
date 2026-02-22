@@ -100,6 +100,24 @@ cargo run --example parallel_scaling --features diagnostic --release -- --thread
 cargo run --example parallel_scaling --features diagnostic --release
 ```
 
+### Single-matrix profiling
+
+Profile the full analyze/factor/solve pipeline for one matrix with per-supernode timing breakdown and optional Chrome Trace export.
+
+```bash
+# By registry name
+cargo run --example profile_matrix --features diagnostic --release -- GHS_indef/bloweybq
+
+# By .mtx file path
+cargo run --example profile_matrix --features diagnostic --release -- --path path/to/matrix.mtx
+
+# Export Chrome Trace (open in https://ui.perfetto.dev)
+cargo run --example profile_matrix --features diagnostic --release -- d_pretok --trace /tmp/trace.json
+
+# List available matrices
+cargo run --example profile_matrix --features diagnostic --release -- --list
+```
+
 ### Baseline collection
 
 Structured JSON with per-phase timing, per-supernode stats, and backward error.
