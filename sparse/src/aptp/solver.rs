@@ -84,6 +84,9 @@ pub struct FactorOptions {
     /// Parallelism control for dense BLAS operations within supernodes
     /// and tree-level scheduling. Default: `Par::Seq`.
     pub par: Par,
+    /// Minimum supernode size for amalgamation. Default: 32.
+    /// Setting `nemin = 1` disables amalgamation.
+    pub nemin: usize,
 }
 
 impl Default for FactorOptions {
@@ -94,6 +97,7 @@ impl Default for FactorOptions {
             outer_block_size: 256,
             inner_block_size: 32,
             par: Par::Seq,
+            nemin: 32,
         }
     }
 }
@@ -109,6 +113,9 @@ pub struct SolverOptions {
     pub fallback: AptpFallback,
     /// Parallelism control for factorization and solve. Default: `Par::Seq`.
     pub par: Par,
+    /// Minimum supernode size for amalgamation. Default: 32.
+    /// Setting `nemin = 1` disables amalgamation.
+    pub nemin: usize,
 }
 
 impl Default for SolverOptions {
@@ -118,6 +125,7 @@ impl Default for SolverOptions {
             threshold: 0.01,
             fallback: AptpFallback::BunchKaufman,
             par: Par::Seq,
+            nemin: 32,
         }
     }
 }
@@ -278,6 +286,7 @@ impl SparseLDLT {
             outer_block_size: options.outer_block_size,
             inner_block_size: options.inner_block_size,
             par: options.par,
+            nemin: options.nemin,
             ..AptpOptions::default()
         };
 
@@ -411,6 +420,7 @@ impl SparseLDLT {
             threshold: options.threshold,
             fallback: options.fallback,
             par: options.par,
+            nemin: options.nemin,
             ..FactorOptions::default()
         };
 

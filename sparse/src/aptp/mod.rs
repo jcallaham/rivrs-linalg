@@ -16,6 +16,7 @@
 //! - Bunch & Kaufman (1977), "Some Stable Methods for Calculating Inertia and
 //!   Solving Symmetric Linear Systems", Math. Comp.
 
+pub(crate) mod amalgamation;
 pub mod diagonal;
 pub mod factor;
 pub mod inertia;

@@ -105,6 +105,15 @@ pub struct AptpOptions {
     pub failed_pivot_method: FailedPivotMethod,
     /// Parallelism control for BLAS-3 operations (TRSM, GEMM). Default: `Par::Seq`.
     pub par: Par,
+    /// Minimum supernode size for amalgamation. Supernodes with fewer than
+    /// `nemin` eliminated columns may be merged with their parent. Default: 32.
+    ///
+    /// Setting `nemin = 1` disables amalgamation entirely.
+    ///
+    /// # SPRAL Equivalent
+    ///
+    /// Corresponds to `options%nemin` (`datatypes.f90:21`).
+    pub nemin: usize,
 }
 
 impl Default for AptpOptions {
@@ -117,6 +126,7 @@ impl Default for AptpOptions {
             inner_block_size: 32,
             failed_pivot_method: FailedPivotMethod::Tpp,
             par: Par::Seq,
+            nemin: 32,
         }
     }
 }
