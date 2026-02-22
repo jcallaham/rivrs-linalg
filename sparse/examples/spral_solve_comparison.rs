@@ -210,7 +210,6 @@ fn compare_matrix(path: &Path) -> Option<()> {
     // ---- Run our solver ----
     let analyze_opts = AnalyzeOptions {
         ordering: OrderingStrategy::MatchOrderMetis,
-        ..Default::default()
     };
     let factor_opts = FactorOptions::default();
 

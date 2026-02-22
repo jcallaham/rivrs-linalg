@@ -54,7 +54,7 @@ fn test_aptp_solve_small_pd() {
     let symbolic =
         AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Identity).expect("analyze");
     let numeric =
-        AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None, 32).expect("factor");
+        AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None).expect("factor");
 
     // Get permutation
     let n = 3;
@@ -867,7 +867,6 @@ fn test_symbolic_only_analyze_amd() {
     // Use symbolic-only analyze (requires AMD or Metis — not MatchOrderMetis)
     let opts = AnalyzeOptions {
         ordering: OrderingStrategy::Amd,
-        ..Default::default()
     };
     let mut solver = SparseLDLT::analyze(matrix.symbolic(), &opts).expect("symbolic analyze AMD");
     solver
@@ -892,7 +891,6 @@ fn test_match_order_metis_requires_numeric() {
 
     let opts = AnalyzeOptions {
         ordering: OrderingStrategy::MatchOrderMetis,
-        ..Default::default()
     };
     let result = SparseLDLT::analyze(matrix.symbolic(), &opts);
     assert!(
@@ -1067,10 +1065,7 @@ fn test_parallel_factor_ci_subset() {
         } else {
             OrderingStrategy::Metis
         };
-        let analyze_opts = AnalyzeOptions {
-            ordering,
-            ..Default::default()
-        };
+        let analyze_opts = AnalyzeOptions { ordering };
         let factor_opts = FactorOptions {
             par: Par::rayon(4),
             ..FactorOptions::default()
@@ -1127,7 +1122,6 @@ fn test_parallel_factor_determinism() {
 
     let analyze_opts = AnalyzeOptions {
         ordering: OrderingStrategy::Metis,
-        ..Default::default()
     };
 
     // Sequential factorization + solve
@@ -1279,7 +1273,6 @@ fn test_parallel_correctness_mixed_sizes() {
     };
     let analyze_opts = AnalyzeOptions {
         ordering: OrderingStrategy::Metis,
-        ..Default::default()
     };
     let mut solver = SparseLDLT::analyze_with_matrix(&arrow, &analyze_opts).expect("analyze arrow");
     solver.factor(&arrow, &factor_par).expect("factor arrow");
@@ -1381,7 +1374,6 @@ fn test_parallel_solve_determinism() {
 
     let analyze_opts = AnalyzeOptions {
         ordering: OrderingStrategy::Metis,
-        ..Default::default()
     };
 
     // Sequential

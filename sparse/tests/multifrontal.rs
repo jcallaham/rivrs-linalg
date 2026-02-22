@@ -192,7 +192,7 @@ fn test_build_supernode_info_simplicial() {
         .expect("analyze should succeed");
 
     // Whether faer chooses simplicial or supernodal, we should be able to factor
-    let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None, 32)
+    let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None)
         .expect("factor should succeed");
 
     assert_eq!(numeric.n(), n);
@@ -223,7 +223,7 @@ fn test_scatter_leaf_supernode() {
 
     let symbolic = AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Amd)
         .expect("analyze should succeed");
-    let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None, 32)
+    let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None)
         .expect("factor should succeed");
 
     let err = multifrontal_reconstruction_error(&matrix, &symbolic, &numeric);
@@ -251,7 +251,7 @@ fn test_extend_add_correctness() {
 
     let symbolic = AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Amd)
         .expect("analyze should succeed");
-    let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None, 32)
+    let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None)
         .expect("factor should succeed");
 
     let err = multifrontal_reconstruction_error(&matrix, &symbolic, &numeric);
@@ -281,7 +281,7 @@ fn test_assembly_with_children() {
 
     let symbolic = AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Amd)
         .expect("analyze should succeed");
-    let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None, 32)
+    let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None)
         .expect("factor should succeed");
 
     let err = multifrontal_reconstruction_error(&matrix, &symbolic, &numeric);
@@ -317,7 +317,7 @@ fn test_extract_contribution_structure() {
 
     let symbolic = AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Amd)
         .expect("analyze should succeed");
-    let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None, 32)
+    let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None)
         .expect("factor should succeed");
 
     // Verify that factorization completed (all pivots accounted for)
@@ -351,7 +351,7 @@ fn test_extract_front_factors_shapes() {
 
     let symbolic = AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Amd)
         .expect("analyze should succeed");
-    let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None, 32)
+    let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None)
         .expect("factor should succeed");
 
     // Each front factor should have valid shapes
@@ -394,7 +394,7 @@ fn test_delayed_pivot_propagation() {
 
     let symbolic = AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Amd)
         .expect("analyze should succeed");
-    let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None, 32)
+    let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None)
         .expect("factor should succeed");
 
     let err = multifrontal_reconstruction_error(&matrix, &symbolic, &numeric);
@@ -426,7 +426,7 @@ fn test_strongly_indefinite() {
 
     let symbolic = AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Amd)
         .expect("analyze should succeed");
-    let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None, 32)
+    let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None)
         .expect("factor should succeed");
 
     let err = multifrontal_reconstruction_error(&matrix, &symbolic, &numeric);
@@ -465,7 +465,7 @@ fn test_single_supernode_matches_dense() {
         .expect("analyze should succeed");
     let options = AptpOptions::default();
     let numeric =
-        AptpNumeric::factor(&symbolic, &matrix, &options, None, 32).expect("factor should succeed");
+        AptpNumeric::factor(&symbolic, &matrix, &options, None).expect("factor should succeed");
 
     let err = multifrontal_reconstruction_error(&matrix, &symbolic, &numeric);
     assert!(
@@ -486,7 +486,7 @@ fn test_simplicial_path() {
 
     let symbolic = AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Amd)
         .expect("analyze should succeed");
-    let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None, 32)
+    let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None)
         .expect("factor should succeed");
 
     let err = multifrontal_reconstruction_error(&matrix, &symbolic, &numeric);
@@ -515,9 +515,8 @@ fn test_hand_constructed_matrices() {
     for case in &cases {
         let symbolic = AptpSymbolic::analyze(case.matrix.symbolic(), SymmetricOrdering::Amd)
             .unwrap_or_else(|e| panic!("analyze failed for '{}': {}", case.name, e));
-        let numeric =
-            AptpNumeric::factor(&symbolic, &case.matrix, &AptpOptions::default(), None, 32)
-                .unwrap_or_else(|e| panic!("factor failed for '{}': {}", case.name, e));
+        let numeric = AptpNumeric::factor(&symbolic, &case.matrix, &AptpOptions::default(), None)
+            .unwrap_or_else(|e| panic!("factor failed for '{}': {}", case.name, e));
 
         let err = multifrontal_reconstruction_error(&case.matrix, &symbolic, &numeric);
         assert!(
@@ -539,7 +538,7 @@ fn test_factorization_statistics() {
 
     let symbolic = AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Amd)
         .expect("analyze should succeed");
-    let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None, 32)
+    let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None)
         .expect("factor should succeed");
 
     let stats = numeric.stats();
@@ -561,7 +560,7 @@ fn test_dimension_mismatch_error() {
     let symbolic = AptpSymbolic::analyze(matrix_3x3.symbolic(), SymmetricOrdering::Amd)
         .expect("analyze should succeed");
 
-    let result = AptpNumeric::factor(&symbolic, &matrix_4x4, &AptpOptions::default(), None, 32);
+    let result = AptpNumeric::factor(&symbolic, &matrix_4x4, &AptpOptions::default(), None);
     assert!(result.is_err(), "should fail with dimension mismatch");
     let err = result.err().unwrap();
     assert!(
@@ -584,7 +583,7 @@ fn test_inertia_validation() {
 
     let symbolic = AptpSymbolic::analyze(matrix_pd.symbolic(), SymmetricOrdering::Amd)
         .expect("analyze should succeed");
-    let numeric = AptpNumeric::factor(&symbolic, &matrix_pd, &AptpOptions::default(), None, 32)
+    let numeric = AptpNumeric::factor(&symbolic, &matrix_pd, &AptpOptions::default(), None)
         .expect("factor should succeed");
 
     // Count positive/negative pivots from all front factors
@@ -628,7 +627,7 @@ fn test_dense_equivalence() {
     let symbolic = AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Amd)
         .expect("analyze should succeed");
     let options = AptpOptions::default();
-    let numeric = AptpNumeric::factor(&symbolic, &matrix, &options, None, 32)
+    let numeric = AptpNumeric::factor(&symbolic, &matrix, &options, None)
         .expect("multifrontal factor should succeed");
 
     let mf_err = multifrontal_reconstruction_error(&matrix, &symbolic, &numeric);
@@ -717,7 +716,7 @@ fn test_multi_level_contribution_flow() {
 
     let symbolic = AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Amd)
         .expect("analyze should succeed");
-    let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None, 32)
+    let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None)
         .expect("factor should succeed");
 
     let err = multifrontal_reconstruction_error(&matrix, &symbolic, &numeric);
@@ -746,7 +745,7 @@ fn test_1x1_matrix() {
 
     let symbolic = AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Amd)
         .expect("analyze should succeed");
-    let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None, 32)
+    let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None)
         .expect("factor should succeed");
 
     assert_eq!(numeric.stats().total_1x1_pivots, 1);
@@ -765,7 +764,7 @@ fn test_2x2_matrix() {
 
     let symbolic = AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Amd)
         .expect("analyze should succeed");
-    let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None, 32)
+    let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None)
         .expect("factor should succeed");
 
     let err = multifrontal_reconstruction_error(&matrix, &symbolic, &numeric);
@@ -788,7 +787,7 @@ fn test_block_diagonal() {
 
     let symbolic = AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Amd)
         .expect("analyze should succeed");
-    let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None, 32)
+    let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None)
         .expect("factor should succeed");
 
     let err = multifrontal_reconstruction_error(&matrix, &symbolic, &numeric);
@@ -808,7 +807,7 @@ fn test_identity_matrix() {
 
     let symbolic = AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Amd)
         .expect("analyze should succeed");
-    let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None, 32)
+    let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None)
         .expect("factor should succeed");
 
     assert_eq!(numeric.stats().total_1x1_pivots, n);
@@ -834,7 +833,7 @@ fn test_larger_banded() {
 
     let symbolic = AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Amd)
         .expect("analyze should succeed");
-    let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None, 32)
+    let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None)
         .expect("factor should succeed");
 
     let err = multifrontal_reconstruction_error(&matrix, &symbolic, &numeric);
@@ -862,7 +861,7 @@ fn test_medium_indefinite() {
 
     let symbolic = AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Amd)
         .expect("analyze should succeed");
-    let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None, 32)
+    let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None)
         .expect("factor should succeed");
 
     let err = multifrontal_reconstruction_error(&matrix, &symbolic, &numeric);
@@ -906,9 +905,8 @@ fn test_suitesparse_ci_subset() {
         )
         .unwrap_or_else(|e| panic!("analyze failed for '{}': {}", case.name, e));
 
-        let numeric =
-            AptpNumeric::factor(&symbolic, &case.matrix, &AptpOptions::default(), None, 32)
-                .unwrap_or_else(|e| panic!("factor failed for '{}': {}", case.name, e));
+        let numeric = AptpNumeric::factor(&symbolic, &case.matrix, &AptpOptions::default(), None)
+            .unwrap_or_else(|e| panic!("factor failed for '{}': {}", case.name, e));
 
         let err = multifrontal_reconstruction_error(&case.matrix, &symbolic, &numeric);
         assert!(
@@ -951,7 +949,7 @@ fn test_singular_matrix_zero_pivots() {
     let symbolic = AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Amd)
         .expect("analyze should succeed for zero matrix");
 
-    let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None, 32)
+    let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None)
         .expect("factorization should succeed (zero pivots recorded, not errored)");
 
     assert!(
@@ -975,7 +973,7 @@ fn test_rank_deficient_matrix_zero_pivots() {
     let symbolic = AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Amd)
         .expect("analyze should succeed");
 
-    let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None, 32)
+    let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None)
         .expect("factorization should succeed (zero pivots recorded, not errored)");
 
     assert!(
@@ -1016,7 +1014,7 @@ fn test_metis_ordering() {
     )
     .expect("analyze with METIS ordering should succeed");
 
-    let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None, 32)
+    let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None)
         .expect("factor with METIS ordering should succeed");
 
     let err = multifrontal_reconstruction_error(&matrix, &symbolic, &numeric);
@@ -1052,7 +1050,7 @@ fn test_metis_vs_amd_reconstruction() {
     // AMD path
     let sym_amd = AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Amd)
         .expect("AMD analyze should succeed");
-    let num_amd = AptpNumeric::factor(&sym_amd, &matrix, &AptpOptions::default(), None, 32)
+    let num_amd = AptpNumeric::factor(&sym_amd, &matrix, &AptpOptions::default(), None)
         .expect("AMD factor should succeed");
     let err_amd = multifrontal_reconstruction_error(&matrix, &sym_amd, &num_amd);
 
@@ -1063,7 +1061,7 @@ fn test_metis_vs_amd_reconstruction() {
         SymmetricOrdering::Custom(metis_perm.as_ref()),
     )
     .expect("METIS analyze should succeed");
-    let num_metis = AptpNumeric::factor(&sym_metis, &matrix, &AptpOptions::default(), None, 32)
+    let num_metis = AptpNumeric::factor(&sym_metis, &matrix, &AptpOptions::default(), None)
         .expect("METIS factor should succeed");
     let err_metis = multifrontal_reconstruction_error(&matrix, &sym_metis, &num_metis);
 
@@ -1125,7 +1123,7 @@ fn test_cascading_delayed_pivots() {
     let symbolic = AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Amd)
         .expect("analyze should succeed");
 
-    let result = AptpNumeric::factor(&symbolic, &matrix, &options, None, 32);
+    let result = AptpNumeric::factor(&symbolic, &matrix, &options, None);
 
     let numeric = result.expect("factorization should succeed (zero pivots allowed)");
     let stats = numeric.stats();
@@ -1238,7 +1236,6 @@ fn test_suitesparse_full() {
             &test_matrix.matrix,
             &AptpOptions::default(),
             None,
-            32,
         ) {
             Ok(num) => num,
             Err(e) => {

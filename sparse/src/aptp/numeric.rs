@@ -305,7 +305,7 @@ pub struct ExportedFrontal {
 /// let symbolic = AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Amd).unwrap();
 ///
 /// // Factor
-/// let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None, 32).unwrap();
+/// let numeric = AptpNumeric::factor(&symbolic, &matrix, &AptpOptions::default(), None).unwrap();
 /// println!("Stats: {:?}", numeric.stats());
 /// ```
 pub struct AptpNumeric {
@@ -401,8 +401,8 @@ impl AptpNumeric {
         matrix: &SparseColMat<usize, f64>,
         options: &AptpOptions,
         scaling: Option<&[f64]>,
-        nemin: usize,
     ) -> Result<Self, SparseError> {
+        let nemin = options.nemin;
         let n = symbolic.nrows();
 
         // Validate dimensions
@@ -1829,5 +1829,159 @@ mod tests {
             num_delayed,
             r
         );
+    }
+
+    /// Test scatter_original_entries_multi with non-contiguous owned_ranges.
+    ///
+    /// After amalgamation, a merged supernode may own columns from multiple
+    /// non-contiguous ranges (e.g., [0..2, 4..6] when child columns 2,3 were
+    /// NOT merged). This test verifies:
+    ///
+    /// 1. Entries from all owned ranges are scattered into the frontal matrix
+    /// 2. Upper-triangle deduplication works correctly across non-contiguous
+    ///    ranges (an entry with both row and col in owned ranges is only counted once)
+    /// 3. Entries where one index is owned and the other is a non-fully-summed
+    ///    row are scattered correctly
+    #[test]
+    fn test_scatter_original_entries_multi_non_contiguous() {
+        use faer::sparse::{SparseColMat, Triplet};
+
+        // Build a small 6×6 symmetric matrix with identity permutation.
+        // Owned ranges: [0..2, 4..6] (columns 0,1,4,5 owned; 2,3 not owned).
+        //
+        // The frontal has 6 rows: locals 0..4 are owned (4 total_owned),
+        // no delayed children, rows 4..6 are non-fully-summed (rows for
+        // global indices 2 and 3).
+        //
+        // Matrix (lower triangle values, symmetric):
+        //     col: 0    1    2    3    4    5
+        // 0: [10.0                          ]
+        // 1: [ 1.0  11.0                    ]
+        // 2: [ 2.0   0.0  12.0              ]
+        // 3: [ 0.0   3.0   0.0  13.0        ]
+        // 4: [ 4.0   0.0   0.0   0.0  14.0  ]
+        // 5: [ 0.0   5.0   6.0   0.0   7.0  15.0]
+        let triplets = vec![
+            // Diagonal
+            Triplet::new(0, 0, 10.0),
+            Triplet::new(1, 1, 11.0),
+            Triplet::new(2, 2, 12.0),
+            Triplet::new(3, 3, 13.0),
+            Triplet::new(4, 4, 14.0),
+            Triplet::new(5, 5, 15.0),
+            // Off-diagonal (both triangles for full CSC)
+            Triplet::new(1, 0, 1.0),
+            Triplet::new(0, 1, 1.0), // mirror
+            Triplet::new(2, 0, 2.0),
+            Triplet::new(0, 2, 2.0), // mirror
+            Triplet::new(3, 1, 3.0),
+            Triplet::new(1, 3, 3.0), // mirror
+            Triplet::new(4, 0, 4.0),
+            Triplet::new(0, 4, 4.0), // mirror
+            Triplet::new(5, 1, 5.0),
+            Triplet::new(1, 5, 5.0), // mirror
+            Triplet::new(5, 2, 6.0),
+            Triplet::new(2, 5, 6.0), // mirror
+            Triplet::new(5, 4, 7.0),
+            Triplet::new(4, 5, 7.0), // mirror
+        ];
+        let matrix = SparseColMat::try_new_from_triplets(6, 6, &triplets).expect("valid CSC");
+
+        // Identity permutation
+        let perm_fwd: Vec<usize> = (0..6).collect();
+        let perm_inv: Vec<usize> = (0..6).collect();
+
+        // Frontal rows: owned columns first (0,1,4,5), then non-owned rows (2,3)
+        let frontal_rows = vec![0, 1, 4, 5, 2, 3];
+        let total_owned = 4; // columns 0,1,4,5
+        let m = frontal_rows.len();
+        let k = total_owned; // num_fully_summed = total_owned (no delayed children)
+
+        // Build global_to_local mapping
+        let mut global_to_local = vec![NOT_IN_FRONT; 6];
+        for (local, &global) in frontal_rows.iter().enumerate() {
+            global_to_local[global] = local;
+        }
+
+        let mut frontal = FrontalMatrix {
+            data: Mat::zeros(m, m),
+            row_indices: frontal_rows,
+            num_fully_summed: k,
+        };
+
+        // Non-contiguous owned ranges (the key case)
+        let owned_ranges = vec![0..2, 4..6];
+
+        scatter_original_entries_multi(
+            &mut frontal,
+            &matrix,
+            &perm_fwd,
+            &perm_inv,
+            &global_to_local,
+            &owned_ranges,
+            None,
+        );
+
+        // Verify scattered values.
+        // Local indices: 0→global 0, 1→global 1, 2→global 4, 3→global 5, 4→global 2, 5→global 3
+        //
+        // Expected entries in the frontal (lower triangle):
+        //   (0,0)=10.0  diagonal of global 0
+        //   (1,0)=1.0   global(1,0) → local(1,0)
+        //   (1,1)=11.0  diagonal of global 1
+        //   (2,0)=4.0   global(4,0) → local(2,0)
+        //   (2,2)=14.0  diagonal of global 4
+        //   (3,1)=5.0   global(5,1) → local(3,1)
+        //   (3,2)=7.0   global(5,4) → local(3,2)
+        //   (3,3)=15.0  diagonal of global 5
+        //   (4,0)=2.0   global(2,0) → local(4,0)  [non-owned row, owned col]
+        //   (4,3)=6.0   global(2,5) → local(4,3)  [non-owned row, owned col]
+        //   (5,1)=3.0   global(3,1) → local(5,1)  [non-owned row, owned col]
+        //
+        // Upper-triangle dedup: global(0,1) should be skipped because both
+        // 0 and 1 are owned. Similarly global(0,4), global(1,5), global(4,5)
+        // are upper-triangle entries between owned cols and should be skipped.
+
+        let f = &frontal.data;
+
+        // Diagonal entries
+        assert_eq!(f[(0, 0)], 10.0, "diag global 0");
+        assert_eq!(f[(1, 1)], 11.0, "diag global 1");
+        assert_eq!(f[(2, 2)], 14.0, "diag global 4");
+        assert_eq!(f[(3, 3)], 15.0, "diag global 5");
+
+        // Off-diagonal between owned cols (lower triangle only)
+        assert_eq!(f[(1, 0)], 1.0, "global(1,0) → local(1,0)");
+        assert_eq!(f[(2, 0)], 4.0, "global(4,0) → local(2,0)");
+        assert_eq!(f[(3, 1)], 5.0, "global(5,1) → local(3,1)");
+        assert_eq!(f[(3, 2)], 7.0, "global(5,4) → local(3,2)");
+
+        // Non-owned rows (global 2 → local 4, global 3 → local 5)
+        assert_eq!(f[(4, 0)], 2.0, "global(2,0) → local(4,0)");
+        assert_eq!(f[(4, 3)], 6.0, "global(2,5) → local(4,3)");
+        assert_eq!(f[(5, 1)], 3.0, "global(3,1) → local(5,1)");
+
+        // Verify no spurious double-counting: the (0,1) position should be 1.0,
+        // not 2.0 (which would happen if upper-triangle entry was also scattered)
+        assert_eq!(
+            f[(1, 0)],
+            1.0,
+            "upper-triangle dedup: (1,0) should be 1.0, not 2.0"
+        );
+
+        // Cross-range upper-triangle dedup: global(4,0) upper entry global(0,4)
+        // should NOT be scattered separately, so local(2,0) should be 4.0
+        assert_eq!(
+            f[(2, 0)],
+            4.0,
+            "cross-range upper-triangle dedup: (2,0) should be 4.0, not 8.0"
+        );
+
+        // Verify zeros where no entries exist
+        assert_eq!(f[(4, 1)], 0.0, "no global(2,1) entry");
+        assert_eq!(f[(4, 2)], 0.0, "no global(2,4) entry");
+        assert_eq!(f[(5, 0)], 0.0, "no global(3,0) entry");
+        assert_eq!(f[(5, 2)], 0.0, "no global(3,4) entry");
+        assert_eq!(f[(5, 3)], 0.0, "no global(3,5) entry");
     }
 }
