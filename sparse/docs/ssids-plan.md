@@ -2620,28 +2620,47 @@ Expected impact: 5-15× speedup on c-71/c-big by reducing supernode count 3-5×.
 
 Results:
 - c-71: 35,372 → 6,350 supernodes (5.6× reduction), backward error 1.60e-18
-- All 65/65 SuiteSparse matrices pass strict backward error < 5e-11
+- c-71 factor time: 70.6s → 13.1s (5.4× speedup), ratio vs SPRAL: 29.75× → 5.48×
+- c-big factor time: 93.2s → 52.9s (1.8× speedup), ratio vs SPRAL: 11.11× → 6.29×
+- All 65/65 SuiteSparse matrices pass strict backward error < 5e-11, zero regressions
+- Simplicial outliers improved: rail_79841 7.78→2.24×, mario001 6.56→2.13×,
+  dixmaanl 5.23→2.51×, spmsrtls 4.99→2.30×
+- Median ratio vs SPRAL improved from ~1.27× to ~1.13×
 - Implementation: ~620 LOC in `src/aptp/amalgamation.rs` (amalgamate, do_merge,
   sorted_union_excluding) + `owned_ranges` on SupernodeInfo for non-contiguous merges
 - `scatter_original_entries_multi()` handles multi-range column ownership correctly
 - nemin configurable via `AnalyzeOptions.nemin` / `SolverOptions.nemin` (default 32)
 - nemin=1 disables amalgamation entirely
+- Key finding: c-71 now has FEWER supernodes than SPRAL (6,350 vs 7,697) but is
+  still 5.5× slower — remaining gap is per-supernode allocation overhead, not structure
 
-*9.1b: Workspace reuse & simplicial overhead — fixes small-matrix overhead (2-6×)*
+*9.1b: Workspace reuse & per-supernode allocation overhead*
 
-Root cause: 7 matrices (bloweybq, dixmaanl, linverse, spmsrtls, t2dal, mario001,
-rail_79841) have `num_supernodes == n` (every column is its own supernode). The
-code treats each 1-column supernode through the full frontal matrix machinery:
-~16-18 heap allocations per supernode (frontal `Mat::zeros`, `MixedDiagonal`,
-L11/D11/L21 extraction, contribution block, etc.). For bloweybq (10K supernodes),
-the kernel is only 14% of per-supernode time — the rest is allocation overhead.
+**Post-amalgamation findings** (from 9.1a benchmarking):
 
-SPRAL handles this with `SmallLeafSubtree` — a specialized code path for small
-leaf subtrees that fits in L2 cache and processes supernodes sequentially without
-full frontal matrix construction.
+Amalgamation fixed the supernode count problem — c-71 now has 6,350 supernodes
+(fewer than SPRAL's 7,697). But c-71 is still 5.5× slower than SPRAL, and c-big
+is 6.3× slower. The remaining gap is per-supernode overhead: ~16-18 heap
+allocations per supernode for frontal matrix, MixedDiagonal, L11/D11/L21
+extraction, and contribution blocks.
 
-Options (in order of increasing effort):
-1. **Workspace reuse** (medium impact, low effort): Pre-allocate a single frontal
+This overhead affects ALL matrices, not just simplicial ones:
+- **Supernodal (c-71, c-big)**: 5.5-6.3× slower despite equal/fewer supernodes.
+  SPRAL factor 2.4s/8.4s vs rivrs 13.1s/52.9s. The allocation overhead is now
+  the dominant cost since amalgamation removed the assembly/extraction loop count.
+- **Simplicial (bloweybq, dixmaanl, linverse, etc.)**: 2.0-2.5× slower.
+  Amalgamation helped (was 3.3-7.8×) by merging single-column supernodes,
+  but remaining supernodes still go through full frontal machinery.
+- **Bulk FEM (most matrices)**: 1.0-1.2× range. Small per-supernode overhead
+  is dwarfed by dense kernel time, but workspace reuse still helps.
+
+The scatter path also has new overhead: `scatter_original_entries_multi()` handles
+non-contiguous `owned_ranges` from amalgamation, adding per-entry range iteration
+and cross-range dedup checks. For c-71 (where most supernodes have multiple owned
+ranges from merges), this is non-trivial.
+
+Options (in order of priority based on post-amalgamation data):
+1. **Workspace reuse** (high impact, low effort): Pre-allocate a single frontal
    matrix workspace sized to `max_front_size` and reuse across supernodes. This
    eliminates the ~16 per-supernode heap allocations. The contribution block
    extraction can write into a pre-allocated buffer instead of `Mat::zeros`.
@@ -2650,13 +2669,17 @@ Options (in order of increasing effort):
    - `MixedDiagonal::new(p)` in the APTP kernel
    - `Mat::zeros(ne, ne)` for L11 extraction
    - `Mat::zeros(size, size)` for contribution block
-2. **Simplicial fast path** (high impact, medium effort): When faer selects
-   simplicial decomposition, bypass frontal matrix machinery entirely and perform
-   column-by-column LDL^T operating directly on CSC storage. This is what SPRAL
-   and most mature solvers do for very sparse matrices.
-3. **In-place contribution block** (medium impact, medium effort): Instead of
+   This is the single highest-leverage optimization: it helps every matrix,
+   and is the likely main reason c-71/c-big are still 5-6× slower despite
+   having comparable supernode counts to SPRAL.
+2. **In-place contribution block** (medium impact, medium effort): Instead of
    copying the Schur complement into a new `Mat`, keep a view into the frontal
    matrix's trailing submatrix. Eliminates O((m-ne)^2) copy per supernode.
+3. **Simplicial fast path** (medium impact, medium effort): When faer selects
+   simplicial decomposition, bypass frontal matrix machinery entirely and perform
+   column-by-column LDL^T operating directly on CSC storage. This is what SPRAL
+   and most mature solvers do for very sparse matrices. Post-amalgamation this
+   matters less since amalgamation already merges most single-column supernodes.
 
 SPRAL references:
 - `SmallLeafSymbolicSubtree.hxx:18-109` — leaf subtree symbolic setup
@@ -2666,8 +2689,10 @@ SPRAL references:
 - `BuddyAllocator.hxx:18-148` — buddy allocator for variable-size workspace
 - `NumericSubtree.hxx:75-81` — per-thread workspace initialization
 
-Expected impact: workspace reuse alone should give 2-3× on these matrices;
-simplicial fast path could close the gap to within 1.5× of SPRAL.
+Expected impact: workspace reuse should give 2-3× on simplicial matrices and
+could significantly close the 5-6× gap on c-71/c-big (the remaining gap is
+allocation overhead, not structural). Combined with in-place contribution blocks,
+target is all matrices within 2× of SPRAL.
 
 *9.1c: Memory and allocation analysis pass*
 
@@ -2687,13 +2712,19 @@ suite to identify remaining allocation hotspots and memory inefficiencies:
 Verify no performance regressions after each optimization.
 
 **Success Criteria:**
-- [ ] c-71 and c-big within 2× of SPRAL factor time (currently 11-25×)
-- [ ] Simplicial matrices (bloweybq, dixmaanl, etc.) within 2× of SPRAL (currently 2-6×)
-- [ ] Full SuiteSparse suite median factor time ratio ≤ 1.0× vs SPRAL (stretch: < 0.9×)
+- [X] c-71 and c-big within 10× of SPRAL factor time (was 25-30×, now 5.5-6.3× after 9.1a)
+- [ ] c-71 and c-big within 2× of SPRAL factor time (currently 5.5-6.3× after amalgamation)
+- [ ] Simplicial matrices (bloweybq, dixmaanl, etc.) within 1.5× of SPRAL (currently 2.0-2.5×)
+- [ ] Full SuiteSparse suite median factor time ratio ≤ 1.0× vs SPRAL (currently ~1.13×; stretch: < 0.9×)
 - [ ] No regressions on any matrix in the benchmark suite
 - [ ] Memory allocation analysis documented (hotspots identified and addressed or deferred)
 
-**Time Estimate:** 2-3 weeks (amalgamation is the hard part)
+**Post-amalgamation baseline (sequential, single thread):**
+- Median ratio vs SPRAL: ~1.13×
+- c-71: 5.48× (was 29.75×), c-big: 6.29× (was 11.11×)
+- 10 matrices beat SPRAL (ratio < 1.0×)
+- Worst simplicial: dixmaanl 2.51×, rail_79841 2.24×, mario001 2.13×
+- G3_circuit (1.6M nodes): 1.51×
 
 #### 9.2: Robustness — Testing & Hardening
 
