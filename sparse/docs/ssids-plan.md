@@ -2694,6 +2694,31 @@ could significantly close the 5-6× gap on c-71/c-big (the remaining gap is
 allocation overhead, not structural). Combined with in-place contribution blocks,
 target is all matrices within 2× of SPRAL.
 
+**9.1b Implementation Results (CI subset, sequential):**
+
+Implemented two-tier workspace reuse:
+1. **Tier 1 (numeric.rs)**: `FactorizationWorkspace` — pre-allocated frontal matrix buffer
+   (`Mat<f64>` sized to max_front×max_front), row indices, delayed columns buffer, and
+   global-to-local mapping. `FrontalMatrix` changed from owned to borrowed types
+   (`MatMut<'a, f64>`, `&'a [usize]`). Thread-local via `Cell<FactorizationWorkspace>`
+   for parallel path (folded in the old separate `G2L_BUF`).
+2. **Tier 2 (factor.rs)**: `AptpKernelWorkspace` — pre-allocated BLAS-3 temporaries
+   (backup, L11 copy, LD product, copy buffer). Allocated once per `aptp_factor_in_place`
+   call, reused across all block iterations. `BlockBackup` changed to use workspace buffer.
+3. **Contribution copy**: Column-major iteration for better cache locality.
+
+CI subset results (10 matrices):
+- Factor speedup: median 1.16×, mean 1.12× (range 0.74×–1.38×)
+- Assembly phase: 1.27×–2.81× speedup (largest benefit — allocation dominated)
+- Extraction phase: 1.07×–3.53× speedup on large-front matrices
+- Kernel phase: neutral (BLAS-bound, not allocation-bound)
+- Backward error: bit-exact identical on all 10 matrices
+- Peak RSS: ~24% reduction (199 MB → 151 MB)
+- blockqp1 regression (0.74×): 19,991 tiny supernodes (max_front=44), absolute
+  difference only 18.7ms — likely measurement noise on very small kernel times.
+
+Full SuiteSparse results pending (requires `--ignored` tests with full collection).
+
 *9.1c: Memory and allocation analysis pass*
 
 After 9.1a and 9.1b, perform a careful profiling pass across the full SuiteSparse
