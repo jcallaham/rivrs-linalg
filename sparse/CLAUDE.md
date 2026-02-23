@@ -407,10 +407,10 @@ unit tests of the symbolic analysis and factorization kernel on small matrices.
 - Phase 9.2: Release preparation (docs, examples, crates.io)
 
 ## Recent Changes
+- 023-contrib-workspace-reuse: Added Rust 1.87+ (edition 2024) + faer 0.22, rayon 1.x, serde/serde_json (diagnostic export)
 - 022-assembly-extraction-opt: Added Rust 1.87+ (edition 2024) + faer 0.22 (existing — no new deps)
 - 021-workspace-reuse: Added N/A (internal optimization; no new technologies)
-- 020-supernode-amalgamation: Added Rust 1.87+ (edition 2024) + faer 0.22, rayon 1.x (existing)
 
 ## Active Technologies
-- Rust 1.87+ (edition 2024) + faer 0.22 (existing — no new deps) (022-assembly-extraction-opt)
-- N/A (in-memory index arrays stored alongside symbolic analysis result) (022-assembly-extraction-opt)
+- Rust 1.87+ (edition 2024) + faer 0.22, rayon 1.x, serde/serde_json (diagnostic export) (023-contrib-workspace-reuse)
+- N/A (in-memory buffers; no persistent storage changes) (023-contrib-workspace-reuse)
