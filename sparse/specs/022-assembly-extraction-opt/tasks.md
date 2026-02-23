@@ -89,11 +89,11 @@
 
 **Purpose**: Verify performance targets and document results
 
-- [ ] T023 Run `profile_matrix` on c-71, c-big, ncvxqp7 and document phase breakdown changes vs pre-optimization baseline
-- [ ] T024 Run full SPRAL comparison benchmark (`spral_benchmark --threads 1 --rivrs`) and verify: c-71 ratio < 3.0x, c-big ratio < 3.0x, median ratio <= 1.01x, all backward errors < 5e-11, no matrix regression > 5%
-- [ ] T025 Update `docs/ssids-log.md` with Phase 9.1c results (profiling breakdown, benchmark ratios, scatter map memory usage)
-- [ ] T026 Update `docs/ssids-plan.md` with Phase 9.1c completion status
-- [ ] T027 Update `CLAUDE.md` Phase 9.1c status from "Next" to "Completed"
+- [X] T023 Run `profile_matrix` on c-71, c-big, ncvxqp7 and document phase breakdown changes vs pre-optimization baseline
+- [X] T024 Run full SPRAL comparison benchmark (`spral_benchmark --threads 1 --rivrs`) and verify: c-71 ratio < 3.0x, c-big ratio < 3.0x, median ratio <= 1.01x, all backward errors < 5e-11, no matrix regression > 5%
+- [X] T025 Update `docs/ssids-log.md` with Phase 9.1c results (profiling breakdown, benchmark ratios, scatter map memory usage)
+- [X] T026 Update `docs/ssids-plan.md` with Phase 9.1c completion status
+- [X] T027 Update `CLAUDE.md` Phase 9.1c status from "Next" to "Completed"
 
 **Checkpoint**: All success criteria (SC-001 through SC-007) verified. Documentation updated.
 

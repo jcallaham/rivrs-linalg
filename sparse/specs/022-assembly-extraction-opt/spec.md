@@ -2,7 +2,7 @@
 
 **Feature Branch**: `022-assembly-extraction-opt`
 **Created**: 2026-02-22
-**Status**: Draft
+**Status**: Complete
 **Input**: Phase 9.1c from ssids-plan.md — optimize assembly/extraction overhead for matrices with high front sizes and low elimination counts.
 
 ## Context
