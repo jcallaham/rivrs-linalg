@@ -39,7 +39,7 @@
 			}
 		}
 	},
-	"capAdd": ["SYS_ADMIN", "PERFMON"],
+	"capAdd": ["PERFMON"],
 	"securityOpt": ["seccomp=unconfined"],
 	"remoteUser": "node",
 	"remoteEnv": {

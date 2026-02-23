@@ -363,7 +363,6 @@ fn build_assembly_maps(
             // won't cover those (fallback to g2l at factorization time).
             ea_child_snode.push(c);
 
-            let map_start = ea_map.len();
             for &child_row in &child_sn.pattern {
                 let parent_local = g2l[child_row];
                 debug_assert!(
@@ -375,9 +374,6 @@ fn build_assembly_maps(
                 ea_map.push(parent_local as u32);
             }
             ea_offsets.push(ea_map.len());
-
-            // Suppress unused variable warning
-            let _ = map_start;
         }
 
         // Reset g2l
@@ -1136,7 +1132,7 @@ struct SupernodeResult {
 fn factor_single_supernode(
     s: usize,
     sn: &SupernodeInfo,
-    child_contributions: Vec<ContributionBlock>,
+    child_contributions: Vec<Option<ContributionBlock>>,
     matrix: &SparseColMat<usize, f64>,
     perm_fwd: &[usize],
     perm_inv: &[usize],
@@ -1147,7 +1143,7 @@ fn factor_single_supernode(
 ) -> Result<SupernodeResult, SparseError> {
     // 1. Collect delayed columns from children into workspace buffer
     workspace.delayed_cols_buf.clear();
-    for cb in &child_contributions {
+    for cb in child_contributions.iter().flatten() {
         workspace
             .delayed_cols_buf
             .extend_from_slice(&cb.row_indices[..cb.num_delayed]);
@@ -1263,17 +1259,21 @@ fn factor_single_supernode(
     let ea_children_begin = assembly_maps.ea_snode_child_begin[s];
     let mut ea_child_idx = ea_children_begin;
 
-    for cb in child_contributions {
-        // Check if this child had delays — if so, fall back to g2l
-        if cb.num_delayed > 0 || ndelay_in > 0 {
-            extend_add(&mut frontal, &cb, &workspace.global_to_local);
-        } else {
-            // Fast path: use precomputed row mapping
-            let ea_start = assembly_maps.ea_offsets[ea_child_idx];
-            let ea_end = assembly_maps.ea_offsets[ea_child_idx + 1];
-            let ea_row_map = &assembly_maps.ea_map[ea_start..ea_end];
-            extend_add_mapped(&mut frontal, &cb, ea_row_map);
+    for opt_cb in child_contributions {
+        if let Some(cb) = opt_cb {
+            // Check if this child had delays — if so, fall back to g2l
+            if cb.num_delayed > 0 || ndelay_in > 0 {
+                extend_add(&mut frontal, &cb, &workspace.global_to_local);
+            } else {
+                // Fast path: use precomputed row mapping
+                let ea_start = assembly_maps.ea_offsets[ea_child_idx];
+                let ea_end = assembly_maps.ea_offsets[ea_child_idx + 1];
+                let ea_row_map = &assembly_maps.ea_map[ea_start..ea_end];
+                extend_add_mapped(&mut frontal, &cb, ea_row_map);
+            }
         }
+        // Always increment: ea_offsets indexes all children, including those
+        // with no contribution (fully eliminated, ne == m).
         ea_child_idx += 1;
     }
 
@@ -1442,12 +1442,12 @@ fn factor_tree_levelset(
         // Collect child contributions for each ready node. Children of different
         // ready nodes are disjoint (tree structure), so each contribution is
         // taken exactly once.
-        let mut batch_inputs: Vec<(usize, Vec<ContributionBlock>)> =
+        let mut batch_inputs: Vec<(usize, Vec<Option<ContributionBlock>>)> =
             Vec::with_capacity(ready.len());
         for &s in &ready {
-            let child_contribs: Vec<ContributionBlock> = children[s]
+            let child_contribs: Vec<Option<ContributionBlock>> = children[s]
                 .iter()
-                .filter_map(|&c| contributions[c].take())
+                .map(|&c| contributions[c].take())
                 .collect();
             batch_inputs.push((s, child_contribs));
         }

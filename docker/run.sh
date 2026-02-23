@@ -61,7 +61,6 @@ else
 	docker run -it \
 		--name rivrs-linalg \
 		--platform "$PLATFORM" \
-		--cap-add SYS_ADMIN \
 		--cap-add PERFMON \
 		--security-opt seccomp=unconfined \
 		-v rivrs-linalg-workspace:/workspace \
