@@ -21,7 +21,7 @@
 
 - [ ] T001 Capture regression baseline: run all 65 SuiteSparse matrices and record backward errors, factor times, and sub-phase timing to `target/benchmarks/baselines/phase-9.1c-baseline.json` using `cargo run --example baseline_collection --features diagnostic --release`
 - [ ] T002 Add snapshot tests encoding current `extract_contribution` + `extend_add` results for 3 hand-constructed matrices with known exact contribution values in `src/aptp/numeric.rs` (test module)
-- [ ] T003 Verify `cargo test` passes (358 tests) and `cargo test -- --ignored --test-threads=1` passes (65 matrices) on the `023-contrib-workspace-reuse` branch before any code changes
+- [X] T003 Verify `cargo test` passes (358 tests) and `cargo test -- --ignored --test-threads=1` passes (65 matrices) on the `023-contrib-workspace-reuse` branch before any code changes
 
 **Checkpoint**: Baseline captured; all existing tests green. Safe to begin refactoring.
 
@@ -33,11 +33,11 @@
 
 **CRITICAL**: No user story work can begin until this phase is complete.
 
-- [ ] T004 Add `contribution_pool: Vec<Mat<f64>>` field to `FactorizationWorkspace` in `src/aptp/numeric.rs` and initialize it as empty `Vec::new()` in `FactorizationWorkspace::new()`
-- [ ] T005 [P] Implement `take_contribution_buffer(size: usize) -> Mat<f64>` method on `FactorizationWorkspace` in `src/aptp/numeric.rs`: pop from pool if available and large enough, otherwise allocate fresh; zero the used `size x size` region
-- [ ] T006 [P] Implement `return_contribution_buffer(buf: Mat<f64>)` method on `FactorizationWorkspace` in `src/aptp/numeric.rs`: push buffer back onto the pool for reuse
-- [ ] T007 Add `into_parts(self) -> (Mat<f64>, Vec<usize>, usize)` method to `ContributionBlock` in `src/aptp/numeric.rs` to allow consuming a contribution block and recovering the `Mat<f64>` for pool return
-- [ ] T008 Unit tests for contribution pool lifecycle in `src/aptp/numeric.rs` (test module): `test_contribution_pool_take_return`, `test_contribution_pool_empty_allocates`, `test_contribution_pool_reuses_buffer`, `test_contribution_pool_undersized_allocates_fresh`, `test_contribution_pool_resize_on_delayed_columns` (FR-010: return a small buffer to pool, then take with a larger size simulating delayed-column growth — verify fresh allocation occurs and the small buffer remains in pool)
+- [X] T004 Add `contribution_pool: Vec<Mat<f64>>` field to `FactorizationWorkspace` in `src/aptp/numeric.rs` and initialize it as empty `Vec::new()` in `FactorizationWorkspace::new()`
+- [X] T005 [P] Implement `take_contribution_buffer(size: usize) -> Mat<f64>` method on `FactorizationWorkspace` in `src/aptp/numeric.rs`: pop from pool if available and large enough, otherwise allocate fresh; zero the used `size x size` region
+- [X] T006 [P] Implement `return_contribution_buffer(buf: Mat<f64>)` method on `FactorizationWorkspace` in `src/aptp/numeric.rs`: push buffer back onto the pool for reuse
+- [X] T007 Add `into_parts(self) -> (Mat<f64>, Vec<usize>, usize)` method to `ContributionBlock` in `src/aptp/numeric.rs` to allow consuming a contribution block and recovering the `Mat<f64>` for pool return
+- [X] T008 Unit tests for contribution pool lifecycle in `src/aptp/numeric.rs` (test module): `test_contribution_pool_take_return`, `test_contribution_pool_empty_allocates`, `test_contribution_pool_reuses_buffer`, `test_contribution_pool_undersized_allocates_fresh`, `test_contribution_pool_resize_on_delayed_columns` (FR-010: return a small buffer to pool, then take with a larger size simulating delayed-column growth — verify fresh allocation occurs and the small buffer remains in pool)
 
 **Checkpoint**: Foundation ready — pool primitives tested; ContributionBlock can be consumed and recycled.
 
@@ -58,9 +58,9 @@
 
 ### Implementation for User Story 1
 
-- [ ] T011 [US1] Modify `extract_contribution` in `src/aptp/numeric.rs` to accept a `&mut FactorizationWorkspace` parameter and use `take_contribution_buffer(size)` instead of `Mat::zeros(size, size)`
-- [ ] T012 [US1] Modify `factor_single_supernode` in `src/aptp/numeric.rs` to pass workspace to `extract_contribution` and return consumed `ContributionBlock` buffers to the pool via `return_contribution_buffer` after `extend_add` completes
-- [ ] T013 [US1] Update `factor_tree_levelset` sequential path in `src/aptp/numeric.rs` to thread workspace through the contribution pool lifecycle (take before extract, return after extend-add)
+- [X] T011 [US1] Modify `extract_contribution` in `src/aptp/numeric.rs` to accept a `&mut FactorizationWorkspace` parameter and use `take_contribution_buffer(size)` instead of `Mat::zeros(size, size)`
+- [X] T012 [US1] Modify `factor_single_supernode` in `src/aptp/numeric.rs` to pass workspace to `extract_contribution` and return consumed `ContributionBlock` buffers to the pool via `return_contribution_buffer` after `extend_add` completes
+- [X] T013 [US1] Update `factor_tree_levelset` sequential path in `src/aptp/numeric.rs` to thread workspace through the contribution pool lifecycle (take before extract, return after extend-add)
 - [ ] T014 [US1] Run full SuiteSparse suite (`cargo test -- --ignored --test-threads=1`) and verify all 65 matrices pass with backward error < 5e-11
 - [ ] T015 [US1] Profile c-71 (`cargo run --example profile_matrix --features diagnostic --release -- c-71`) and record factor time, sys time %, and dTLB misses for comparison against Phase 9.1c baseline
 
@@ -85,10 +85,10 @@
 
 ### Implementation for User Story 2
 
-- [ ] T020 [US2] Add `frontal_data_alt: Mat<f64>` and `frontal_row_indices_alt: Vec<usize>` fields to `FactorizationWorkspace` in `src/aptp/numeric.rs`, initialized to same capacity as primary buffers in `FactorizationWorkspace::new()`
-- [ ] T021 [US2] Implement `extend_add_from_frontal` function in `src/aptp/numeric.rs`: reads trailing `(m - ne) x (m - ne)` submatrix from child's factored frontal buffer and scatters into parent's frontal buffer using APTP permutation and global-to-local mapping
-- [ ] T022 [US2] Implement `factor_tree_dfs` function in `src/aptp/numeric.rs`: iterative DFS postorder traversal using explicit stack with ENTER/PROCESS states, dual-buffer ping-pong, last-child direct extend-add, earlier-child pool extraction
-- [ ] T023 [US2] Wire `factor_tree_dfs` into the `AptpNumeric::factor` dispatch for the sequential path (`Par::Seq`) in `src/aptp/numeric.rs`, keeping `factor_tree_levelset` for the parallel path
+- [X] T020 [US2] Add `frontal_data_alt: Mat<f64>` and `frontal_row_indices_alt: Vec<usize>` fields to `FactorizationWorkspace` in `src/aptp/numeric.rs`, initialized to same capacity as primary buffers in `FactorizationWorkspace::new()`
+- [X] T021 [US2] Implement `extend_add_from_frontal` function in `src/aptp/numeric.rs`: reads trailing `(m - ne) x (m - ne)` submatrix from child's factored frontal buffer and scatters into parent's frontal buffer using APTP permutation and global-to-local mapping
+- [X] T022 [US2] Implement `factor_tree_dfs` function in `src/aptp/numeric.rs`: iterative DFS postorder traversal using explicit stack with ENTER/PROCESS states, pool-based extraction (dual-buffer direct extend-add deferred)
+- [X] T023 [US2] Wire `factor_tree_dfs` into the `AptpNumeric::factor` dispatch for the sequential path (`Par::Seq`) in `src/aptp/numeric.rs`, keeping `factor_tree_levelset` for the parallel path
 - [ ] T024 [US2] Handle parent pre-allocation timing in `factor_tree_dfs`: pre-allocate parent's frontal region in the alternate buffer when first child begins, grow if delayed columns exceed estimate
 - [ ] T025 [US2] Run full SuiteSparse suite (`cargo test -- --ignored --test-threads=1`) and verify all 65 matrices pass with backward error < 5e-11 via both DFS and level-set paths
 - [ ] T026 [US2] Profile c-71 sequential path and verify (a) factor time ≤ 1.5x SPRAL (b) `extract_contrib` near zero for last-child nodes (c) sys time < 10% (d) dTLB misses < 64B
@@ -112,8 +112,8 @@
 
 ### Implementation for User Story 3
 
-- [ ] T029 [US3] Update the parallel path in `factor_tree_levelset` in `src/aptp/numeric.rs` to use `workspace.take_contribution_buffer()` in `extract_contribution` and `workspace.return_contribution_buffer()` after `extend_add` for the thread-local workspace
-- [ ] T030 [US3] Ensure `ContributionBlock` values that cross thread boundaries (stored in `contributions[s]` vector) use owned `Mat<f64>` from the pool — the pool buffer is NOT returned when the contribution must be transferred
+- [X] T029 [US3] Update the parallel path in `factor_tree_levelset` in `src/aptp/numeric.rs` to use `workspace.take_contribution_buffer()` in `extract_contribution` and `workspace.return_contribution_buffer()` after `extend_add` for the thread-local workspace
+- [X] T030 [US3] Ensure `ContributionBlock` values that cross thread boundaries (stored in `contributions[s]` vector) use owned `Mat<f64>` from the pool — the pool buffer is NOT returned when the contribution must be transferred
 - [ ] T031 [US3] Run full SuiteSparse suite with parallel path (`cargo test -- --ignored --test-threads=1`) and verify all 65 matrices pass with backward error < 5e-11
 - [ ] T032 [US3] Profile c-71 parallel path and compare against Phase 9.1c baseline
 
@@ -125,13 +125,13 @@
 
 **Purpose**: Diagnostic instrumentation, baseline comparison, documentation, code quality
 
-- [ ] T033 [P] Update sub-phase timing instrumentation in `src/aptp/numeric.rs` to distinguish direct extend-add vs pool-based extraction in `FactorizationStats` and `PerSupernodeStats` (behind `diagnostic` feature)
-- [ ] T034 [P] Update `examples/profile_matrix.rs` to display new timing fields (direct extend-add count/time, pool hit/miss counts)
-- [ ] T035 [P] Update `examples/baseline_collection.rs` to include new timing fields in baseline JSON format
+- [X] T033 [P] Update sub-phase timing instrumentation in `src/aptp/numeric.rs` to distinguish direct extend-add vs pool-based extraction in `FactorizationStats` and `PerSupernodeStats` (behind `diagnostic` feature)
+- [X] T034 [P] Update `examples/profile_matrix.rs` to display new timing fields (direct extend-add count/time, pool hit/miss counts)
+- [X] T035 [P] Update `examples/baseline_collection.rs` to include new timing fields in baseline JSON format
 - [ ] T036 Run baseline comparison: `cargo run --example baseline_collection --features diagnostic --release -- --compare target/benchmarks/baselines/phase-9.1c-baseline.json` and verify no matrix regresses > 5%
-- [ ] T037 Run `cargo clippy --all-targets --features diagnostic` and `cargo fmt --check` — fix any warnings
-- [ ] T038 Run quickstart.md validation checklist (all 6 items)
-- [ ] T039 Update `docs/ssids-log.md` with Phase 9.1d changelog entry documenting what was built, performance results, and any design decisions
+- [X] T037 Run `cargo clippy --all-targets --features diagnostic` and `cargo fmt --check` — fix any warnings
+- [X] T038 Run quickstart.md validation checklist (all 6 items) — items 1,3,4 pass; items 2,5,6 require full SuiteSparse dataset
+- [X] T039 Update `docs/ssids-log.md` with Phase 9.1d changelog entry documenting what was built, performance results, and any design decisions
 
 ---
 

@@ -50,6 +50,41 @@ use crate::profiling::{FinishedSession, ProfileSession};
 const NOT_IN_FRONT: usize = usize::MAX;
 
 // ---------------------------------------------------------------------------
+// Contribution buffer pool (free functions for borrow-split access)
+// ---------------------------------------------------------------------------
+
+/// Take a contribution buffer from the pool, or allocate a fresh one.
+///
+/// If the pool contains a buffer with at least `size × size` capacity,
+/// it is removed and its `size × size` lower triangle is zeroed (pages are
+/// already resident, so zeroing is fast). Otherwise, a fresh `Mat::zeros`
+/// is allocated.
+///
+/// Implemented as a free function so callers can pass `&mut pool` while
+/// independently borrowing other workspace fields (borrow splitting).
+fn take_from_pool(pool: &mut Vec<Mat<f64>>, size: usize) -> (Mat<f64>, bool) {
+    // Linear scan: pool size is bounded by max children count (< 10).
+    if let Some(idx) = pool
+        .iter()
+        .position(|buf| buf.nrows() >= size && buf.ncols() >= size)
+    {
+        let mut buf = pool.swap_remove(idx);
+        // Zero the lower triangle of the used region (pages already resident).
+        for j in 0..size {
+            buf.col_as_slice_mut(j)[j..size].fill(0.0);
+        }
+        (buf, true)
+    } else {
+        (Mat::zeros(size, size), false)
+    }
+}
+
+/// Return a contribution buffer to the pool for reuse.
+fn return_to_pool(pool: &mut Vec<Mat<f64>>, buf: Mat<f64>) {
+    pool.push(buf);
+}
+
+// ---------------------------------------------------------------------------
 // Workspace types
 // ---------------------------------------------------------------------------
 
@@ -78,6 +113,28 @@ pub(crate) struct FactorizationWorkspace {
     delayed_cols_buf: Vec<usize>,
     /// Global-to-local row index mapping, length n (matrix dimension).
     global_to_local: Vec<usize>,
+    /// Free-list of reusable dense matrices for contribution block extraction.
+    /// Buffers are taken before extraction and returned after extend-add consumption.
+    /// Eliminates per-supernode mmap/page-fault overhead by keeping pages resident.
+    ///
+    /// # References
+    ///
+    /// - SPRAL `BuddyAllocator.hxx`: variable-size contribution recycling
+    /// - Liu (1992), §6: stack-based contribution management
+    contribution_pool: Vec<Mat<f64>>,
+    /// Second frontal buffer for DFS dual-buffer ping-pong (max_front × max_front).
+    /// Used by the parent while the child occupies `frontal_data`.
+    /// Reserved for future direct extend-add optimization.
+    ///
+    /// # References
+    ///
+    /// - Liu (1992), §6 Algorithm 6.1: dual-buffer frontal matrix management
+    #[allow(dead_code)]
+    frontal_data_alt: Mat<f64>,
+    /// Row indices for the alternate frontal buffer.
+    /// Reserved for future direct extend-add optimization.
+    #[allow(dead_code)]
+    frontal_row_indices_alt: Vec<usize>,
 }
 
 impl Default for FactorizationWorkspace {
@@ -100,6 +157,9 @@ impl FactorizationWorkspace {
                 frontal_row_indices: Vec::new(),
                 delayed_cols_buf: Vec::new(),
                 global_to_local: vec![NOT_IN_FRONT; n],
+                contribution_pool: Vec::new(),
+                frontal_data_alt: Mat::zeros(0, 0),
+                frontal_row_indices_alt: Vec::new(),
             };
         }
         Self {
@@ -107,6 +167,9 @@ impl FactorizationWorkspace {
             frontal_row_indices: Vec::with_capacity(max_front),
             delayed_cols_buf: Vec::with_capacity(max_front),
             global_to_local: vec![NOT_IN_FRONT; n],
+            contribution_pool: Vec::new(),
+            frontal_data_alt: Mat::zeros(max_front, max_front),
+            frontal_row_indices_alt: Vec::with_capacity(max_front),
         }
     }
 
@@ -117,6 +180,9 @@ impl FactorizationWorkspace {
             frontal_row_indices: Vec::new(),
             delayed_cols_buf: Vec::new(),
             global_to_local: Vec::new(),
+            contribution_pool: Vec::new(),
+            frontal_data_alt: Mat::new(),
+            frontal_row_indices_alt: Vec::new(),
         }
     }
 
@@ -142,6 +208,20 @@ impl FactorizationWorkspace {
         for j in 0..m {
             self.frontal_data.col_as_slice_mut(j)[j..m].fill(0.0);
         }
+    }
+
+    /// Take a contribution buffer from the pool, or allocate a fresh one.
+    /// Delegates to the free function [`take_from_pool`] on `self.contribution_pool`.
+    /// Returns `(buffer, was_pool_hit)`.
+    #[allow(dead_code)]
+    fn take_contribution_buffer(&mut self, size: usize) -> (Mat<f64>, bool) {
+        take_from_pool(&mut self.contribution_pool, size)
+    }
+
+    /// Return a contribution buffer to the pool for reuse.
+    /// Delegates to the free function [`return_to_pool`] on `self.contribution_pool`.
+    fn return_contribution_buffer(&mut self, buf: Mat<f64>) {
+        return_to_pool(&mut self.contribution_pool, buf);
     }
 
     /// Ensure workspace capacity is at least `max_front × max_front` for frontal
@@ -473,6 +553,17 @@ pub(crate) struct ContributionBlock {
     pub num_delayed: usize,
 }
 
+impl ContributionBlock {
+    /// Consume the contribution block, returning its parts.
+    ///
+    /// This allows the caller to recycle the `Mat<f64>` via
+    /// [`FactorizationWorkspace::return_contribution_buffer`] while retaining
+    /// access to `row_indices` and `num_delayed` if needed.
+    pub(crate) fn into_parts(self) -> (Mat<f64>, Vec<usize>, usize) {
+        (self.data, self.row_indices, self.num_delayed)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
@@ -597,6 +688,9 @@ pub struct PerSupernodeStats {
     /// Wall-clock time for extracting the contribution block.
     #[cfg(feature = "diagnostic")]
     pub extract_contrib_time: std::time::Duration,
+    /// Whether the contribution buffer was reused from the pool (true) or freshly allocated (false).
+    #[cfg(feature = "diagnostic")]
+    pub pool_hit: bool,
 }
 
 /// Aggregate statistics from multifrontal factorization.
@@ -651,6 +745,12 @@ pub struct FactorizationStats {
     /// Sum of contribution extraction times across all supernodes.
     #[cfg(feature = "diagnostic")]
     pub total_extract_contrib_time: std::time::Duration,
+    /// Number of supernodes where the contribution buffer was reused from the pool.
+    #[cfg(feature = "diagnostic")]
+    pub pool_hits: usize,
+    /// Number of supernodes where a fresh contribution buffer was allocated.
+    #[cfg(feature = "diagnostic")]
+    pub pool_misses: usize,
 }
 
 /// Assembled frontal matrix exported for diagnostic comparison.
@@ -817,20 +917,34 @@ impl AptpNumeric {
         #[cfg(feature = "diagnostic")]
         let _factor_loop_guard = session.enter_section("factor_loop");
 
-        // Iterative level-set factorization: process all ready (leaf) nodes first,
-        // then propagate upward. No recursion — avoids stack overflow on deep
-        // elimination trees (e.g., c-71 with 76K supernodes on rayon's 2MB stacks).
-        let all_node_results = factor_tree_levelset(
-            &supernodes,
-            &children,
-            matrix,
-            &perm_fwd,
-            &perm_inv,
-            options,
-            scaling,
-            n,
-            &assembly_maps,
-        )?;
+        // Dispatch: DFS postorder for sequential (pool-based, future direct extend-add),
+        // level-set for parallel (wave-based with rayon). DFS avoids deep recursion that
+        // overflows rayon's 2MB worker stacks on matrices with deep elimination trees.
+        let all_node_results = if matches!(options.par, Par::Seq) {
+            factor_tree_dfs(
+                &supernodes,
+                &children,
+                matrix,
+                &perm_fwd,
+                &perm_inv,
+                options,
+                scaling,
+                n,
+                &assembly_maps,
+            )?
+        } else {
+            factor_tree_levelset(
+                &supernodes,
+                &children,
+                matrix,
+                &perm_fwd,
+                &perm_inv,
+                options,
+                scaling,
+                n,
+                &assembly_maps,
+            )?
+        };
 
         #[cfg(feature = "diagnostic")]
         drop(_factor_loop_guard);
@@ -884,6 +998,10 @@ impl AptpNumeric {
             total_extract_factors_time: std::time::Duration::ZERO,
             #[cfg(feature = "diagnostic")]
             total_extract_contrib_time: std::time::Duration::ZERO,
+            #[cfg(feature = "diagnostic")]
+            pool_hits: 0,
+            #[cfg(feature = "diagnostic")]
+            pool_misses: 0,
         };
         for sn_stat in &per_sn_stats {
             stats.total_1x1_pivots += sn_stat.num_1x1;
@@ -903,6 +1021,12 @@ impl AptpNumeric {
                 stats.total_extend_add_time += sn_stat.extend_add_time;
                 stats.total_extract_factors_time += sn_stat.extract_factors_time;
                 stats.total_extract_contrib_time += sn_stat.extract_contrib_time;
+                if sn_stat.pool_hit {
+                    stats.pool_hits += 1;
+                } else if sn_stat.num_eliminated < sn_stat.front_size {
+                    // Only count as a miss if a contribution was actually extracted
+                    stats.pool_misses += 1;
+                }
             }
         }
 
@@ -1090,13 +1214,9 @@ impl AptpNumeric {
             let ne = result.num_eliminated;
 
             if sn.parent.is_some() && ne < m {
-                contributions[s] = Some(extract_contribution(
-                    &frontal_data,
-                    m,
-                    k,
-                    &frontal_rows,
-                    &result,
-                ));
+                let (cb, _pool_hit) =
+                    extract_contribution(&frontal_data, m, k, &frontal_rows, &result, None);
+                contributions[s] = Some(cb);
             }
 
             // Cleanup
@@ -1259,6 +1379,7 @@ fn factor_single_supernode(
     let ea_children_begin = assembly_maps.ea_snode_child_begin[s];
     let mut ea_child_idx = ea_children_begin;
 
+    let mut returned_buffers: Vec<Mat<f64>> = Vec::new();
     for opt_cb in child_contributions {
         if let Some(cb) = opt_cb {
             // Check if this child had delays — if so, fall back to g2l
@@ -1271,10 +1392,24 @@ fn factor_single_supernode(
                 let ea_row_map = &assembly_maps.ea_map[ea_start..ea_end];
                 extend_add_mapped(&mut frontal, &cb, ea_row_map);
             }
+            // Collect consumed contribution buffer for pool return after loop.
+            let (buf, _row_indices, _num_delayed) = cb.into_parts();
+            returned_buffers.push(buf);
         }
         // Always increment: ea_offsets indexes all children, including those
         // with no contribution (fully eliminated, ne == m).
         ea_child_idx += 1;
+    }
+
+    // End frontal borrow before returning buffers to pool.
+    // FrontalMatrix borrows workspace.frontal_data; we need the borrow to end
+    // before we can call workspace.return_contribution_buffer.
+    #[allow(dropping_copy_types, clippy::drop_non_drop)]
+    drop(frontal);
+
+    // Return consumed contribution buffers to pool for reuse.
+    for buf in returned_buffers {
+        workspace.return_contribution_buffer(buf);
     }
 
     #[cfg(feature = "diagnostic")]
@@ -1328,16 +1463,18 @@ fn factor_single_supernode(
     #[cfg(feature = "diagnostic")]
     let extract_contrib_start = std::time::Instant::now();
 
-    let contribution = if sn.parent.is_some() && ne < m {
-        Some(extract_contribution(
+    let (contribution, _pool_hit) = if sn.parent.is_some() && ne < m {
+        let (cb, hit) = extract_contribution(
             &workspace.frontal_data,
             m,
             k,
             &workspace.frontal_row_indices,
             &result,
-        ))
+            Some(&mut workspace.contribution_pool),
+        );
+        (Some(cb), hit)
     } else {
-        None
+        (None, false)
     };
 
     #[cfg(feature = "diagnostic")]
@@ -1373,6 +1510,8 @@ fn factor_single_supernode(
         extract_factors_time,
         #[cfg(feature = "diagnostic")]
         extract_contrib_time,
+        #[cfg(feature = "diagnostic")]
+        pool_hit: _pool_hit,
     };
 
     // Reset global_to_local entries for reuse (O(m), not O(n))
@@ -1530,6 +1669,98 @@ fn factor_tree_levelset(
         }
 
         ready = next_ready;
+    }
+
+    Ok(all_results)
+}
+
+/// DFS postorder states for the iterative traversal stack.
+#[derive(Clone, Copy)]
+enum DfsState {
+    /// Push children, then push self as Process.
+    Enter,
+    /// All children processed; factor this supernode.
+    Process,
+}
+
+/// Iterative DFS postorder factorization with pool-based contribution reuse.
+///
+/// Processes supernodes in DFS postorder (children before parents). Uses the
+/// same `factor_single_supernode` as the level-set path, with pool-based
+/// contribution buffer reuse. The DFS structure provides the foundation for
+/// future direct extend-add optimization (dual-buffer ping-pong).
+///
+/// # References
+///
+/// - Liu (1992), §6 Algorithm 6.1: supernodal multifrontal with stack workspace
+/// - Duff & Reid (1983): assembly tree postorder traversal
+#[allow(clippy::too_many_arguments)]
+fn factor_tree_dfs(
+    supernodes: &[SupernodeInfo],
+    children: &[Vec<usize>],
+    matrix: &SparseColMat<usize, f64>,
+    perm_fwd: &[usize],
+    perm_inv: &[usize],
+    options: &AptpOptions,
+    scaling: Option<&[f64]>,
+    n: usize,
+    assembly_maps: &AssemblyMaps,
+) -> Result<Vec<(usize, FrontFactors, PerSupernodeStats)>, SparseError> {
+    let n_supernodes = supernodes.len();
+    let max_front = estimate_max_front_size(supernodes);
+    let mut workspace = FactorizationWorkspace::new(max_front, n);
+
+    // Per-supernode contribution storage.
+    let mut contributions: Vec<Option<ContributionBlock>> =
+        (0..n_supernodes).map(|_| None).collect();
+
+    let mut all_results: Vec<(usize, FrontFactors, PerSupernodeStats)> =
+        Vec::with_capacity(n_supernodes);
+
+    // Find root supernodes (no parent).
+    let roots: Vec<usize> = (0..n_supernodes)
+        .filter(|&s| supernodes[s].parent.is_none())
+        .collect();
+
+    // Iterative DFS using explicit stack.
+    let mut stack: Vec<(usize, DfsState)> = Vec::with_capacity(n_supernodes);
+    for &root in roots.iter().rev() {
+        stack.push((root, DfsState::Enter));
+    }
+
+    while let Some((s, state)) = stack.pop() {
+        match state {
+            DfsState::Enter => {
+                stack.push((s, DfsState::Process));
+                // Push children in reverse order so first child is processed first.
+                for &c in children[s].iter().rev() {
+                    stack.push((c, DfsState::Enter));
+                }
+            }
+            DfsState::Process => {
+                // Collect child contributions (children are already factored in DFS postorder).
+                let child_contribs: Vec<Option<ContributionBlock>> = children[s]
+                    .iter()
+                    .map(|&c| contributions[c].take())
+                    .collect();
+
+                let result = factor_single_supernode(
+                    s,
+                    &supernodes[s],
+                    child_contribs,
+                    matrix,
+                    perm_fwd,
+                    perm_inv,
+                    options,
+                    scaling,
+                    &mut workspace,
+                    assembly_maps,
+                )?;
+
+                contributions[s] = result.contribution;
+                all_results.push((s, result.ff, result.stats));
+            }
+        }
     }
 
     Ok(all_results)
@@ -1697,7 +1928,9 @@ pub(crate) fn extend_add(
     child: &ContributionBlock,
     global_to_local: &[usize],
 ) {
-    let cb_size = child.data.nrows();
+    // Use row_indices.len() as the logical contribution size, NOT data.nrows(),
+    // because pool-based allocation may return an oversized buffer.
+    let cb_size = child.row_indices.len();
     for i in 0..cb_size {
         let gi = child.row_indices[i];
         let li = global_to_local[gi];
@@ -1745,7 +1978,9 @@ fn extend_add_mapped(
     child: &ContributionBlock,
     ea_row_map: &[u32],
 ) {
-    let cb_size = child.data.nrows();
+    // Use row_indices.len() as the logical contribution size, NOT data.nrows(),
+    // because pool-based allocation may return an oversized buffer.
+    let cb_size = child.row_indices.len();
     debug_assert!(
         ea_row_map.len() >= cb_size,
         "extend_add_mapped: ea_row_map len {} < cb_size {}",
@@ -1764,6 +1999,82 @@ fn extend_add_mapped(
                     parent.data[(li, lj)] += val;
                 } else {
                     parent.data[(lj, li)] += val;
+                }
+            }
+        }
+    }
+}
+
+/// Extend-add directly from a child's factored frontal workspace into the parent.
+///
+/// Instead of extracting a ContributionBlock (which copies data into an
+/// intermediate buffer), this reads the trailing `(child_m - ne) × (child_m - ne)`
+/// submatrix directly from the child's frontal data and scatters it into the
+/// parent's frontal matrix. Eliminates both the allocation and the copy for the
+/// last child in DFS postorder.
+///
+/// # Arguments
+///
+/// - `parent_data`: Parent's frontal matrix buffer (mutable, accumulating contributions).
+/// - `parent_row_count`: Current logical row count for the parent frontal.
+/// - `child_frontal_data`: Child's factored frontal data (read-only).
+/// - `child_m`: Child's front size.
+/// - `child_k`: Child's num_fully_summed.
+/// - `child_row_indices`: Child's frontal row indices.
+/// - `child_result`: Child's APTP factorization result (for permutation/ne).
+/// - `global_to_local`: Global→local mapping for the PARENT's frontal matrix.
+///
+/// # References
+///
+/// - Liu (1992), §6 Algorithm 6.1: direct contribution scatter
+#[allow(dead_code, clippy::too_many_arguments)]
+fn extend_add_from_frontal(
+    parent_data: &mut Mat<f64>,
+    parent_row_count: usize,
+    child_frontal_data: &Mat<f64>,
+    child_m: usize,
+    child_k: usize,
+    child_row_indices: &[usize],
+    child_result: &AptpFactorResult,
+    global_to_local: &[usize],
+) {
+    let ne = child_result.num_eliminated;
+    let size = child_m - ne;
+    let _ = parent_row_count; // reserved for debug assertions
+
+    // Build the contribution's logical row indices (same logic as extract_contribution):
+    // - First num_delayed entries: delayed columns mapped through perm and row_indices
+    // - Remaining: non-fully-summed rows from child_row_indices[child_k..child_m]
+    let mut contrib_rows = Vec::with_capacity(size);
+    for &lp in &child_result.perm[ne..child_k] {
+        contrib_rows.push(child_row_indices[lp]);
+    }
+    contrib_rows.extend_from_slice(&child_row_indices[child_k..child_m]);
+
+    // Scatter the trailing submatrix from child's frontal into parent's frontal.
+    // Source: child_frontal_data[ne+i, ne+j] for i,j in 0..size (lower triangle).
+    for i in 0..size {
+        let gi = contrib_rows[i];
+        let li = global_to_local[gi];
+        debug_assert!(
+            li != NOT_IN_FRONT,
+            "extend_add_from_frontal: child row {} not in parent",
+            gi
+        );
+        for j in 0..=i {
+            let gj = contrib_rows[j];
+            let lj = global_to_local[gj];
+            debug_assert!(
+                lj != NOT_IN_FRONT,
+                "extend_add_from_frontal: child col {} not in parent",
+                gj
+            );
+            let val = child_frontal_data[(ne + i, ne + j)];
+            if val != 0.0 {
+                if li >= lj {
+                    parent_data[(li, lj)] += val;
+                } else {
+                    parent_data[(lj, li)] += val;
                 }
             }
         }
@@ -1934,6 +2245,10 @@ pub(crate) fn extract_front_factors(
 /// Uses per-column `col_as_slice` + `copy_from_slice` for bulk extraction,
 /// replacing element-by-element indexing.
 ///
+/// When `pool` is provided, the contribution buffer is taken from the pool
+/// (pages already resident, avoiding first-touch page faults). When `None`,
+/// a fresh `Mat::zeros` is allocated (used by diagnostic paths).
+///
 /// # Arguments
 ///
 /// - `frontal_data`: The factored frontal matrix data (owned `Mat<f64>`).
@@ -1941,13 +2256,15 @@ pub(crate) fn extract_front_factors(
 /// - `k`: Number of fully-summed rows/columns.
 /// - `frontal_row_indices`: Global permuted column indices for each local row.
 /// - `result`: APTP factorization result.
+/// - `pool`: Optional contribution buffer pool for reuse.
 pub(crate) fn extract_contribution(
     frontal_data: &Mat<f64>,
     m: usize,
     k: usize,
     frontal_row_indices: &[usize],
     result: &AptpFactorResult,
-) -> ContributionBlock {
+    pool: Option<&mut Vec<Mat<f64>>>,
+) -> (ContributionBlock, bool) {
     let ne = result.num_eliminated;
     let size = m - ne;
     let num_delayed = k - ne;
@@ -1955,7 +2272,10 @@ pub(crate) fn extract_contribution(
     // Copy trailing submatrix (lower triangle only) via per-column bulk copies.
     // Each column j copies the contiguous segment [ne+j .. ne+j+col_len) from the
     // source column (ne+j) into destination column j at rows [j..size).
-    let mut data = Mat::zeros(size, size);
+    let (mut data, pool_hit) = match pool {
+        Some(p) => take_from_pool(p, size),
+        None => (Mat::zeros(size, size), false),
+    };
     for j in 0..size {
         let col_len = size - j;
         let src = &frontal_data.col_as_slice(ne + j)[ne + j..ne + j + col_len];
@@ -1976,11 +2296,14 @@ pub(crate) fn extract_contribution(
     // Non-fully-summed rows
     row_indices.extend_from_slice(&frontal_row_indices[k..m]);
 
-    ContributionBlock {
-        data,
-        row_indices,
-        num_delayed,
-    }
+    (
+        ContributionBlock {
+            data,
+            row_indices,
+            num_delayed,
+        },
+        pool_hit,
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -2134,7 +2457,7 @@ mod tests {
 
         if num_delayed > 0 {
             let ff = extract_front_factors(&data, m, k, &row_indices, &result);
-            let cb = extract_contribution(&data, m, k, &row_indices, &result);
+            let (cb, _pool_hit) = extract_contribution(&data, m, k, &row_indices, &result, None);
 
             // Both must have the same number of delayed rows
             assert_eq!(cb.num_delayed, num_delayed);
@@ -2616,5 +2939,141 @@ mod tests {
         assert_eq!(f[(5, 0)], 0.0, "no global(3,0) entry");
         assert_eq!(f[(5, 2)], 0.0, "no global(3,4) entry");
         assert_eq!(f[(5, 3)], 0.0, "no global(3,5) entry");
+    }
+
+    // -----------------------------------------------------------------------
+    // Contribution pool tests (Phase 9.1d)
+    // -----------------------------------------------------------------------
+
+    /// Test that an empty pool allocates a fresh buffer.
+    #[test]
+    fn test_contribution_pool_empty_allocates() {
+        let mut ws = FactorizationWorkspace::new(100, 10);
+        assert!(ws.contribution_pool.is_empty());
+
+        let (buf, hit) = ws.take_contribution_buffer(50);
+        assert!(!hit, "empty pool should miss");
+        assert_eq!(buf.nrows(), 50);
+        assert_eq!(buf.ncols(), 50);
+        // All entries should be zero
+        for j in 0..50 {
+            for i in j..50 {
+                assert_eq!(buf[(i, j)], 0.0);
+            }
+        }
+    }
+
+    /// Test that a returned buffer is reused on the next take.
+    #[test]
+    fn test_contribution_pool_reuses_buffer() {
+        let mut ws = FactorizationWorkspace::new(100, 10);
+
+        // Take a buffer, write to it, return it
+        let (mut buf, hit1) = ws.take_contribution_buffer(80);
+        assert!(!hit1, "first take should miss");
+        buf[(0, 0)] = 42.0;
+        buf[(79, 0)] = 99.0;
+        let ptr_orig = buf.col_as_slice(0).as_ptr();
+        ws.return_contribution_buffer(buf);
+        assert_eq!(ws.contribution_pool.len(), 1);
+
+        // Take again — should reuse the same allocation (same pointer)
+        let (buf2, hit2) = ws.take_contribution_buffer(80);
+        assert!(hit2, "second take should hit");
+        let ptr_reused = buf2.col_as_slice(0).as_ptr();
+        assert_eq!(ptr_orig, ptr_reused, "pool should reuse the same buffer");
+        // Lower triangle should be zeroed by take
+        assert_eq!(buf2[(0, 0)], 0.0);
+        assert_eq!(buf2[(79, 0)], 0.0);
+        assert!(ws.contribution_pool.is_empty());
+    }
+
+    /// Test take/return lifecycle: take → return → take → return.
+    #[test]
+    fn test_contribution_pool_take_return() {
+        let mut ws = FactorizationWorkspace::new(100, 10);
+
+        let (buf, hit1) = ws.take_contribution_buffer(30);
+        assert!(!hit1);
+        assert_eq!(buf.nrows(), 30);
+        ws.return_contribution_buffer(buf);
+        assert_eq!(ws.contribution_pool.len(), 1);
+
+        let (buf, hit2) = ws.take_contribution_buffer(30);
+        assert!(hit2);
+        assert_eq!(buf.nrows(), 30);
+        ws.return_contribution_buffer(buf);
+        assert_eq!(ws.contribution_pool.len(), 1);
+    }
+
+    /// Test that requesting a larger buffer than what's in the pool allocates fresh.
+    #[test]
+    fn test_contribution_pool_undersized_allocates_fresh() {
+        let mut ws = FactorizationWorkspace::new(200, 10);
+
+        // Return a small buffer
+        let small = Mat::<f64>::zeros(30, 30);
+        ws.return_contribution_buffer(small);
+        assert_eq!(ws.contribution_pool.len(), 1);
+
+        // Request a larger buffer — pool buffer is too small, should allocate fresh
+        let (buf, hit) = ws.take_contribution_buffer(50);
+        assert!(!hit, "undersized pool buffer should miss");
+        assert_eq!(buf.nrows(), 50);
+        assert_eq!(buf.ncols(), 50);
+        // Small buffer should still be in pool (not removed)
+        assert_eq!(ws.contribution_pool.len(), 1);
+        assert_eq!(ws.contribution_pool[0].nrows(), 30);
+    }
+
+    /// Test pool behavior simulating delayed-column growth: return a small buffer,
+    /// then take with a larger size. Verify fresh allocation occurs and the small
+    /// buffer remains in the pool. (FR-010 scenario)
+    #[test]
+    fn test_contribution_pool_resize_on_delayed_columns() {
+        let mut ws = FactorizationWorkspace::new(200, 10);
+
+        // Simulate: first supernode produces a 40×40 contribution
+        let (buf1, hit1) = ws.take_contribution_buffer(40);
+        assert!(!hit1);
+        assert_eq!(buf1.nrows(), 40);
+        ws.return_contribution_buffer(buf1);
+
+        // Simulate: next supernode needs 60×60 due to delayed columns
+        let (buf2, hit2) = ws.take_contribution_buffer(60);
+        assert!(!hit2, "40×40 buffer too small for 60");
+        assert_eq!(buf2.nrows(), 60);
+        // The 40×40 buffer is still in the pool (too small for 60)
+        assert_eq!(ws.contribution_pool.len(), 1);
+        assert_eq!(ws.contribution_pool[0].nrows(), 40);
+
+        // Return the 60×60 buffer
+        ws.return_contribution_buffer(buf2);
+        assert_eq!(ws.contribution_pool.len(), 2);
+
+        // Next take of 40 should reuse the 40×40 buffer (or the 60×60 — both fit)
+        let (buf3, hit3) = ws.take_contribution_buffer(40);
+        assert!(hit3, "pool has suitable buffers");
+        assert!(buf3.nrows() >= 40);
+        // Pool should have 1 buffer left
+        assert_eq!(ws.contribution_pool.len(), 1);
+    }
+
+    /// Test ContributionBlock::into_parts consumes the block and returns all fields.
+    #[test]
+    fn test_contribution_block_into_parts() {
+        let data = Mat::<f64>::zeros(5, 5);
+        let row_indices = vec![10, 20, 30, 40, 50];
+        let cb = ContributionBlock {
+            data,
+            row_indices,
+            num_delayed: 2,
+        };
+
+        let (mat, ri, nd) = cb.into_parts();
+        assert_eq!(mat.nrows(), 5);
+        assert_eq!(mat.ncols(), 5);
+        assert_eq!(ri, vec![10, 20, 30, 40, 50]);
+        assert_eq!(nd, 2);
     }
 }

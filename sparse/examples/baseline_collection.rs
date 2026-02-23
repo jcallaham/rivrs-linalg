@@ -53,6 +53,10 @@ struct FactorizationRecord {
     total_kernel_us: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     total_extraction_us: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pool_hits: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pool_misses: Option<usize>,
 }
 
 /// Per-matrix performance baseline.
@@ -204,6 +208,14 @@ fn main() {
             total_kernel_us: None,
             #[cfg(not(feature = "diagnostic"))]
             total_extraction_us: None,
+            #[cfg(feature = "diagnostic")]
+            pool_hits: Some(stats.pool_hits),
+            #[cfg(feature = "diagnostic")]
+            pool_misses: Some(stats.pool_misses),
+            #[cfg(not(feature = "diagnostic"))]
+            pool_hits: None,
+            #[cfg(not(feature = "diagnostic"))]
+            pool_misses: None,
         };
 
         let sn_records: Vec<SupernodeRecord> = per_sn
