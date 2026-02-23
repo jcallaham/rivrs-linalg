@@ -8,13 +8,14 @@ This directory contains sparse linear algebra solver implementations for rivrs-l
 
 **Parent Project**: rivrs-linalg - Numerical Linear Algebra for Rivrs
 **Domain**: Sparse direct solvers (SSIDS, LDL^T factorization, APTP pivoting)
-**Current Status**: Phase 8.2 complete — parallel factorization & solve with rayon + faer Par. Intra-node BLAS parallelism for large fronts, tree-level par_iter for independent subtrees. All safe Rust (no unsafe). 65/65 SuiteSparse matrices passing.
+**Current Status**: Phase 9.1c complete — assembly/extraction optimization + sub-phase profiling. c-71: 2.48× SPRAL (was 4.06×). Identified contribution block allocation as dominant bottleneck (40.1% + 33.3% of factor time). 65/65 SuiteSparse matrices passing.
 
 ### Development docs
 
 - `docs/ssids-plan.md` — **Living document** describing the overall development plan. Update when the plan itself changes (new decisions, scope adjustments), not for arbitrary progress tracking.
 - `docs/ssids-log.md` — Changelog for development updates, organized by phase. Records what was built, changed, fixed, and why.
 - `docs/phase-8.1g-report.md` — Performance analysis report with workload distribution and Phase 8.2 parallelism recommendations.
+- `docs/phase9/phase-9.1c-profiling-report.md` — Sub-phase profiling + perf stat analysis identifying contribution block allocation as dominant bottleneck.
 
 ## Licensing Strategy - Clean Room Implementation
 
@@ -398,9 +399,11 @@ unit tests of the symbolic analysis and factorization kernel on small matrices.
 - Phase 8.2: Parallel factorization & solve — rayon + faer Par, intra-node BLAS parallelism (TRSM/GEMM) for large fronts, tree-level par_iter for independent subtrees, parallel diagonal solve. All safe Rust (no unsafe). parallel_scaling.rs benchmark tool.
 - Phase 9.1a: Supernode amalgamation — SPRAL-style post-faer merge pass (do_merge predicate, nemin=32 default). c-71: 35K→6.4K supernodes. 65/65 SuiteSparse pass. Non-contiguous merges via owned_ranges on SupernodeInfo. Configurable via AnalyzeOptions.nemin.
 - Phase 9.1b: Workspace reuse — Two-tier pre-allocated workspace (FactorizationWorkspace in numeric.rs, AptpKernelWorkspace in factor.rs). FrontalMatrix changed from owned to borrowed types. Thread-local workspace via Cell for parallel path. CI subset: median 1.16× factor speedup, 24% RSS reduction, bit-exact backward errors.
+- Phase 9.1c: Assembly & extraction optimization — Precomputed scatter maps (AssemblyMaps), bulk column-slice copies, fill(0.0) zeroing, sub-phase timing instrumentation. c-71: 4.06×→2.48× SPRAL. Sub-phase profiling identified contribution block allocation as dominant bottleneck (extract_contrib 40.1% + extend-add 33.3% of factor time). perf stat: 644B dTLB misses, 3.1s/32% sys time from mmap churn.
 
 **Next:**
-- Phase 9.1c: Memory and allocation analysis pass (if needed based on full SuiteSparse results)
+- Phase 9.1c-2: Contribution workspace reuse — eliminate per-supernode Mat allocation for contribution blocks
+- Phase 9.1d: Small leaf subtree fast path
 - Phase 9.2: Release preparation (docs, examples, crates.io)
 
 ## Recent Changes

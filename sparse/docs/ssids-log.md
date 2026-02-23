@@ -1,5 +1,84 @@
 # SSIDS Development Log
 
+## Phase 9.1c: Assembly & Extraction Optimization + Profiling
+
+**Status**: Complete
+**Branch**: `022-assembly-extraction-opt`
+**Date**: 2026-02-22
+
+### What Was Built
+
+Three optimization tiers for assembly and extraction in the multifrontal
+factorization loop, plus sub-phase timing instrumentation for bottleneck
+identification:
+
+**US1 — Precomputed scatter maps:**
+- `AssemblyMaps` struct with per-supernode `amap_entries` (4-tuple format:
+  src_csc_index, dest_frontal_linear, scale_row, scale_col) and per-child
+  `ea_map` (extend-add row mappings for zero-delay case)
+- `build_assembly_maps()` computed at factorization time (after amalgamation)
+- `extend_add_mapped()` uses precomputed row mapping instead of `global_to_local`
+- Fast path in `factor_single_supernode`: zero-delay supernodes use amap
+  scatter, delayed supernodes fall back to `scatter_original_entries_multi`
+
+**US2 — Bulk column-slice copies:**
+- `extract_contribution`: `col_as_slice` + `copy_from_slice` per column
+  (was element-by-element `data[(i, j)]` indexing)
+- `extract_front_factors`: same pattern for L11, D11, L21 extraction
+
+**US3 — Optimized frontal matrix zeroing:**
+- `zero_frontal`: per-column `col_as_slice_mut(j)[j..m].fill(0.0)`
+  (was nested loop with `data[(i, j)] = 0.0`)
+
+**Sub-phase timing instrumentation (diagnostic feature):**
+- 6 new `Duration` fields on `PerSupernodeStats`: zero_time, g2l_time,
+  scatter_time, extend_add_time, extract_factors_time, extract_contrib_time
+- Corresponding aggregate fields on `FactorizationStats`
+- `profile_matrix` example displays sub-phase breakdown
+- Zero overhead when `diagnostic` feature is not enabled
+
+### Key Results
+
+**SPRAL comparison (sequential, single thread):**
+- c-71: 2.48× (was 4.06× in 9.1b) — **38% absolute speedup**
+- c-big: 4.00× (was 4.19× in 9.1b) — modest improvement
+- All 65/65 SuiteSparse matrices pass strict backward error < 5e-11
+
+**Sub-phase profiling (c-71):**
+- ExtractContr: 40.1%, Extend-add: 33.3%, Kernel: 23.1%
+- Scatter: 0.1%, Zeroing: 1.1%, ExtractFactors: 0.2%
+- **73.4% of factor time is contribution extraction + extend-add**
+
+**`perf stat` hardware analysis (c-71):**
+- IPC: 1.43 (memory-bound, not compute-bound)
+- 644B dTLB misses (TLB thrashing from large short-lived allocations)
+- 3.1s sys time = 32% of wall time (mmap/munmap/page-fault handling)
+- 934K page faults (thousands of multi-MB contribution blocks)
+
+**Root cause identified**: `extract_contribution` allocates `Mat::zeros(size, size)`
+per supernode (max ~49MB for c-71). The contribution block copy is the dominant
+bottleneck — not the assembly operations originally targeted.
+
+### Key Decisions
+
+- **Keep scatter maps**: Despite scatter being only 0.1% of factor time,
+  the maps also enable `extend_add_mapped()` for the zero-delay fast path
+- **Sub-phase timing over coarse timing**: Breaking assembly into zeroing +
+  g2l + scatter + extend-add, and extraction into extract_factors +
+  extract_contrib, was essential for identifying the real bottleneck
+- **Docker perf permissions**: Added CAP_PERFMON + CAP_SYS_ADMIN +
+  seccomp=unconfined to run.sh/docker-compose.yml/devcontainer.json;
+  `perf_event_paranoid=-1` must be set on the HOST kernel
+
+### Next Steps
+
+Phase 9.1c-2: Contribution workspace reuse — pre-allocate a contribution
+`Mat<f64>` on `FactorizationWorkspace` and/or restructure the factorization
+loop for direct extend-add from the frontal workspace. See `ssids-plan.md`
+Phase 9.1c-2 and `docs/phase9/phase-9.1c-profiling-report.md`.
+
+---
+
 ## Phase 9.1b: Workspace Reuse & Per-Supernode Allocation Optimization
 
 **Status**: Complete
