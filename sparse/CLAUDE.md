@@ -402,8 +402,8 @@ unit tests of the symbolic analysis and factorization kernel on small matrices.
 - Phase 9.1c: Assembly & extraction optimization — Precomputed scatter maps (AssemblyMaps), bulk column-slice copies, fill(0.0) zeroing, sub-phase timing instrumentation. c-71: 4.06×→2.48× SPRAL. Sub-phase profiling identified contribution block allocation as dominant bottleneck (extract_contrib 40.1% + extend-add 33.3% of factor time). perf stat: 644B dTLB misses, 3.1s/32% sys time from mmap churn.
 
 **Next:**
-- Phase 9.1c-2: Contribution workspace reuse — eliminate per-supernode Mat allocation for contribution blocks
-- Phase 9.1d: Small leaf subtree fast path
+- Phase 9.1d: Contribution workspace reuse — eliminate per-supernode Mat allocation for contribution blocks
+- Phase 9.1e: Small leaf subtree fast path
 - Phase 9.2: Release preparation (docs, examples, crates.io)
 
 ## Recent Changes
