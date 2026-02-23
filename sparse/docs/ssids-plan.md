@@ -2784,7 +2784,60 @@ Expected impact: 1.5-2× speedup on c-71/c-big by reducing assembly/extraction
 overhead. If contribution copy alone is halved, c-71 should approach 3× and
 c-big should approach 3×.
 
-*9.1d: Small leaf subtree fast path*
+*9.1d Contribution workspace reuse**
+
+The contribution copy is the single largest remaining allocation bottleneck.
+Two complementary approaches:
+
+**Approach 1 — Contribution workspace on FactorizationWorkspace** (high priority):
+Add a pre-allocated `contribution_data: Mat<f64>` and `contribution_row_indices: Vec<usize>`
+to `FactorizationWorkspace`, sized to the maximum contribution dimension. Change
+`extract_contribution` to write into this workspace instead of allocating.
+
+Key design challenge: the contribution from child s must survive until parent p
+assembles its frontal matrix. With the current level-set traversal, a parent's
+children may be processed in different waves. The last child processed before the
+parent leaves its contribution in the workspace, but earlier children's workspace
+data has been overwritten.
+
+**Solution**: In the sequential path, restructure the loop so each child's
+contribution is extended-add'd into the parent's frontal matrix immediately after
+the child is factored. This requires:
+1. The parent's frontal matrix must be allocated before its children are processed
+2. Each child's extend-add happens right after its `extract_contribution` (or better,
+   directly from the frontal workspace — see Approach 2)
+3. Scatter of original entries into the parent happens after all children complete
+
+This is a departure from the current "collect all contributions, then assemble"
+pattern, but matches SPRAL's approach more closely.
+
+**Approach 2 — Direct extend-add from frontal workspace** (highest priority):
+Skip the contribution copy entirely for the sequential path. After factoring
+supernode s, extend-add directly from the trailing submatrix of the frontal
+workspace into the parent's frontal matrix. The contribution data is already
+in the workspace — the copy to `ContributionBlock` is redundant when the
+workspace is still valid.
+
+Requirements:
+1. Parent's frontal matrix must be pre-allocated (separate buffer from child's)
+2. The extend-add must happen before the workspace is reused for the next supernode
+3. Need to handle delayed columns correctly (row mapping changes with delays)
+4. For multi-child supernodes, only the last child can use direct extend-add;
+   earlier children must use the contribution workspace (Approach 1)
+
+**Combined approach for sequential path**:
+- Two `Mat<f64>` buffers: `frontal_data` (current) and `contribution_data` (new)
+- Factor child → extend-add directly from `frontal_data` trailing submatrix into
+  parent's `contribution_data` or (if parent is the next supernode) directly into
+  parent's frontal matrix
+- Only allocate owned `ContributionBlock` for the parallel path where the
+  contribution must cross thread boundaries
+
+Expected impact: Eliminate 40% (extract_contrib) + reduce 33% (extend-add avoids
+intermediate copy) of factor time on c-71/c-big. Target: c-71 ≤ 1.5× SPRAL.
+
+
+*9.1e: Small leaf subtree fast path*
 
 **Motivation** (from post-9.1b profiling):
 
@@ -2824,12 +2877,12 @@ supernodal matrices (they don't hit this path).
 
 **Phase 9.1 Success Criteria:**
 - [X] c-71 and c-big within 10× of SPRAL factor time (was 25-30×, now 4× after 9.1a+b)
-- [ ] c-71 and c-big within 2× of SPRAL factor time (currently 4× — target of 9.1c)
-- [ ] Simplicial matrices (bloweybq, dixmaanl, etc.) within 1.5× of SPRAL (currently 2-3× — target of 9.1d)
+- [ ] c-71 and c-big within 2× of SPRAL factor time (currently 4× — target of 9.1c+d)
+- [ ] Simplicial matrices (bloweybq, dixmaanl, etc.) within 1.5× of SPRAL (currently 2-3× — target of 9.1e)
 - [ ] Full SuiteSparse suite median factor time ratio ≤ 1.0× vs SPRAL (currently 1.01×)
 - [ ] No regressions on any matrix in the benchmark suite
-- [ ] Per-supernode profiling analysis documented (assembly/extraction/kernel breakdown for key matrices)
-- [ ] Allocation analysis complete: remaining hotspots identified and either addressed or documented as post-release
+- [X] Per-supernode profiling analysis documented (assembly/extraction/kernel breakdown for key matrices) — Phase 9.1c sub-phase timing
+- [X] Allocation analysis complete: remaining hotspots identified and either addressed or documented as post-release — Phase 9.1c perf stat analysis
 
 **Phase 9.1 Exit Criteria:**
 

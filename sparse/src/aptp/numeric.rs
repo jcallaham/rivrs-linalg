@@ -136,12 +136,11 @@ impl FactorizationWorkspace {
             m,
             self.frontal_data.nrows()
         );
-        // Zero the lower triangle of the m × m subregion (column-wise)
-        let mut sub = self.frontal_data.as_mut().submatrix_mut(0, 0, m, m);
+        // Zero the lower triangle of the m × m subregion via per-column fill.
+        // col_as_slice_mut gives a contiguous &mut [f64] for each column of the
+        // owned Mat, so fill(0.0) compiles to memset — much faster than indexed writes.
         for j in 0..m {
-            for i in j..m {
-                sub[(i, j)] = 0.0;
-            }
+            self.frontal_data.col_as_slice_mut(j)[j..m].fill(0.0);
         }
     }
 
@@ -178,6 +177,221 @@ fn estimate_max_front_size(supernodes: &[SupernodeInfo]) -> usize {
         })
         .max()
         .unwrap_or(0)
+}
+
+// ---------------------------------------------------------------------------
+// Assembly maps (precomputed scatter indices)
+// ---------------------------------------------------------------------------
+
+/// Precomputed index mappings for assembly operations.
+///
+/// Eliminates per-entry index arithmetic in `scatter_original_entries_multi`
+/// and `extend_add` by storing source→destination index pairs computed from
+/// the symbolic structure. Computed once after amalgamation at the start of
+/// factorization and read-only during the assembly loop.
+///
+/// Uses `u32` indices to halve memory (frontal matrices are bounded by
+/// max_front_size, well within u32 range).
+///
+/// # Layout
+///
+/// Both `amap_entries` and `ea_map` use CSC-style compressed storage with
+/// per-supernode/per-child offset arrays for O(1) slice access.
+///
+/// # References
+///
+/// - SPRAL `assemble.hxx:51-80` (`add_a_block`): amap-based assembly pattern
+pub(crate) struct AssemblyMaps {
+    /// Flattened tuples for original matrix scatter. Each entry is 4 u32 values:
+    /// `[src_csc_index, dest_frontal_linear_index, scale_row, scale_col]` where
+    /// `src_csc_index` is the position in the CSC values array, `dest_frontal_linear_index`
+    /// is `col * m + row` in column-major layout, and `scale_row`/`scale_col` are
+    /// the permuted indices for MC64 scaling lookup (`scaling[scale_row] * scaling[scale_col]`).
+    /// Length: 4 * total_entries across all supernodes.
+    pub amap_entries: Vec<u32>,
+    /// Per-supernode start offset into `amap_entries` (in entry units; each entry
+    /// is 4 u32 values). `amap_entries[amap_offsets[s]*4 .. amap_offsets[s+1]*4]`
+    /// gives the flattened entries for supernode s.
+    /// Length: num_supernodes + 1.
+    pub amap_offsets: Vec<usize>,
+
+    /// Flattened child→parent row index mappings for extend-add.
+    /// For each child's contribution row, stores the local row index in the
+    /// parent's frontal matrix (assuming zero delays).
+    pub ea_map: Vec<u32>,
+    /// Per-child start offset into `ea_map`. Indexed by the flattened child
+    /// enumeration (all children of all supernodes in tree order).
+    /// Length: total_children + 1.
+    pub ea_offsets: Vec<usize>,
+    /// Maps each entry in `ea_offsets` to its child supernode index.
+    /// Length: total_children.
+    #[allow(dead_code)]
+    pub ea_child_snode: Vec<usize>,
+    /// Per-supernode start offset into the children enumeration.
+    /// `ea_snode_child_begin[s]..ea_snode_child_begin[s+1]` gives the range
+    /// in `ea_child_snode` / `ea_offsets` for supernode s's children.
+    /// Length: num_supernodes + 1.
+    pub ea_snode_child_begin: Vec<usize>,
+}
+
+/// Build precomputed assembly maps from post-amalgamation supernode structure.
+///
+/// # Arguments
+///
+/// - `supernodes`: Post-amalgamation supernode descriptors.
+/// - `children`: Children map (children[s] = list of child supernode indices).
+/// - `matrix`: Original sparse matrix (for CSC structure).
+/// - `perm_fwd`: Forward permutation (perm_fwd[new] = old).
+/// - `perm_inv`: Inverse permutation (perm_inv[old] = new).
+/// - `n`: Matrix dimension.
+fn build_assembly_maps(
+    supernodes: &[SupernodeInfo],
+    children: &[Vec<usize>],
+    matrix: &SparseColMat<usize, f64>,
+    perm_fwd: &[usize],
+    perm_inv: &[usize],
+    n: usize,
+) -> AssemblyMaps {
+    let n_supernodes = supernodes.len();
+    let symbolic = matrix.symbolic();
+    let col_ptrs = symbolic.col_ptr();
+    let row_indices_csc = symbolic.row_idx();
+
+    // ---- Phase 1: Build amap (original entry scatter maps) ----
+    // Each entry is 4 u32: [src_csc_index, dest_frontal_linear, scale_row, scale_col]
+    // where scale_row = perm_inv[orig_row], scale_col = perm_inv[orig_col]
+    // (precomputed for efficient MC64 scaling at assembly time).
+
+    let mut amap_entries = Vec::new();
+    let mut amap_offsets = vec![0usize; n_supernodes + 1];
+
+    // Temporary global-to-local mapping, reused per supernode
+    let mut g2l = vec![NOT_IN_FRONT; n];
+
+    for (s, sn) in supernodes.iter().enumerate() {
+        // Compute front structure for this supernode (without delays)
+        let sn_ncols: usize = sn.owned_ranges.iter().map(|r| r.len()).sum();
+        let mut frontal_rows: Vec<usize> = Vec::with_capacity(sn_ncols + sn.pattern.len());
+        for range in &sn.owned_ranges {
+            frontal_rows.extend(range.clone());
+        }
+        frontal_rows.extend_from_slice(&sn.pattern);
+        let m = frontal_rows.len();
+
+        // Build global-to-local
+        for (i, &global) in frontal_rows.iter().enumerate() {
+            g2l[global] = i;
+        }
+
+        let total_owned = sn_ncols;
+
+        // Iterate owned columns and build amap entries
+        for range in &sn.owned_ranges {
+            for pj in range.clone() {
+                let orig_col = perm_fwd[pj];
+                let local_col = g2l[pj];
+
+                let start = col_ptrs[orig_col];
+                let end = col_ptrs[orig_col + 1];
+                for (idx, &orig_row) in row_indices_csc.iter().enumerate().take(end).skip(start) {
+                    // Upper-triangle dedup: skip if both are owned supernode cols
+                    if orig_row < orig_col {
+                        let perm_row = perm_inv[orig_row];
+                        let local_peer = g2l[perm_row];
+                        if local_peer != NOT_IN_FRONT && local_peer < total_owned {
+                            continue;
+                        }
+                    }
+                    let global_row = perm_inv[orig_row];
+                    let local_row = g2l[global_row];
+                    if local_row == NOT_IN_FRONT {
+                        continue;
+                    }
+
+                    // Determine destination in lower triangle
+                    let (dest_row, dest_col) = if local_row >= local_col {
+                        (local_row, local_col)
+                    } else {
+                        (local_col, local_row)
+                    };
+                    let dest_linear = dest_col * m + dest_row;
+
+                    amap_entries.push(idx as u32);
+                    amap_entries.push(dest_linear as u32);
+                    amap_entries.push(global_row as u32); // perm_inv[orig_row]
+                    amap_entries.push(pj as u32); // perm_inv[orig_col] = pj
+                }
+            }
+        }
+
+        // Reset g2l
+        for &global in &frontal_rows {
+            g2l[global] = NOT_IN_FRONT;
+        }
+
+        let entry_end = amap_entries.len() / 4;
+        amap_offsets[s + 1] = entry_end;
+    }
+
+    // ---- Phase 2: Build extend-add maps ----
+
+    let mut ea_map = Vec::new();
+    let mut ea_offsets = vec![0usize];
+    let mut ea_child_snode = Vec::new();
+    let mut ea_snode_child_begin = vec![0usize; n_supernodes + 1];
+
+    for (s, sn) in supernodes.iter().enumerate() {
+        // Build parent's frontal row structure (without delays)
+        let sn_ncols: usize = sn.owned_ranges.iter().map(|r| r.len()).sum();
+        let mut parent_rows: Vec<usize> = Vec::with_capacity(sn_ncols + sn.pattern.len());
+        for range in &sn.owned_ranges {
+            parent_rows.extend(range.clone());
+        }
+        parent_rows.extend_from_slice(&sn.pattern);
+
+        // Build g2l for parent
+        for (i, &global) in parent_rows.iter().enumerate() {
+            g2l[global] = i;
+        }
+
+        for &c in &children[s] {
+            let child_sn = &supernodes[c];
+
+            // Child's contribution rows = child's pattern (off-diagonal rows).
+            // Without delays, the contribution block rows are exactly the pattern.
+            // With delays, additional delayed rows appear — the precomputed map
+            // won't cover those (fallback to g2l at factorization time).
+            ea_child_snode.push(c);
+
+            for &child_row in &child_sn.pattern {
+                let parent_local = g2l[child_row];
+                debug_assert!(
+                    parent_local != NOT_IN_FRONT,
+                    "child pattern row {} not in parent supernode {}",
+                    child_row,
+                    s
+                );
+                ea_map.push(parent_local as u32);
+            }
+            ea_offsets.push(ea_map.len());
+        }
+
+        // Reset g2l
+        for &global in &parent_rows {
+            g2l[global] = NOT_IN_FRONT;
+        }
+
+        ea_snode_child_begin[s + 1] = ea_child_snode.len();
+    }
+
+    AssemblyMaps {
+        amap_entries,
+        amap_offsets,
+        ea_map,
+        ea_offsets,
+        ea_child_snode,
+        ea_snode_child_begin,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -234,6 +448,8 @@ pub(crate) struct FrontalMatrix<'a> {
     /// Dense m × m storage (lower triangle used). Borrows from workspace.
     pub data: MatMut<'a, f64>,
     /// Global permuted column indices for each local row (length m).
+    /// Used by callers that need index mapping (e.g., scatter maps in Phase 4).
+    #[allow(dead_code)]
     pub row_indices: &'a [usize],
     /// Number of fully-summed rows/columns (supernode cols + delayed from children).
     pub num_fully_summed: usize,
@@ -362,6 +578,25 @@ pub struct PerSupernodeStats {
     /// Wall-clock time for front factor extraction.
     #[cfg(feature = "diagnostic")]
     pub extraction_time: std::time::Duration,
+    // -- Sub-phase timing (finer-grained diagnostic breakdown) --
+    /// Wall-clock time for zeroing the frontal matrix (memset-equivalent).
+    #[cfg(feature = "diagnostic")]
+    pub zero_time: std::time::Duration,
+    /// Wall-clock time for building the global-to-local mapping.
+    #[cfg(feature = "diagnostic")]
+    pub g2l_time: std::time::Duration,
+    /// Wall-clock time for scattering original CSC entries into the frontal matrix.
+    #[cfg(feature = "diagnostic")]
+    pub scatter_time: std::time::Duration,
+    /// Wall-clock time for extend-add (merging child contributions).
+    #[cfg(feature = "diagnostic")]
+    pub extend_add_time: std::time::Duration,
+    /// Wall-clock time for extracting L11, D11, L21 from the factored frontal matrix.
+    #[cfg(feature = "diagnostic")]
+    pub extract_factors_time: std::time::Duration,
+    /// Wall-clock time for extracting the contribution block.
+    #[cfg(feature = "diagnostic")]
+    pub extract_contrib_time: std::time::Duration,
 }
 
 /// Aggregate statistics from multifrontal factorization.
@@ -397,6 +632,25 @@ pub struct FactorizationStats {
     /// Sum of extraction times across all supernodes.
     #[cfg(feature = "diagnostic")]
     pub total_extraction_time: std::time::Duration,
+    // -- Sub-phase totals --
+    /// Sum of zeroing times across all supernodes.
+    #[cfg(feature = "diagnostic")]
+    pub total_zero_time: std::time::Duration,
+    /// Sum of g2l build times across all supernodes.
+    #[cfg(feature = "diagnostic")]
+    pub total_g2l_time: std::time::Duration,
+    /// Sum of scatter times across all supernodes.
+    #[cfg(feature = "diagnostic")]
+    pub total_scatter_time: std::time::Duration,
+    /// Sum of extend-add times across all supernodes.
+    #[cfg(feature = "diagnostic")]
+    pub total_extend_add_time: std::time::Duration,
+    /// Sum of factor extraction times across all supernodes.
+    #[cfg(feature = "diagnostic")]
+    pub total_extract_factors_time: std::time::Duration,
+    /// Sum of contribution extraction times across all supernodes.
+    #[cfg(feature = "diagnostic")]
+    pub total_extract_contrib_time: std::time::Duration,
 }
 
 /// Assembled frontal matrix exported for diagnostic comparison.
@@ -551,6 +805,12 @@ impl AptpNumeric {
         // Get fill-reducing permutation
         let (perm_fwd, perm_inv) = symbolic.perm_vecs();
 
+        // Precompute assembly index maps (scatter + extend-add) for the
+        // zero-delay case. Supernodes with delayed children fall back to
+        // per-entry index arithmetic.
+        let assembly_maps =
+            build_assembly_maps(&supernodes, &children, matrix, &perm_fwd, &perm_inv, n);
+
         // Profiling session (diagnostic only)
         #[cfg(feature = "diagnostic")]
         let session = ProfileSession::new();
@@ -569,6 +829,7 @@ impl AptpNumeric {
             options,
             scaling,
             n,
+            &assembly_maps,
         )?;
 
         #[cfg(feature = "diagnostic")]
@@ -611,6 +872,18 @@ impl AptpNumeric {
             total_kernel_time: std::time::Duration::ZERO,
             #[cfg(feature = "diagnostic")]
             total_extraction_time: std::time::Duration::ZERO,
+            #[cfg(feature = "diagnostic")]
+            total_zero_time: std::time::Duration::ZERO,
+            #[cfg(feature = "diagnostic")]
+            total_g2l_time: std::time::Duration::ZERO,
+            #[cfg(feature = "diagnostic")]
+            total_scatter_time: std::time::Duration::ZERO,
+            #[cfg(feature = "diagnostic")]
+            total_extend_add_time: std::time::Duration::ZERO,
+            #[cfg(feature = "diagnostic")]
+            total_extract_factors_time: std::time::Duration::ZERO,
+            #[cfg(feature = "diagnostic")]
+            total_extract_contrib_time: std::time::Duration::ZERO,
         };
         for sn_stat in &per_sn_stats {
             stats.total_1x1_pivots += sn_stat.num_1x1;
@@ -624,6 +897,12 @@ impl AptpNumeric {
                 stats.total_assembly_time += sn_stat.assembly_time;
                 stats.total_kernel_time += sn_stat.kernel_time;
                 stats.total_extraction_time += sn_stat.extraction_time;
+                stats.total_zero_time += sn_stat.zero_time;
+                stats.total_g2l_time += sn_stat.g2l_time;
+                stats.total_scatter_time += sn_stat.scatter_time;
+                stats.total_extend_add_time += sn_stat.extend_add_time;
+                stats.total_extract_factors_time += sn_stat.extract_factors_time;
+                stats.total_extract_contrib_time += sn_stat.extract_contrib_time;
             }
         }
 
@@ -811,12 +1090,13 @@ impl AptpNumeric {
             let ne = result.num_eliminated;
 
             if sn.parent.is_some() && ne < m {
-                let frontal_view = FrontalMatrix {
-                    data: frontal_data.as_mut(),
-                    row_indices: &frontal_rows,
-                    num_fully_summed: k,
-                };
-                contributions[s] = Some(extract_contribution(&frontal_view, &result));
+                contributions[s] = Some(extract_contribution(
+                    &frontal_data,
+                    m,
+                    k,
+                    &frontal_rows,
+                    &result,
+                ));
             }
 
             // Cleanup
@@ -852,17 +1132,18 @@ struct SupernodeResult {
 fn factor_single_supernode(
     s: usize,
     sn: &SupernodeInfo,
-    child_contributions: Vec<ContributionBlock>,
+    child_contributions: Vec<Option<ContributionBlock>>,
     matrix: &SparseColMat<usize, f64>,
     perm_fwd: &[usize],
     perm_inv: &[usize],
     options: &AptpOptions,
     scaling: Option<&[f64]>,
     workspace: &mut FactorizationWorkspace,
+    assembly_maps: &AssemblyMaps,
 ) -> Result<SupernodeResult, SparseError> {
     // 1. Collect delayed columns from children into workspace buffer
     workspace.delayed_cols_buf.clear();
-    for cb in &child_contributions {
+    for cb in child_contributions.iter().flatten() {
         workspace
             .delayed_cols_buf
             .extend_from_slice(&cb.row_indices[..cb.num_delayed]);
@@ -891,16 +1172,31 @@ fn factor_single_supernode(
     if m > workspace.frontal_data.nrows() {
         workspace.frontal_data = Mat::zeros(m, m);
     }
+
+    #[cfg(feature = "diagnostic")]
+    let zero_start = std::time::Instant::now();
+
     workspace.zero_frontal(m);
 
+    #[cfg(feature = "diagnostic")]
+    let zero_time = zero_start.elapsed();
+
     // 4. Build global-to-local mapping
+    #[cfg(feature = "diagnostic")]
+    let g2l_start = std::time::Instant::now();
+
     for (i, &global) in workspace.frontal_row_indices.iter().enumerate() {
         workspace.global_to_local[global] = i;
     }
 
+    #[cfg(feature = "diagnostic")]
+    let g2l_time = g2l_start.elapsed();
+
     // 5. Assemble frontal matrix using workspace buffer
     #[cfg(feature = "diagnostic")]
     let assembly_start = std::time::Instant::now();
+
+    let ndelay_in = workspace.delayed_cols_buf.len();
 
     let mut frontal = FrontalMatrix {
         data: workspace.frontal_data.as_mut().submatrix_mut(0, 0, m, m),
@@ -908,19 +1204,81 @@ fn factor_single_supernode(
         num_fully_summed: k,
     };
 
-    scatter_original_entries_multi(
-        &mut frontal,
-        matrix,
-        perm_fwd,
-        perm_inv,
-        &workspace.global_to_local,
-        &sn.owned_ranges,
-        scaling,
-    );
+    // 5a. Scatter original CSC entries
+    #[cfg(feature = "diagnostic")]
+    let scatter_start = std::time::Instant::now();
 
-    for cb in child_contributions {
-        extend_add(&mut frontal, &cb, &workspace.global_to_local);
+    // Use precomputed amap when no delays shift row positions
+    if ndelay_in == 0 {
+        // Fast path: scatter using precomputed index tuples (4 u32 per entry)
+        let amap_start = assembly_maps.amap_offsets[s];
+        let amap_end = assembly_maps.amap_offsets[s + 1];
+        let values = matrix.val();
+        let amap = &assembly_maps.amap_entries[amap_start * 4..amap_end * 4];
+
+        if let Some(sc) = scaling {
+            for entry in amap.chunks_exact(4) {
+                let src_idx = entry[0] as usize;
+                let dest_linear = entry[1] as usize;
+                let scale_row = entry[2] as usize;
+                let scale_col = entry[3] as usize;
+                let val = values[src_idx] * sc[scale_row] * sc[scale_col];
+                let dest_col = dest_linear / m;
+                let dest_row = dest_linear % m;
+                frontal.data[(dest_row, dest_col)] += val;
+            }
+        } else {
+            for entry in amap.chunks_exact(4) {
+                let src_idx = entry[0] as usize;
+                let dest_linear = entry[1] as usize;
+                let dest_col = dest_linear / m;
+                let dest_row = dest_linear % m;
+                frontal.data[(dest_row, dest_col)] += values[src_idx];
+            }
+        }
+    } else {
+        // Fallback: delayed columns shift positions, use per-entry assembly
+        scatter_original_entries_multi(
+            &mut frontal,
+            matrix,
+            perm_fwd,
+            perm_inv,
+            &workspace.global_to_local,
+            &sn.owned_ranges,
+            scaling,
+        );
     }
+
+    #[cfg(feature = "diagnostic")]
+    let scatter_time = scatter_start.elapsed();
+
+    // 5b. Extend-add: merge child contributions into parent frontal matrix
+    #[cfg(feature = "diagnostic")]
+    let ea_start_time = std::time::Instant::now();
+
+    let ea_children_begin = assembly_maps.ea_snode_child_begin[s];
+    let mut ea_child_idx = ea_children_begin;
+
+    for opt_cb in child_contributions {
+        if let Some(cb) = opt_cb {
+            // Check if this child had delays — if so, fall back to g2l
+            if cb.num_delayed > 0 || ndelay_in > 0 {
+                extend_add(&mut frontal, &cb, &workspace.global_to_local);
+            } else {
+                // Fast path: use precomputed row mapping
+                let ea_start = assembly_maps.ea_offsets[ea_child_idx];
+                let ea_end = assembly_maps.ea_offsets[ea_child_idx + 1];
+                let ea_row_map = &assembly_maps.ea_map[ea_start..ea_end];
+                extend_add_mapped(&mut frontal, &cb, ea_row_map);
+            }
+        }
+        // Always increment: ea_offsets indexes all children, including those
+        // with no contribution (fully eliminated, ne == m).
+        ea_child_idx += 1;
+    }
+
+    #[cfg(feature = "diagnostic")]
+    let extend_add_time = ea_start_time.elapsed();
 
     #[cfg(feature = "diagnostic")]
     let assembly_time = assembly_start.elapsed();
@@ -951,21 +1309,39 @@ fn factor_single_supernode(
     // 7. Extract front factors (reads from workspace frontal data)
     #[cfg(feature = "diagnostic")]
     let extraction_start = std::time::Instant::now();
+    #[cfg(feature = "diagnostic")]
+    let extract_factors_start = std::time::Instant::now();
 
-    // Build a temporary FrontalMatrix view for extraction functions
-    let frontal_view = FrontalMatrix {
-        data: workspace.frontal_data.as_mut().submatrix_mut(0, 0, m, m),
-        row_indices: &workspace.frontal_row_indices,
-        num_fully_summed: k,
-    };
-    let ff = extract_front_factors(&frontal_view, &result);
+    // Use owned Mat<f64> directly for col_as_slice-based bulk extraction
+    let ff = extract_front_factors(
+        &workspace.frontal_data,
+        m,
+        k,
+        &workspace.frontal_row_indices,
+        &result,
+    );
+
+    #[cfg(feature = "diagnostic")]
+    let extract_factors_time = extract_factors_start.elapsed();
 
     // 8. Prepare contribution for parent (if not root and not fully eliminated)
+    #[cfg(feature = "diagnostic")]
+    let extract_contrib_start = std::time::Instant::now();
+
     let contribution = if sn.parent.is_some() && ne < m {
-        Some(extract_contribution(&frontal_view, &result))
+        Some(extract_contribution(
+            &workspace.frontal_data,
+            m,
+            k,
+            &workspace.frontal_row_indices,
+            &result,
+        ))
     } else {
         None
     };
+
+    #[cfg(feature = "diagnostic")]
+    let extract_contrib_time = extract_contrib_start.elapsed();
 
     #[cfg(feature = "diagnostic")]
     let extraction_time = extraction_start.elapsed();
@@ -985,6 +1361,18 @@ fn factor_single_supernode(
         kernel_time,
         #[cfg(feature = "diagnostic")]
         extraction_time,
+        #[cfg(feature = "diagnostic")]
+        zero_time,
+        #[cfg(feature = "diagnostic")]
+        g2l_time,
+        #[cfg(feature = "diagnostic")]
+        scatter_time,
+        #[cfg(feature = "diagnostic")]
+        extend_add_time,
+        #[cfg(feature = "diagnostic")]
+        extract_factors_time,
+        #[cfg(feature = "diagnostic")]
+        extract_contrib_time,
     };
 
     // Reset global_to_local entries for reuse (O(m), not O(n))
@@ -1025,6 +1413,7 @@ fn factor_tree_levelset(
     options: &AptpOptions,
     scaling: Option<&[f64]>,
     n: usize,
+    assembly_maps: &AssemblyMaps,
 ) -> Result<Vec<(usize, FrontFactors, PerSupernodeStats)>, SparseError> {
     let n_supernodes = supernodes.len();
 
@@ -1053,12 +1442,12 @@ fn factor_tree_levelset(
         // Collect child contributions for each ready node. Children of different
         // ready nodes are disjoint (tree structure), so each contribution is
         // taken exactly once.
-        let mut batch_inputs: Vec<(usize, Vec<ContributionBlock>)> =
+        let mut batch_inputs: Vec<(usize, Vec<Option<ContributionBlock>>)> =
             Vec::with_capacity(ready.len());
         for &s in &ready {
-            let child_contribs: Vec<ContributionBlock> = children[s]
+            let child_contribs: Vec<Option<ContributionBlock>> = children[s]
                 .iter()
-                .filter_map(|&c| contributions[c].take())
+                .map(|&c| contributions[c].take())
                 .collect();
             batch_inputs.push((s, child_contribs));
         }
@@ -1080,6 +1469,7 @@ fn factor_tree_levelset(
                             options,
                             scaling,
                             &mut shared_workspace,
+                            assembly_maps,
                         )
                     })
                     .collect::<Result<_, _>>()?
@@ -1116,6 +1506,7 @@ fn factor_tree_levelset(
                             options,
                             scaling,
                             &mut ws,
+                            assembly_maps,
                         );
                         // Put workspace back for reuse by the next task on this thread.
                         FACTOR_WORKSPACE.set(ws);
@@ -1337,20 +1728,79 @@ pub(crate) fn extend_add(
     }
 }
 
+/// Extend-add using a precomputed child→parent row mapping.
+///
+/// Used when the child had zero delayed columns, so the contribution block
+/// rows correspond exactly to the child's symbolic pattern and the precomputed
+/// `ea_row_map` provides direct local index lookup without `global_to_local`.
+///
+/// # Arguments
+///
+/// - `parent`: Parent frontal matrix to accumulate into (lower triangle).
+/// - `child`: Child contribution block.
+/// - `ea_row_map`: Precomputed mapping from child contribution row index to
+///   parent frontal local row index. Length equals the child's pattern size.
+fn extend_add_mapped(
+    parent: &mut FrontalMatrix<'_>,
+    child: &ContributionBlock,
+    ea_row_map: &[u32],
+) {
+    let cb_size = child.data.nrows();
+    debug_assert!(
+        ea_row_map.len() >= cb_size,
+        "extend_add_mapped: ea_row_map len {} < cb_size {}",
+        ea_row_map.len(),
+        cb_size
+    );
+    for (i, &li_u32) in ea_row_map.iter().enumerate().take(cb_size) {
+        let li = li_u32 as usize;
+        for (j, &lj_u32) in ea_row_map.iter().enumerate().take(i + 1) {
+            // Lower triangle only
+            let lj = lj_u32 as usize;
+            let val = child.data[(i, j)];
+            if val != 0.0 {
+                // Map to parent: ensure lower triangle (li >= lj)
+                if li >= lj {
+                    parent.data[(li, lj)] += val;
+                } else {
+                    parent.data[(lj, li)] += val;
+                }
+            }
+        }
+    }
+}
+
 /// Extract per-supernode factors from a factored frontal matrix.
 ///
 /// Copies L11, D11, L21, and permutation information from the in-place
 /// factored frontal matrix into a persistent [`FrontFactors`] struct.
+///
+/// Uses per-column `col_as_slice` + `copy_from_slice` for L21 extraction and
+/// per-column slice copies for L11 1x1-pivot columns, replacing element-by-element
+/// indexing with bulk memory operations.
+///
+/// # Arguments
+///
+/// - `frontal_data`: The factored frontal matrix data (owned `Mat<f64>`).
+///   Columns must be contiguous (guaranteed by `Mat` layout). Only the first
+///   `m` rows and columns are used.
+/// - `m`: Front size (number of rows/columns used in `frontal_data`).
+/// - `k`: Number of fully-summed rows/columns.
+/// - `frontal_row_indices`: Global permuted column indices for each local row (length >= m).
+/// - `result`: APTP factorization result (pivot types, permutation, etc.).
 pub(crate) fn extract_front_factors(
-    frontal: &FrontalMatrix<'_>,
+    frontal_data: &Mat<f64>,
+    m: usize,
+    k: usize,
+    frontal_row_indices: &[usize],
     result: &AptpFactorResult,
 ) -> FrontFactors {
-    let m = frontal.data.nrows();
-    let k = frontal.num_fully_summed;
     let ne = result.num_eliminated;
 
     // Extract L11 (ne × ne) — unit lower triangular part
     // For 2x2 pivots, a[(col+1, col)] is the D off-diagonal, NOT an L entry.
+    // Uses per-column slice copies for 1x1 pivot columns where the L entries
+    // form a contiguous segment.
     let l11 = if ne > 0 {
         let mut l = Mat::zeros(ne, ne);
         let mut col = 0;
@@ -1358,9 +1808,11 @@ pub(crate) fn extract_front_factors(
             l[(col, col)] = 1.0; // unit diagonal
             match result.d.get_pivot_type(col) {
                 PivotType::OneByOne => {
-                    // L entries start at row col+1
-                    for i in (col + 1)..ne {
-                        l[(i, col)] = frontal.data[(i, col)];
+                    // L entries: rows (col+1)..ne — contiguous in both source and dest
+                    let n_entries = ne - (col + 1);
+                    if n_entries > 0 {
+                        let src = &frontal_data.col_as_slice(col)[col + 1..ne];
+                        l.col_as_slice_mut(col)[col + 1..ne].copy_from_slice(src);
                     }
                     col += 1;
                 }
@@ -1368,9 +1820,12 @@ pub(crate) fn extract_front_factors(
                     l[(col + 1, col + 1)] = 1.0; // unit diagonal for partner
                     // a[(col+1, col)] is D off-diagonal, skip it
                     // L entries for both columns start at row col+2
-                    for i in (col + 2)..ne {
-                        l[(i, col)] = frontal.data[(i, col)];
-                        l[(i, col + 1)] = frontal.data[(i, col + 1)];
+                    let n_entries = ne - (col + 2);
+                    if n_entries > 0 {
+                        let src0 = &frontal_data.col_as_slice(col)[col + 2..ne];
+                        l.col_as_slice_mut(col)[col + 2..ne].copy_from_slice(src0);
+                        let src1 = &frontal_data.col_as_slice(col + 1)[col + 2..ne];
+                        l.col_as_slice_mut(col + 1)[col + 2..ne].copy_from_slice(src1);
                     }
                     col += 2;
                 }
@@ -1420,15 +1875,16 @@ pub(crate) fn extract_front_factors(
     // ne..m for columns 0..ne: rows ne..k are delayed fully-summed rows that received
     // TRSM updates before being delayed; rows k..m are non-fully-summed rows.
     //
+    // Uses per-column copy_from_slice for bulk extraction.
+    //
     // NOTE: extract_contribution also includes delayed rows (see lines below).
     // These two functions MUST be consistent in their row treatment.
     let r = m - ne;
     let l21 = if ne > 0 && r > 0 {
         let mut l = Mat::zeros(r, ne);
-        for i in 0..r {
-            for j in 0..ne {
-                l[(i, j)] = frontal.data[(ne + i, j)];
-            }
+        for j in 0..ne {
+            let src = &frontal_data.col_as_slice(j)[ne..m];
+            l.col_as_slice_mut(j)[..r].copy_from_slice(src);
         }
         l
     } else {
@@ -1440,22 +1896,22 @@ pub(crate) fn extract_front_factors(
 
     // Column indices: the global permuted indices of the eliminated columns
     // local_perm[0..ne] gives the front-local columns that were eliminated,
-    // mapped through frontal.row_indices to get global permuted indices
+    // mapped through frontal_row_indices to get global permuted indices
     let col_indices: Vec<usize> = local_perm[..ne]
         .iter()
-        .map(|&lp| frontal.row_indices[lp])
+        .map(|&lp| frontal_row_indices[lp])
         .collect();
 
     // Row indices: global permuted indices for L21 rows.
     // First num_delayed entries: delayed fully-summed columns (ne..k), mapped through
-    // result.perm and frontal.row_indices to get global permuted indices.
+    // result.perm and frontal_row_indices to get global permuted indices.
     // Remaining entries: non-fully-summed rows (k..m).
     // This matches extract_contribution's row_indices construction.
     let mut row_indices = Vec::with_capacity(m - ne);
     for &lp in &result.perm[ne..k] {
-        row_indices.push(frontal.row_indices[lp]);
+        row_indices.push(frontal_row_indices[lp]);
     }
-    row_indices.extend_from_slice(&frontal.row_indices[k..]);
+    row_indices.extend_from_slice(&frontal_row_indices[k..m]);
 
     FrontFactors {
         l11,
@@ -1474,39 +1930,51 @@ pub(crate) fn extract_front_factors(
 /// of the factored frontal matrix, containing:
 /// - Delayed columns (positions 0..num_delayed)
 /// - Schur complement entries (positions num_delayed..size)
+///
+/// Uses per-column `col_as_slice` + `copy_from_slice` for bulk extraction,
+/// replacing element-by-element indexing.
+///
+/// # Arguments
+///
+/// - `frontal_data`: The factored frontal matrix data (owned `Mat<f64>`).
+/// - `m`: Front size (number of rows/columns used).
+/// - `k`: Number of fully-summed rows/columns.
+/// - `frontal_row_indices`: Global permuted column indices for each local row.
+/// - `result`: APTP factorization result.
 pub(crate) fn extract_contribution(
-    frontal: &FrontalMatrix<'_>,
+    frontal_data: &Mat<f64>,
+    m: usize,
+    k: usize,
+    frontal_row_indices: &[usize],
     result: &AptpFactorResult,
 ) -> ContributionBlock {
-    let m = frontal.data.nrows();
     let ne = result.num_eliminated;
-    let k = frontal.num_fully_summed;
     let size = m - ne;
     let num_delayed = k - ne;
 
-    // Copy trailing submatrix (lower triangle only) via column-wise bulk copy.
-    // Each column j copies rows j..size from the frontal submatrix.
+    // Copy trailing submatrix (lower triangle only) via per-column bulk copies.
+    // Each column j copies the contiguous segment [ne+j .. ne+j+col_len) from the
+    // source column (ne+j) into destination column j at rows [j..size).
     let mut data = Mat::zeros(size, size);
     for j in 0..size {
         let col_len = size - j;
-        for i in 0..col_len {
-            data[(j + i, j)] = frontal.data[(ne + j + i, ne + j)];
-        }
+        let src = &frontal_data.col_as_slice(ne + j)[ne + j..ne + j + col_len];
+        data.col_as_slice_mut(j)[j..j + col_len].copy_from_slice(src);
     }
 
     // Build row indices:
-    // - First num_delayed entries: delayed columns mapped through result.perm and frontal.row_indices
-    // - Remaining entries: non-fully-summed rows from frontal.row_indices[k..m]
+    // - First num_delayed entries: delayed columns mapped through result.perm and frontal_row_indices
+    // - Remaining entries: non-fully-summed rows from frontal_row_indices[k..m]
     let mut row_indices = Vec::with_capacity(size);
 
     // Delayed columns: these are at positions ne..k in the APTP-permuted frontal matrix
     // result.perm[ne..k] gives the original front-local indices of delayed columns
     for &lp in &result.perm[ne..k] {
-        row_indices.push(frontal.row_indices[lp]);
+        row_indices.push(frontal_row_indices[lp]);
     }
 
     // Non-fully-summed rows
-    row_indices.extend_from_slice(&frontal.row_indices[k..]);
+    row_indices.extend_from_slice(&frontal_row_indices[k..m]);
 
     ContributionBlock {
         data,
@@ -1610,16 +2078,10 @@ mod tests {
         let ne = result.num_eliminated;
         let num_delayed = k - ne;
 
-        let frontal = FrontalMatrix {
-            data: data.as_mut(),
-            row_indices: &row_indices,
-            num_fully_summed: k,
-        };
-
         // The bug: if delays occurred, the old code would make L21 have (m - k) rows
         // instead of (m - ne) rows, missing the delayed-row entries.
         if num_delayed > 0 {
-            let ff = extract_front_factors(&frontal, &result);
+            let ff = extract_front_factors(&data, m, k, &row_indices, &result);
 
             // L21 must have (m - ne) rows = delayed_rows + non-fully-summed rows
             assert_eq!(
@@ -1643,7 +2105,7 @@ mod tests {
             assert_eq!(ff.col_indices.len(), ne);
         } else {
             // No delays — still verify basic shapes
-            let ff = extract_front_factors(&frontal, &result);
+            let ff = extract_front_factors(&data, m, k, &row_indices, &result);
             assert_eq!(ff.l21.nrows(), m - ne);
             assert_eq!(ff.row_indices.len(), ff.l21.nrows());
         }
@@ -1671,13 +2133,8 @@ mod tests {
         let num_delayed = k - ne;
 
         if num_delayed > 0 {
-            let frontal = FrontalMatrix {
-                data: data.as_mut(),
-                row_indices: &row_indices,
-                num_fully_summed: k,
-            };
-            let ff = extract_front_factors(&frontal, &result);
-            let cb = extract_contribution(&frontal, &result);
+            let ff = extract_front_factors(&data, m, k, &row_indices, &result);
+            let cb = extract_contribution(&data, m, k, &row_indices, &result);
 
             // Both must have the same number of delayed rows
             assert_eq!(cb.num_delayed, num_delayed);
@@ -1726,12 +2183,7 @@ mod tests {
         let num_delayed = k - ne;
 
         if num_delayed > 0 && ne > 0 {
-            let frontal = FrontalMatrix {
-                data: data.as_mut(),
-                row_indices: &row_indices,
-                num_fully_summed: k,
-            };
-            let ff = extract_front_factors(&frontal, &result);
+            let ff = extract_front_factors(&data, m, k, &row_indices, &result);
 
             // Check that L21 entries in the delayed-row portion (rows 0..num_delayed)
             // are not all zero. These rows received TRSM updates before being delayed.
@@ -1788,12 +2240,7 @@ mod tests {
             return; // Nothing to reconstruct
         }
 
-        let frontal = FrontalMatrix {
-            data: data.as_mut(),
-            row_indices: &row_indices,
-            num_fully_summed: k,
-        };
-        let ff = extract_front_factors(&frontal, &result);
+        let ff = extract_front_factors(&data, m, k, &row_indices, &result);
 
         // Compute L11 * D * L11^T manually
         // Step 1: LD = L11 * D (column-by-column, handling 1x1 and 2x2 pivots)
@@ -1913,12 +2360,7 @@ mod tests {
             return;
         }
 
-        let frontal = FrontalMatrix {
-            data: data.as_mut(),
-            row_indices: &row_indices,
-            num_fully_summed: k,
-        };
-        let ff = extract_front_factors(&frontal, &result);
+        let ff = extract_front_factors(&data, m, k, &row_indices, &result);
 
         // Check that L11, D11, L21 are internally consistent:
         // L * D * L^T (where L = [L11; L21]) should reconstruct the factored

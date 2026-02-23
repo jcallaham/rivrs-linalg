@@ -61,6 +61,8 @@ else
 	docker run -it \
 		--name rivrs-linalg \
 		--platform "$PLATFORM" \
+		--cap-add PERFMON \
+		--security-opt seccomp=unconfined \
 		-v rivrs-linalg-workspace:/workspace \
 		-v rivrs-linalg-cargo-cache:/home/node/.cargo/registry \
 		-v rivrs-linalg-sccache-cache:/home/node/.cache/sccache \
@@ -70,7 +72,7 @@ else
 		-e RUSTFLAGS="-C target-cpu=native" \
 		-e CARGO_BUILD_JOBS=8 \
 		-e RUSTC_WRAPPER=sccache \
-    	-e "TERM=${TERM:-xterm-256color}" \
+		-e "TERM=${TERM:-xterm-256color}" \
 		--cpus=8 \
 		--memory=16g \
 		rivrs-linalg:latest \

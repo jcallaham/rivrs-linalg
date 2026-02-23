@@ -1,5 +1,167 @@
 # SSIDS Development Log
 
+## Phase 9.1c: Assembly & Extraction Optimization + Profiling
+
+**Status**: Complete
+**Branch**: `022-assembly-extraction-opt`
+**Date**: 2026-02-22
+
+### What Was Built
+
+Three optimization tiers for assembly and extraction in the multifrontal
+factorization loop, plus sub-phase timing instrumentation for bottleneck
+identification:
+
+**Precomputed scatter maps:**
+
+- `AssemblyMaps` struct with per-supernode `amap_entries` (4-tuple format:
+  src_csc_index, dest_frontal_linear, scale_row, scale_col) and per-child
+  `ea_map` (extend-add row mappings for zero-delay case)
+- `build_assembly_maps()` computed at factorization time (after amalgamation)
+- `extend_add_mapped()` uses precomputed row mapping instead of `global_to_local`
+- Fast path in `factor_single_supernode`: zero-delay supernodes use amap
+  scatter, delayed supernodes fall back to `scatter_original_entries_multi`
+
+**Bulk column-slice copies:**
+
+- `extract_contribution`: `col_as_slice` + `copy_from_slice` per column
+  (was element-by-element `data[(i, j)]` indexing)
+- `extract_front_factors`: same pattern for L11, D11, L21 extraction
+
+**Optimized frontal matrix zeroing**
+
+- `zero_frontal`: per-column `col_as_slice_mut(j)[j..m].fill(0.0)`
+  (was nested loop with `data[(i, j)] = 0.0`)
+
+**Sub-phase timing instrumentation (diagnostic feature):**
+
+- 6 new `Duration` fields on `PerSupernodeStats`: zero_time, g2l_time,
+  scatter_time, extend_add_time, extract_factors_time, extract_contrib_time
+- Corresponding aggregate fields on `FactorizationStats`
+- `profile_matrix` example displays sub-phase breakdown
+- Zero overhead when `diagnostic` feature is not enabled
+
+### Key Results
+
+**SPRAL comparison (sequential, single thread):**
+- c-71: 2.48× (was 4.06× in 9.1b) — **38% absolute speedup**
+- c-big: 4.00× (was 4.19× in 9.1b) — modest improvement
+- All 65/65 SuiteSparse matrices pass strict backward error < 5e-11
+
+**Sub-phase profiling (c-71):**
+- ExtractContr: 40.1%, Extend-add: 33.3%, Kernel: 23.1%
+- Scatter: 0.1%, Zeroing: 1.1%, ExtractFactors: 0.2%
+- **73.4% of factor time is contribution extraction + extend-add**
+
+**`perf stat` hardware analysis (c-71):**
+- IPC: 1.43 (memory-bound, not compute-bound)
+- 644B dTLB misses (TLB thrashing from large short-lived allocations)
+- 3.1s sys time = 32% of wall time (mmap/munmap/page-fault handling)
+- 934K page faults (thousands of multi-MB contribution blocks)
+
+**Root cause identified**: `extract_contribution` allocates `Mat::zeros(size, size)`
+per supernode (max ~49MB for c-71). The contribution block copy is the dominant
+bottleneck — not the assembly operations originally targeted.
+
+### Key Decisions
+
+- **Keep scatter maps**: Despite scatter being only 0.1% of factor time,
+  the maps also enable `extend_add_mapped()` for the zero-delay fast path
+- **Sub-phase timing over coarse timing**: Breaking assembly into zeroing +
+  g2l + scatter + extend-add, and extraction into extract_factors +
+  extract_contrib, was essential for identifying the real bottleneck
+- **Docker perf permissions**: Added CAP_PERFMON + CAP_SYS_ADMIN +
+  seccomp=unconfined to run.sh/docker-compose.yml/devcontainer.json;
+  `perf_event_paranoid=-1` must be set on the HOST kernel
+
+### Next Steps
+
+Phase 9.1d: Contribution workspace reuse — pre-allocate a contribution
+`Mat<f64>` on `FactorizationWorkspace` and/or restructure the factorization
+loop for direct extend-add from the frontal workspace. See `ssids-plan.md`
+Phase 9.1d and `docs/phase9/phase-9.1c-profiling-report.md`.
+
+### Performance benchmarks
+
+```bash
+cargo run --example spral_benchmark --release -- --threads 1 --rivrs
+```
+
+```
+=== Comparison: SPRAL vs rivrs (threads=1) ===
+Matrix                                     n  spral_fac  rivrs_fac   ratio   spral_be   rivrs_be
+----------------------------------------------------------------------------------------------------
+BenElechi/BenElechi1                  245874      1.070      1.147    1.07    6.2e-19    5.8e-19
+Koutsovasilis/F2                       71505      0.377      0.375    1.00    9.7e-19    9.8e-19
+PARSEC/H2O                             67024     27.969     31.117    1.11    1.5e-18    1.3e-18
+PARSEC/Si10H16                         17077      2.082      2.069    0.99    4.5e-17    7.1e-17
+PARSEC/Si5H12                          19896      3.124      4.191    1.34    1.8e-17    2.6e-18
+PARSEC/SiNa                             5743      0.203      0.174    0.86    7.5e-18    3.6e-18
+Newman/astro-ph                        16706      0.689      0.360    0.52     8.9e-9    7.2e-17
+Boeing/bcsstk39                        46772      0.130      0.138    1.06    2.6e-18    2.2e-18
+GHS_indef/bloweybq                     10001      0.002      0.005    2.09    1.6e-18    1.7e-18
+GHS_indef/copter2                      55476      0.457      0.372    0.81    1.2e-15    2.1e-16
+Boeing/crystk02                        13965      0.085      0.078    0.92    1.9e-18    1.9e-18
+Boeing/crystk03                        24696      0.204      0.180    0.88    1.4e-18    1.3e-18
+GHS_indef/dawson5                      51537      0.118      0.111    0.94    3.8e-16    8.8e-17
+GHS_indef/dixmaanl                     60000      0.014      0.034    2.44    3.0e-18    1.8e-18
+Oberwolfach/filter3D                  106437      0.351      0.346    0.99    6.2e-19    6.2e-19
+Oberwolfach/gas_sensor                 66917      0.559      0.509    0.91    8.0e-19    6.8e-19
+GHS_indef/helm3d01                     32226      0.173      0.148    0.86    6.3e-16    2.6e-16
+GHS_indef/linverse                     11999      0.003      0.007    2.21    7.4e-18    3.4e-18
+INPRO/msdoor                          415863      0.930      1.077    1.16    6.7e-19    6.5e-19
+ND/nd3k                                 9000      0.739      0.716    0.97    5.4e-18    2.7e-18
+Boeing/pwtk                           217918      0.926      0.927    1.00    4.4e-19    4.2e-19
+Cunningham/qa8fk                       66127      0.556      0.552    0.99    8.1e-19    7.4e-19
+Oberwolfach/rail_79841                 79841      0.037      0.075    2.02    5.9e-19    6.2e-19
+GHS_indef/sparsine                     50000     31.865     31.631    0.99    8.4e-15    2.7e-15
+GHS_indef/spmsrtls                     29995      0.007      0.032    4.53    1.0e-17    3.3e-18
+Oberwolfach/t2dal                       4257      0.002      0.004    1.57    1.8e-18    1.8e-18
+Oberwolfach/t3dh                       79171      1.568      1.659    1.06    8.8e-19    7.6e-19
+Cote/vibrobox                          12328      0.052      0.043    0.83    3.1e-18    3.0e-18
+TSOPF/TSOPF_FS_b162_c1                 10798      0.027      0.035    1.29    3.6e-17    3.2e-17
+TSOPF/TSOPF_FS_b39_c7                  28216      0.025      0.036    1.44    1.2e-16    1.0e-16
+GHS_indef/aug3dcqp                     35543      0.069      0.083    1.20    8.4e-19    1.4e-18
+GHS_indef/blockqp1                     60012      0.033      0.056    1.73    9.0e-14    9.2e-14
+GHS_indef/bratu3d                      27792      0.174      0.137    0.79    7.3e-18    1.5e-18
+GHS_indef/c-71                         76638      2.400      9.177    3.82    8.3e-19    1.7e-18
+Schenk_IBMNA/c-big                    345241      8.407     34.727    4.13    1.3e-17    5.5e-18
+GHS_indef/cont-201                     80595      0.075      0.081    1.08    2.3e-18    1.7e-18
+GHS_indef/cont-300                    180895      0.202      0.235    1.16    1.9e-18    1.0e-18
+GHS_indef/cvxqp3                       17500      0.260      0.137    0.53    1.5e-13    1.3e-14
+GHS_indef/d_pretok                    182730      0.350      0.335    0.96    1.0e-18    9.4e-19
+GHS_indef/mario001                     38434      0.017      0.036    2.13    1.8e-18    1.6e-18
+GHS_indef/ncvxqp1                      12111      0.099      0.062    0.63    5.9e-16    1.3e-16
+GHS_indef/ncvxqp3                      75000      2.275      1.481    0.65    1.5e-13    5.4e-14
+GHS_indef/ncvxqp5                      62500      0.885      0.570    0.64    1.2e-15    2.1e-16
+GHS_indef/ncvxqp7                      87500      3.200      2.298    0.72    8.7e-14    3.7e-14
+GHS_indef/stokes128                    49666      0.071      0.073    1.03    9.8e-19    1.2e-18
+GHS_indef/turon_m                     189924      0.294      0.313    1.06    1.1e-18    2.1e-18
+AMD/G3_circuit                       1585478      2.247      3.079    1.37    2.7e-19    2.8e-19
+Schenk_AFE/af_0_k101                  503625      2.087      2.097    1.00    3.5e-19    3.3e-19
+Schenk_AFE/af_shell7                  504855      1.887      1.915    1.01    3.2e-19    3.2e-19
+GHS_psdef/apache2                     715176      4.900      4.880    1.00    1.7e-19    1.9e-19
+GHS_psdef/bmwcra_1                    148770      1.659      1.620    0.98    6.4e-19    6.0e-19
+Oberwolfach/boneS01                   127224      1.142      1.088    0.95    6.9e-19    6.7e-19
+Rothberg/cfd2                         123440      0.890      0.869    0.98    5.7e-19    5.4e-19
+GHS_psdef/crankseg_1                   52804      0.901      0.838    0.93    1.7e-17    2.4e-17
+GHS_psdef/crankseg_2                   63838      1.259      1.183    0.94    3.6e-18    1.4e-17
+GHS_psdef/inline_1                    503712      4.193      4.242    1.01    6.1e-19    4.2e-19
+GHS_psdef/ldoor                       952203      2.781      2.868    1.03    4.4e-19    3.8e-19
+ND/nd12k                               36000     12.894     12.175    0.94    2.9e-18    1.6e-18
+ND/nd6k                                18000      3.029      2.627    0.87    3.9e-18    2.1e-18
+Um/offshore                           259789      2.318      2.186    0.94    9.0e-19    7.1e-19
+DNVS/ship_003                         121728      2.314      2.081    0.90    5.3e-19    5.6e-19
+DNVS/shipsec1                         140874      1.082      1.060    0.98    7.7e-19    7.3e-19
+DNVS/shipsec5                         179860      1.889      1.629    0.86    6.3e-19    6.0e-19
+DNVS/shipsec8                         114919      1.298      1.002    0.77    9.3e-19    8.3e-19
+DNVS/thread                            29736      3.485      2.089    0.60    1.7e-18    1.7e-18
+
+65/65 completed successfully
+```
+
+---
+
 ## Phase 9.1b: Workspace Reuse & Per-Supernode Allocation Optimization
 
 **Status**: Complete

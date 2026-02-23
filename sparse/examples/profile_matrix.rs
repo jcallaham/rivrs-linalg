@@ -206,6 +206,52 @@ fn main() {
             factor_ms - accounted,
             (factor_ms - accounted) / factor_ms * 100.0,
         );
+
+        // Sub-phase breakdown
+        let zero_ms = stats.total_zero_time.as_secs_f64() * 1000.0;
+        let g2l_ms = stats.total_g2l_time.as_secs_f64() * 1000.0;
+        let scatter_ms = stats.total_scatter_time.as_secs_f64() * 1000.0;
+        let ea_ms = stats.total_extend_add_time.as_secs_f64() * 1000.0;
+        let exf_ms = stats.total_extract_factors_time.as_secs_f64() * 1000.0;
+        let exc_ms = stats.total_extract_contrib_time.as_secs_f64() * 1000.0;
+        eprintln!();
+        eprintln!("=== Sub-Phase Breakdown ===");
+        eprintln!(
+            "  Zeroing:      {:>10.2} ms  ({:>5.1}%)",
+            zero_ms,
+            zero_ms / factor_ms * 100.0
+        );
+        eprintln!(
+            "  G2L setup:    {:>10.2} ms  ({:>5.1}%)",
+            g2l_ms,
+            g2l_ms / factor_ms * 100.0
+        );
+        eprintln!(
+            "  Scatter:      {:>10.2} ms  ({:>5.1}%)",
+            scatter_ms,
+            scatter_ms / factor_ms * 100.0
+        );
+        eprintln!(
+            "  Extend-add:   {:>10.2} ms  ({:>5.1}%)",
+            ea_ms,
+            ea_ms / factor_ms * 100.0
+        );
+        eprintln!(
+            "  ExtractFactr: {:>10.2} ms  ({:>5.1}%)",
+            exf_ms,
+            exf_ms / factor_ms * 100.0
+        );
+        eprintln!(
+            "  ExtractContr: {:>10.2} ms  ({:>5.1}%)",
+            exc_ms,
+            exc_ms / factor_ms * 100.0
+        );
+        let sub_accounted = zero_ms + g2l_ms + scatter_ms + ea_ms + exf_ms + exc_ms + kern_ms;
+        eprintln!(
+            "  Other:        {:>10.2} ms  ({:>5.1}%)",
+            factor_ms - sub_accounted,
+            (factor_ms - sub_accounted) / factor_ms * 100.0
+        );
     }
 
     // --- Per-supernode top-N ---
