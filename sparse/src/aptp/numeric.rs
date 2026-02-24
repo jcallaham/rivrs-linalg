@@ -1506,6 +1506,15 @@ fn factor_tree_levelset(
     let max_front = estimate_max_front_size(supernodes);
     let mut shared_workspace = FactorizationWorkspace::new(max_front, n);
 
+    // Pool of workspaces for the parallel path. Each rayon worker takes a
+    // workspace from the pool, uses it, and returns it. Unlike `thread_local!`
+    // with `static` lifetime, the pool is dropped when `factor_tree_levelset`
+    // returns, freeing all workspace memory. This prevents OOM on matrices
+    // with large fronts (e.g. PARSEC/H2O: max_front=9258 → 685 MB per workspace)
+    // when `parallel_scaling` or similar tools run multiple factorizations.
+    let workspace_pool: std::sync::Mutex<Vec<FactorizationWorkspace>> =
+        std::sync::Mutex::new(Vec::new());
+
     // Initial ready set: all leaf supernodes (no children)
     let mut ready: Vec<usize> = (0..n_supernodes)
         .filter(|&s| remaining_children[s] == 0)
@@ -1547,27 +1556,24 @@ fn factor_tree_levelset(
                     })
                     .collect::<Result<_, _>>()?
             } else {
-                // Parallel: use thread-local workspace so each rayon worker
-                // allocates once and reuses across all waves/supernodes.
-                // We use Cell::take/set (move semantics) instead of RefCell
-                // because factor_single_supernode may invoke rayon-parallel
-                // BLAS (Par::rayon) which can work-steal other tasks from
-                // this par_iter onto the same thread, causing re-entrant
-                // borrow panics with RefCell.
+                // Parallel: take workspaces from the caller-owned pool so each
+                // rayon worker gets exclusive ownership during factorization.
+                // The pool is reused across level-set waves and dropped when
+                // factor_tree_levelset returns (unlike thread_local! which leaks
+                // for the lifetime of the rayon thread pool).
+                //
+                // If rayon work-steals another par_iter task onto the same thread
+                // (due to nested Par::rayon BLAS), that task takes a separate
+                // workspace from the pool — no aliasing.
                 use rayon::iter::{IntoParallelIterator, ParallelIterator};
-                use std::cell::Cell;
-                thread_local! {
-                    static FACTOR_WORKSPACE: Cell<FactorizationWorkspace> =
-                        const { Cell::new(FactorizationWorkspace::empty()) };
-                }
                 batch_inputs
                     .into_par_iter()
                     .map(|(s, contribs)| {
-                        // Take the workspace out of thread-local (leaves empty behind).
-                        // If another task on this thread runs while we hold the workspace
-                        // (rayon work-stealing during nested parallelism), it will get
-                        // an empty workspace, resize it, and put it back when done.
-                        let mut ws = FACTOR_WORKSPACE.take();
+                        let mut ws = workspace_pool
+                            .lock()
+                            .unwrap()
+                            .pop()
+                            .unwrap_or_else(FactorizationWorkspace::empty);
                         ws.ensure_capacity(max_front, n);
                         let result = factor_single_supernode(
                             s,
@@ -1581,8 +1587,7 @@ fn factor_tree_levelset(
                             &mut ws,
                             assembly_maps,
                         );
-                        // Put workspace back for reuse by the next task on this thread.
-                        FACTOR_WORKSPACE.set(ws);
+                        workspace_pool.lock().unwrap().push(ws);
                         result
                     })
                     .collect::<Result<_, _>>()?
