@@ -2941,6 +2941,26 @@ commitment to implement.
    scatter), which determines whether per-node storage or scatter optimization
    is the right approach.
 
+6. **Allocator-level memory management**: Profiling of H2O (max_front=9258,
+   53 supernodes) revealed that glibc malloc fragmentation prevents page
+   return to OS after factorization — peak RSS 5.9 GB drops to only 4.5 GB
+   on solver drop without `malloc_trim(0)`. With `malloc_trim`, RSS drops
+   to 367 MB (correct). This creates OOM risk when refactoring or running
+   multiple factorizations. Options to investigate:
+   - **jemalloc** (via `tikv-jemallocator` crate): better page return
+     heuristics, transparent drop-in replacement, widely used in Rust
+     (Firefox, tikv, many CLI tools). May improve peak memory behavior
+     without code changes.
+   - **Arena allocation for front_factors**: allocate all per-supernode L, D
+     storage from a contiguous buffer (bumpalo or custom). Eliminates
+     fragmentation from interleaved small allocations. Matches SPRAL's
+     AppendAlloc pattern. Would also improve cache locality during solve.
+   - **malloc_trim at strategic points**: lightweight workaround (already
+     used in parallel_scaling). Could be called after factor() in the
+     solver API, but glibc-specific and doesn't fix the root cause.
+   - Immediate mitigation: `self.numeric = None` before refactoring
+     (already implemented) halves peak by avoiding old+new coexistence.
+
 **SPRAL references:**
 - `AppendAlloc.hxx:18-82` — bump allocator (calloc, AVX-aligned, never freed
   during factorization, bulk freed on completion)
