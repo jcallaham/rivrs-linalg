@@ -156,14 +156,12 @@ impl FactorizationWorkspace {
         }
     }
 
-    /// Ensure workspace capacity is at least `max_front × max_front` for frontal
-    /// data and `n` for global-to-local mapping. Grows buffers if needed.
-    fn ensure_capacity(&mut self, max_front: usize, n: usize) {
-        if self.frontal_data.nrows() < max_front || self.frontal_data.ncols() < max_front {
-            self.frontal_data = Mat::zeros(max_front, max_front);
-        }
-        // contrib_buffer is NOT pre-allocated here — it grows lazily in
-        // factor_single_supernode and is recycled via extend_add buffer return.
+    /// Ensure `global_to_local` mapping is at least `n` entries.
+    ///
+    /// Used by the parallel path where frontal_data grows on demand in
+    /// `factor_single_supernode` (avoiding eager max_front² allocation
+    /// per thread that causes OOM on large-front matrices like H2O).
+    fn ensure_g2l(&mut self, n: usize) {
         if self.global_to_local.len() < n {
             self.global_to_local.resize(n, NOT_IN_FRONT);
         }
@@ -1574,7 +1572,11 @@ fn factor_tree_levelset(
                             .unwrap()
                             .pop()
                             .unwrap_or_else(FactorizationWorkspace::empty);
-                        ws.ensure_capacity(max_front, n);
+                        // Only ensure global_to_local is sized; frontal_data
+                        // grows on demand in factor_single_supernode. Avoids
+                        // eagerly allocating max_front² per thread (OOM on
+                        // large-front matrices like H2O: 9258² × 8 = 685 MB).
+                        ws.ensure_g2l(n);
                         let result = factor_single_supernode(
                             s,
                             &supernodes[s],
