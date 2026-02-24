@@ -408,9 +408,9 @@ unit tests of the symbolic analysis and factorization kernel on small matrices.
 - Phase 9.2: Release preparation (docs, examples, crates.io)
 
 ## Recent Changes
+- 024-direct-gemm-contrib: Added Rust 1.87+ (edition 2024) + faer 0.22 (dense LA, CSC, `tri_matmul`, `matmul`), rayon 1.x (parallel tree traversal), serde/serde_json (diagnostic export)
+- 024-direct-gemm-contrib: Added Rust 1.87+ (edition 2024) + faer 0.22 (dense LA, CSC), rayon 1.x (parallel tree traversal), serde/serde_json (diagnostic export)
 - 022-assembly-extraction-opt: Added Rust 1.87+ (edition 2024) + faer 0.22 (existing — no new deps)
-- 021-workspace-reuse: Added N/A (internal optimization; no new technologies)
 
 ## Active Technologies
-- Rust 1.87+ (edition 2024) + faer 0.22, rayon 1.x, serde/serde_json (diagnostic export) (022-assembly-extraction-opt)
-- N/A (internal optimization; no new technologies) (021-workspace-reuse)
+- Rust 1.87+ (edition 2024) + faer 0.22 (dense LA, CSC, `tri_matmul`, `matmul`), rayon 1.x (parallel tree traversal), serde/serde_json (diagnostic export) (024-direct-gemm-contrib)
