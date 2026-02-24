@@ -3256,11 +3256,7 @@ mod tests {
         assert!(!supernodes[5].in_small_leaf);
         // All others are
         for (s, sn) in supernodes.iter().enumerate().take(5) {
-            assert!(
-                sn.in_small_leaf,
-                "snode {} should be in_small_leaf",
-                s
-            );
+            assert!(sn.in_small_leaf, "snode {} should be in_small_leaf", s);
         }
     }
 }
