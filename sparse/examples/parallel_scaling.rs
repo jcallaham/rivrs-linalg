@@ -111,6 +111,7 @@ fn main() {
         let mut max_front = 0;
         let mut num_supernodes = 0;
 
+        let rss_before = rivrs_sparse::benchmarking::read_peak_rss_kb();
         for &nthreads in &thread_counts {
             let par = if nthreads <= 1 {
                 Par::Seq
@@ -193,7 +194,28 @@ fn main() {
                 solve_efficiency: solve_speedup / effective_threads,
             });
 
+            // Log current RSS before dropping solver
+            let rss_with_solver =
+                rivrs_sparse::benchmarking::read_current_rss_kb().unwrap_or(0);
             eprint!("T{}:{:.1}ms ", nthreads, factor_ms);
+
+            // Drop solver explicitly and measure RSS delta
+            drop(solver);
+            let rss_after_drop =
+                rivrs_sparse::benchmarking::read_current_rss_kb().unwrap_or(0);
+            if rss_with_solver > 100_000 {
+                eprint!(
+                    "[rss:{}→{}MB] ",
+                    rss_with_solver / 1024,
+                    rss_after_drop / 1024
+                );
+            }
+        }
+        let rss_end = rivrs_sparse::benchmarking::read_current_rss_kb().unwrap_or(0);
+        if let Some(before) = rss_before {
+            if rss_end > 100_000 || before > 100_000 {
+                eprint!("[matrix rss:{}→{}MB] ", before / 1024, rss_end / 1024);
+            }
         }
         eprintln!();
 
