@@ -290,6 +290,10 @@ impl SparseLDLT {
             ..AptpOptions::default()
         };
 
+        // Drop old numeric before building new one to avoid holding both
+        // in memory simultaneously. For H2O (max_front=9258), old+new
+        // front_factors can exceed 7 GB.
+        self.numeric = None;
         let numeric = AptpNumeric::factor(
             &self.symbolic,
             matrix,
