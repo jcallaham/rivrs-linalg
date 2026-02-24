@@ -199,8 +199,20 @@ fn main() {
                 rivrs_sparse::benchmarking::read_current_rss_kb().unwrap_or(0);
             eprint!("T{}:{:.1}ms ", nthreads, factor_ms);
 
-            // Drop solver explicitly and measure RSS delta
+            // Drop solver explicitly and force glibc to return freed pages to OS.
+            // Without malloc_trim, glibc holds freed pages in its arena — for H2O
+            // (5.9 GB peak), only ~1.3 GB is returned on drop, leaving 4.5 GB of
+            // unreturned-but-freed memory that causes OOM on the next thread count.
             drop(solver);
+            #[cfg(target_os = "linux")]
+            {
+                unsafe extern "C" {
+                    fn malloc_trim(pad: usize) -> i32;
+                }
+                unsafe {
+                    malloc_trim(0);
+                }
+            }
             let rss_after_drop =
                 rivrs_sparse::benchmarking::read_current_rss_kb().unwrap_or(0);
             if rss_with_solver > 100_000 {
