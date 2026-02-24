@@ -1,5 +1,55 @@
 # SSIDS Development Log
 
+## Phase 9.1f: Small Leaf Subtree Fast Path
+
+**Status**: Complete (pending workstation benchmarking)
+**Branch**: `025-small-leaf-fastpath`
+**Date**: 2026-02-24
+
+### What Was Built
+
+Classified leaf subtrees where all supernodes have front_size < 256 and process
+them via a streamlined pre-pass before the main level-set loop. Each small-leaf
+subtree uses a dedicated small workspace (bounded by threshold² = 512KB, fits in
+L2 cache) rather than the full-sized general workspace. Sequential processing
+within the subtree avoids parallel dispatch overhead and maintains cache locality.
+
+**Classification** (`numeric.rs:classify_small_leaf_subtrees`):
+- O(n_supernodes) bottom-up pass after amalgamation
+- Marks `in_small_leaf: bool` on `SupernodeInfo`
+- Identifies subtree roots (in_small_leaf with non-in_small_leaf parent)
+- Collects descendants in postorder via iterative DFS
+- Filters subtrees with < 2 nodes
+- Configurable via `FactorOptions::small_leaf_threshold` (default 256, 0 = disabled)
+
+**Fast-path pre-pass** (`numeric.rs:factor_tree_levelset`):
+- Before the main level-set loop, iterates each `SmallLeafSubtree`
+- Allocates a small `FactorizationWorkspace` per subtree (max_front bounded)
+- Processes each node via existing `factor_single_supernode()` in postorder
+- Stores results and root contributions in global vectors
+- Decrements `remaining_children` for subtree root parents
+- Main level-set loop skips `in_small_leaf` nodes in its initial ready set
+
+**New types**: `SmallLeafSubtree` (root, nodes, max_front_size, parent_of_root)
+
+**Configuration**: `FactorOptions::small_leaf_threshold` / `SolverOptions::small_leaf_threshold`
+
+### Tests Added
+
+- 6 unit tests for classification: all_small, mixed_tree, single_node_excluded,
+  threshold_boundary, disabled, multiple_subtrees
+- 6 integration tests for fast-path factorization: small_chain, matches_general,
+  delayed_pivots, contribution_boundary, mc64_scaling, suitesparse_ci (10 matrices)
+- All 498 tests pass (both default and diagnostic features)
+
+### Workstation Validation Pending
+
+- Full 65-matrix SuiteSparse correctness: `cargo test -- --ignored --test-threads=1`
+- Baseline comparison for simplicial matrices (dixmaanl, bloweybq, mario001)
+- Performance validation: simplicial matrices should be ≤1.5× SPRAL
+
+---
+
 ## Phase 9.1e: Direct GEMM into Contribution Buffer
 
 **Status**: Complete

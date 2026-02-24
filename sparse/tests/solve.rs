@@ -1580,7 +1580,7 @@ fn test_fast_path_small_chain() {
     }
     let matrix = sparse_from_lower_triplets(n, &entries);
 
-    let x_vec: Vec<f64> = (0..n).map(|i| ((i % 5) as f64 - 2.0)).collect();
+    let x_vec: Vec<f64> = (0..n).map(|i| (i % 5) as f64 - 2.0).collect();
     let b_vec = sparse_matvec(&matrix, &x_vec);
     let b = Col::from_fn(n, |i| b_vec[i]);
 
@@ -1634,8 +1634,7 @@ fn test_fast_path_matches_general() {
         small_leaf_threshold: 0,
         ..SolverOptions::default()
     };
-    let x_disabled =
-        SparseLDLT::solve_full(&matrix, &b, &opts_disabled).expect("solve (disabled)");
+    let x_disabled = SparseLDLT::solve_full(&matrix, &b, &opts_disabled).expect("solve (disabled)");
     let be_disabled = sparse_backward_error(&matrix, &x_disabled, &b);
 
     assert!(
@@ -1658,7 +1657,11 @@ fn test_fast_path_delayed_pivots() {
     let mut entries = Vec::new();
     for i in 0..n {
         // Some zero diagonals to force pivoting issues
-        let diag = if i % 3 == 0 { 0.0 } else { 3.0 * if i % 2 == 0 { 1.0 } else { -1.0 } };
+        let diag = if i % 3 == 0 {
+            0.0
+        } else {
+            3.0 * if i % 2 == 0 { 1.0 } else { -1.0 }
+        };
         entries.push((i, i, diag));
     }
     // Off-diagonal structure
@@ -1670,7 +1673,7 @@ fn test_fast_path_delayed_pivots() {
     }
     let matrix = sparse_from_lower_triplets(n, &entries);
 
-    let x_vec: Vec<f64> = (0..n).map(|i| (i as f64 + 1.0)).collect();
+    let x_vec: Vec<f64> = (0..n).map(|i| i as f64 + 1.0).collect();
     let b_vec = sparse_matvec(&matrix, &x_vec);
     let b = Col::from_fn(n, |i| b_vec[i]);
 
@@ -1777,12 +1780,14 @@ fn test_fast_path_mc64_scaling() {
     assert!(
         be_enabled < 5e-11,
         "'{}' fast path+MC64: backward error {:.2e}",
-        meta.name, be_enabled
+        meta.name,
+        be_enabled
     );
     assert!(
         be_disabled < 5e-11,
         "'{}' general+MC64: backward error {:.2e}",
-        meta.name, be_disabled
+        meta.name,
+        be_disabled
     );
 }
 
@@ -1820,7 +1825,8 @@ fn test_fast_path_suitesparse_ci() {
             small_leaf_threshold: 256,
             ..SolverOptions::default()
         };
-        let x = SparseLDLT::solve_full(a, &b, &opts).expect(&format!("solve '{}'", meta.name));
+        let x = SparseLDLT::solve_full(a, &b, &opts)
+            .unwrap_or_else(|e| panic!("solve '{}': {}", meta.name, e));
         let be = sparse_backward_error(a, &x, &b);
         assert!(
             be < 5e-11,

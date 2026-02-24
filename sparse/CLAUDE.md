@@ -8,7 +8,7 @@ This directory contains sparse linear algebra solver implementations for rivrs-l
 
 **Parent Project**: rivrs-linalg - Numerical Linear Algebra for Rivrs
 **Domain**: Sparse direct solvers (SSIDS, LDL^T factorization, APTP pivoting)
-**Current Status**: Phase 9.1e complete — direct GEMM into contribution buffer (SPRAL-style architecture). Extraction copy eliminated (40.1% → 0.0% of factor time). c-71: 2.16× SPRAL (was 2.53×), c-big: 2.30× (was 4.11×), median: 0.98× (rivrs faster than SPRAL on median matrix). 33/65 matrices beat SPRAL. Remaining bottleneck: extend-add scatter (49.6%) from shared-workspace architecture. 65/65 SuiteSparse matrices passing.
+**Current Status**: Phase 9.1f complete — small leaf subtree fast path. Classifies leaf subtrees where all fronts < 256 and factors them via a pre-pass with dedicated small workspace (≤512KB, L2-cache-resident). Configurable via `FactorOptions::small_leaf_threshold` (default 256, 0 = disabled). 65/65 SuiteSparse CI-subset matrices passing. Workstation benchmarking pending for simplicial matrix speedup validation.
 
 ### Development docs
 
@@ -402,16 +402,18 @@ unit tests of the symbolic analysis and factorization kernel on small matrices.
 - Phase 9.1b: Workspace reuse — Two-tier pre-allocated workspace (FactorizationWorkspace in numeric.rs, AptpKernelWorkspace in factor.rs). FrontalMatrix changed from owned to borrowed types. Thread-local workspace via Cell for parallel path. CI subset: median 1.16× factor speedup, 24% RSS reduction, bit-exact backward errors.
 - Phase 9.1c: Assembly & extraction optimization — Precomputed scatter maps (AssemblyMaps), bulk column-slice copies, fill(0.0) zeroing, sub-phase timing instrumentation. c-71: 4.06×→2.48× SPRAL. Sub-phase profiling identified contribution block allocation as dominant bottleneck (extract_contrib 40.1% + extend-add 33.3% of factor time). perf stat: 644B dTLB misses, 3.1s/32% sys time from mmap churn.
 - Phase 9.1e: Direct GEMM into contribution buffer — Deferred NFS×NFS Schur complement to single post-loop GEMM into pre-allocated buffer. Extraction copy eliminated (40.1%→0.0%). c-71: 2.53×→2.16× SPRAL, c-big: 4.11×→2.30×, median: 0.98× (33/65 beat SPRAL). Remaining bottleneck: extend-add scatter (49.6%) from shared-workspace architecture.
+- Phase 9.1f: Small leaf subtree fast path — Classify leaf subtrees where all fronts < 256, factor via pre-pass with dedicated small workspace (≤512KB). `classify_small_leaf_subtrees()` + pre-pass in `factor_tree_levelset()`. `FactorOptions::small_leaf_threshold` (default 256, 0 = disabled). 12 new tests. Files: `src/aptp/numeric.rs` (classification, pre-pass), `src/aptp/solver.rs` (threshold config), `src/aptp/factor.rs` (AptpOptions field).
 
 **Next:**
-- Phase 9.1f: Small leaf subtree fast path
+- Phase 9.1g: Per-node factor storage feasibility investigation
 - Phase 9.1g: Per-node factor storage feasibility investigation (extend-add + zeroing overhead)
 - Phase 9.2: Release preparation (docs, examples, crates.io)
 
 ## Recent Changes
+- 025-small-leaf-fastpath: Added Rust 1.87+ (edition 2024) + faer 0.22 (dense LA, CSC), rayon 1.x (parallelism), serde/serde_json (diagnostic export)
 - 024-direct-gemm-contrib: Added Rust 1.87+ (edition 2024) + faer 0.22 (dense LA, CSC, `tri_matmul`, `matmul`), rayon 1.x (parallel tree traversal), serde/serde_json (diagnostic export)
 - 024-direct-gemm-contrib: Added Rust 1.87+ (edition 2024) + faer 0.22 (dense LA, CSC), rayon 1.x (parallel tree traversal), serde/serde_json (diagnostic export)
-- 022-assembly-extraction-opt: Added Rust 1.87+ (edition 2024) + faer 0.22 (existing — no new deps)
 
 ## Active Technologies
-- Rust 1.87+ (edition 2024) + faer 0.22 (dense LA, CSC, `tri_matmul`, `matmul`), rayon 1.x (parallel tree traversal), serde/serde_json (diagnostic export) (024-direct-gemm-contrib)
+- Rust 1.87+ (edition 2024) + faer 0.22 (dense LA, CSC), rayon 1.x (parallelism), serde/serde_json (diagnostic export) (025-small-leaf-fastpath)
+- N/A (in-memory numerical computation) (025-small-leaf-fastpath)

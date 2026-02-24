@@ -2840,43 +2840,17 @@ Post-9.1e bottleneck (c-71): extend-add 49.6%, ContribGEMM 37.1%, zeroing 7.4%.
 The remaining gap vs SPRAL is the shared-workspace architecture (extend-add scatter
 + zeroing overhead). See 9.1g for per-node storage investigation.
 
-*9.1f: Small leaf subtree fast path*
+*9.1f: Small leaf subtree fast path* — **COMPLETE** (branch `025-small-leaf-fastpath`)
 
-**Motivation** (from post-9.1b profiling):
+Classifies leaf subtrees where all supernodes have front_size < 256 and processes
+them via a pre-pass with dedicated small workspace (≤512KB, L2-cache-resident).
+Sequential processing avoids parallel dispatch overhead and maintains cache locality.
 
-Simplicial matrices (dixmaanl, mario001, bloweybq, linverse, spmsrtls,
-rail_79841) remain 1.5-3.3× slower than SPRAL despite amalgamation and workspace
-reuse. These matrices produce many tiny supernodes (max_front < 100) where the
-full frontal matrix machinery is disproportionately expensive.
+Implementation: `classify_small_leaf_subtrees()` + pre-pass in `factor_tree_levelset()`.
+Configuration: `FactorOptions::small_leaf_threshold` (default 256, 0 = disabled).
+Tests: 12 new tests (6 classification unit + 6 fast-path integration). All 498 pass.
 
-dixmaanl profile: max_front=68, 1,605 supernodes, 23.3% unaccounted time
-(per-supernode overhead on tiny fronts). First supernode alone takes 6.6ms
-(18.3% of total 47ms factor time) — likely first-use/setup overhead.
-
-**SPRAL's approach**: `SmallLeafNumericSubtree` processes leaf subtrees without
-full frontal matrix assembly:
-- Operates on subtrees where all supernodes are below a size threshold
-- Uses simplified assembly (direct scatter from original matrix entries)
-- Avoids the extend_add → frontal → extract_contribution round-trip
-- Sequential processing within each leaf subtree
-
-**Implementation plan**:
-1. Identify leaf subtrees where all supernodes have front_size < threshold
-   (e.g., 256, matching INTRA_NODE_THRESHOLD)
-2. Implement a simplified factorization path for these subtrees that avoids
-   full frontal matrix allocation and contribution block copying
-3. Benchmark against full-machinery path on simplicial matrices
-
-SPRAL references:
-- `SmallLeafSymbolicSubtree.hxx:18-109` — leaf subtree identification and
-  symbolic setup (threshold-based classification)
-- `SmallLeafNumericSubtree.hxx:38-220` — sequential factorization without
-  full frontal matrices (simplified assembly, no contribution block copy)
-- `NumericSubtree.hxx:53-89` — threshold selection and subtree classification
-
-Expected impact: 1.5-2× speedup on simplicial matrices, bringing dixmaanl,
-mario001, etc. within 1.5× of SPRAL. Limited impact on bulk FEM or large
-supernodal matrices (they don't hit this path).
+Workstation benchmarking pending — expected 1.5-2× speedup on simplicial matrices.
 
 *9.1g: Per-node factor storage feasibility investigation*
 
