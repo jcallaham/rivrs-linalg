@@ -368,7 +368,13 @@ pub fn aptp_factor_in_place(
     } else if num_fully_summed > options.outer_block_size {
         two_level_factor(a.rb_mut(), num_fully_summed, options, &mut kernel_ws)?
     } else {
-        factor_inner(a.rb_mut(), num_fully_summed, options, &mut kernel_ws)?
+        factor_inner(
+            a.rb_mut(),
+            num_fully_summed,
+            num_fully_summed,
+            options,
+            &mut kernel_ws,
+        )?
     };
 
     // Fallback: TPP on remaining columns
@@ -1427,11 +1433,12 @@ fn apply_and_check(
 /// Uses explicit W = L21 * D11 workspace, then A -= W * L21^T (GEMM).
 #[allow(clippy::too_many_arguments)]
 fn update_trailing(
-    a: MatMut<'_, f64>,
+    mut a: MatMut<'_, f64>,
     col_start: usize,
     nelim: usize,
     block_cols: usize,
     m: usize,
+    num_fully_summed: usize,
     d: &MixedDiagonal,
     par: Par,
     ld_buf: &mut Mat<f64>,
@@ -1447,7 +1454,12 @@ fn update_trailing(
         return;
     }
 
-    // Compute W = L21 * D11 using workspace buffer (trailing_size × nelim subview)
+    // p = num_fully_summed boundary: rows [trailing_start..p] are FS, [p..m] are NFS.
+    let p = num_fully_summed;
+
+    // Compute W = L21 * D11 using workspace buffer (trailing_size × nelim subview).
+    // We compute W for ALL trailing rows (FS + NFS) since the FS×FS region (region 1)
+    // and the NFS×FS cross-term (region 2) both need it.
     let mut w = ld_buf.as_mut().submatrix_mut(0, 0, trailing_size, nelim);
     let mut col = 0;
     while col < nelim {
@@ -1475,7 +1487,6 @@ fn update_trailing(
         }
     }
 
-    // GEMM: A22 -= W * L21^T (lower triangle only)
     // Copy L21 into workspace buffer to avoid borrow conflict (L21 and A22 overlap in `a`)
     {
         let src = a
@@ -1484,23 +1495,51 @@ fn update_trailing(
         let mut dst = copy_buf.as_mut().submatrix_mut(0, 0, trailing_size, nelim);
         dst.copy_from(src);
     }
-    let l21_ref = copy_buf.as_ref().submatrix(0, 0, trailing_size, nelim);
-    let w_ref = ld_buf.as_ref().submatrix(0, 0, trailing_size, nelim);
-    let mut a22 = a.submatrix_mut(trailing_start, trailing_start, trailing_size, trailing_size);
 
-    tri_matmul::matmul_with_conj(
-        a22.rb_mut(),
-        BlockStructure::TriangularLower,
-        Accum::Add,
-        w_ref,
-        BlockStructure::Rectangular,
-        Conj::No,
-        l21_ref.transpose(),
-        BlockStructure::Rectangular,
-        Conj::No,
-        -1.0,
-        par,
-    );
+    // Region 1 (FS×FS): Lower-triangular GEMM on A[ts..p, ts..p]
+    let fs_size = p.saturating_sub(trailing_start);
+    if fs_size > 0 {
+        let w_fs = ld_buf.as_ref().submatrix(0, 0, fs_size, nelim);
+        let l21_fs = copy_buf.as_ref().submatrix(0, 0, fs_size, nelim);
+        let mut a_fs = a
+            .rb_mut()
+            .submatrix_mut(trailing_start, trailing_start, fs_size, fs_size);
+
+        tri_matmul::matmul_with_conj(
+            a_fs.rb_mut(),
+            BlockStructure::TriangularLower,
+            Accum::Add,
+            w_fs,
+            BlockStructure::Rectangular,
+            Conj::No,
+            l21_fs.transpose(),
+            BlockStructure::Rectangular,
+            Conj::No,
+            -1.0,
+            par,
+        );
+    }
+
+    // Region 2 (NFS×FS cross-term): Rectangular GEMM on A[p..m, ts..p]
+    let nfs_size = m - p;
+    if nfs_size > 0 && fs_size > 0 {
+        let w_nfs = ld_buf.as_ref().submatrix(fs_size, 0, nfs_size, nelim);
+        let l21_fs = copy_buf.as_ref().submatrix(0, 0, fs_size, nelim);
+        let mut a_cross = a.submatrix_mut(p, trailing_start, nfs_size, fs_size);
+
+        faer::linalg::matmul::matmul_with_conj(
+            a_cross.rb_mut(),
+            Accum::Add,
+            w_nfs,
+            Conj::No,
+            l21_fs.transpose(),
+            Conj::No,
+            -1.0,
+            par,
+        );
+    }
+
+    // Region 3 (NFS×NFS): SKIPPED — deferred to compute_contribution_gemm
 }
 
 /// Compute W = L * D for a set of rows, where L and D come from the factored block.
@@ -1541,6 +1580,92 @@ fn compute_ld_into(l: MatRef<'_, f64>, d: &MixedDiagonal, nelim: usize, mut dst:
             }
         }
     }
+}
+
+/// Compute the NFS×NFS Schur complement via a single deferred GEMM.
+///
+/// Called after the BLAS-3 blocking loop (which skips the NFS×NFS region).
+/// Copies the assembled NFS×NFS values from `frontal_data[p..m, p..m]` into
+/// `contrib_buffer`, then applies the rank-`ne` symmetric update in-place:
+///
+/// ```text
+/// contrib_buffer[0..nfs, 0..nfs] = assembled[NFS×NFS] - L21_NFS * D * L21_NFS^T
+/// ```
+///
+/// where `L21_NFS = frontal_data[p..m, 0..ne]` and `D` is the accumulated
+/// diagonal from the blocking loop. The output is the lower triangle of the
+/// Schur complement.
+///
+/// # Guard conditions
+///
+/// - `nfs == 0`: no contribution (root or fully eliminated), returns immediately
+/// - `ne == 0`: no rank update (copy only — all columns were delayed)
+///
+/// # SPRAL Equivalent
+///
+/// `host_gemm` writing to `node.contrib` in `factor.hxx:92-103` (BSD-3).
+///
+/// # References
+///
+/// - Duff, Hogg & Lopez (2020), Section 3: deferred Schur complement
+/// - Liu (1992), Section 4: Schur complement in multifrontal method
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn compute_contribution_gemm(
+    frontal_data: &Mat<f64>,
+    num_fully_summed: usize,
+    num_eliminated: usize,
+    m: usize,
+    d: &MixedDiagonal,
+    contrib_buffer: &mut Mat<f64>,
+    par: Par,
+) {
+    let p = num_fully_summed;
+    let ne = num_eliminated;
+    let nfs = m - p;
+
+    if nfs == 0 {
+        return; // No contribution block (root or fully eliminated)
+    }
+
+    // Step 1: Copy assembled NFS×NFS from frontal_data[p..m, p..m] into
+    //         contrib_buffer[0..nfs, 0..nfs] (lower triangle only).
+    //
+    // This copy is unavoidable: assembly scatters into frontal_data, but the
+    // GEMM output goes to contrib_buffer. SPRAL avoids this by scattering
+    // NFS entries directly into the contribution buffer during assembly — a
+    // larger architectural change deferred for a future phase.
+    for j in 0..nfs {
+        let col_len = nfs - j;
+        let src = &frontal_data.col_as_slice(p + j)[p + j..m];
+        contrib_buffer.col_as_slice_mut(j)[j..j + col_len].copy_from_slice(src);
+    }
+
+    if ne == 0 {
+        return; // No rank update — all columns were delayed, copy only
+    }
+
+    // Step 2: Compute W = L21_NFS * D (nfs × ne)
+    // L21_NFS = frontal_data[p..m, 0..ne]
+    let l21_nfs = frontal_data.as_ref().submatrix(p, 0, nfs, ne);
+
+    // Allocate W buffer for L*D product
+    let mut w = Mat::zeros(nfs, ne);
+    compute_ld_into(l21_nfs, d, ne, w.as_mut());
+
+    // Step 3: Symmetric rank-ne update: contrib -= W * L21_NFS^T (lower triangle)
+    tri_matmul::matmul_with_conj(
+        contrib_buffer.as_mut().submatrix_mut(0, 0, nfs, nfs),
+        BlockStructure::TriangularLower,
+        Accum::Add,
+        w.as_ref(),
+        BlockStructure::Rectangular,
+        Conj::No,
+        l21_nfs.transpose(),
+        BlockStructure::Rectangular,
+        Conj::No,
+        -1.0,
+        par,
+    );
 }
 
 /// Apply Schur complement updates from passed columns to failed and trailing regions.
@@ -1706,6 +1831,7 @@ fn update_cross_terms(
 fn factor_inner(
     mut a: MatMut<'_, f64>,
     num_fully_summed: usize,
+    nfs_boundary: usize,
     options: &AptpOptions,
     kernel_ws: &mut AptpKernelWorkspace,
 ) -> Result<AptpFactorResult, SparseError> {
@@ -1878,6 +2004,7 @@ fn factor_inner(
                 nelim,
                 block_size,
                 m,
+                nfs_boundary,
                 &block_d,
                 options.par,
                 &mut kernel_ws.ld_buf,
@@ -2039,7 +2166,10 @@ fn two_level_factor(
             let block_view = a
                 .rb_mut()
                 .submatrix_mut(col_start, col_start, block_m, block_m);
-            factor_inner(block_view, block_cols, options, kernel_ws)?
+            // nfs_boundary relative to this subview: p - col_start
+            // This ensures inner blocks skip NFS×NFS updates consistently
+            // with the deferred GEMM that runs after aptp_factor_in_place.
+            factor_inner(block_view, block_cols, p - col_start, options, kernel_ws)?
         };
         let block_nelim = block_result.num_eliminated;
 
@@ -2310,11 +2440,12 @@ fn tpp_test_2x2(
 /// block beyond the fully-summed region).
 ///
 /// Returns the maximum absolute L entry.
-fn tpp_apply_1x1(mut a: MatMut<'_, f64>, nelim: usize, m: usize) -> f64 {
+fn tpp_apply_1x1(mut a: MatMut<'_, f64>, nelim: usize, m: usize, num_fully_summed: usize) -> f64 {
     let d = a[(nelim, nelim)];
     let inv_d = 1.0 / d;
+    let p = num_fully_summed;
 
-    // Compute L entries
+    // Compute L entries for ALL rows (FS + NFS) — needed for deferred contribution GEMM
     let mut max_l = 0.0_f64;
     for i in (nelim + 1)..m {
         let l_ik = a[(i, nelim)] * inv_d;
@@ -2322,9 +2453,11 @@ fn tpp_apply_1x1(mut a: MatMut<'_, f64>, nelim: usize, m: usize) -> f64 {
         max_l = max_l.max(l_ik.abs());
     }
 
-    // Rank-1 Schur complement update (lower triangle only, including contribution block)
-    // a[(i,j)] -= L[i] * d * L[j] for j in (nelim+1)..m, i in j..m
-    for j in (nelim + 1)..m {
+    // Rank-1 Schur complement update: skip NFS×NFS region (deferred to contribution GEMM).
+    // For FS columns j < p: update all rows j..m (FS×FS + NFS×FS cross-terms).
+    // For NFS columns j >= p: skip entirely (NFS×NFS).
+    let schur_col_end = p.min(m);
+    for j in (nelim + 1)..schur_col_end {
         let ldlj = a[(j, nelim)] * d;
         for i in j..m {
             a[(i, j)] -= a[(i, nelim)] * ldlj;
@@ -2342,14 +2475,15 @@ fn tpp_apply_1x1(mut a: MatMut<'_, f64>, nelim: usize, m: usize) -> f64 {
 /// `extract_front_factors`.
 ///
 /// Returns the maximum absolute L entry.
-fn tpp_apply_2x2(mut a: MatMut<'_, f64>, nelim: usize, m: usize) -> f64 {
+fn tpp_apply_2x2(mut a: MatMut<'_, f64>, nelim: usize, m: usize, num_fully_summed: usize) -> f64 {
     let a11 = a[(nelim, nelim)];
     let a21 = a[(nelim + 1, nelim)];
     let a22 = a[(nelim + 1, nelim + 1)];
     let det = a11 * a22 - a21 * a21;
     let inv_det = 1.0 / det;
+    let p = num_fully_summed;
 
-    // Compute L entries for rows below the 2x2 block
+    // Compute L entries for ALL rows (FS + NFS) — needed for deferred contribution GEMM
     let mut max_l = 0.0_f64;
     let start = nelim + 2;
     for i in start..m {
@@ -2362,9 +2496,11 @@ fn tpp_apply_2x2(mut a: MatMut<'_, f64>, nelim: usize, m: usize) -> f64 {
         max_l = max_l.max(l_i1.abs()).max(l_i2.abs());
     }
 
-    // Rank-2 Schur complement update (lower triangle only, including contribution block)
-    // a[(i,j)] -= L[i,:] * D * L[j,:]^T
-    for j in start..m {
+    // Rank-2 Schur complement update: skip NFS×NFS region (deferred to contribution GEMM).
+    // For FS columns j < p: update all rows j..m (FS×FS + NFS×FS cross-terms).
+    // For NFS columns j >= p: skip entirely (NFS×NFS).
+    let schur_col_end = p.min(m);
+    for j in start..schur_col_end {
         let wj1 = a[(j, nelim)] * a11 + a[(j, nelim + 1)] * a21;
         let wj2 = a[(j, nelim)] * a21 + a[(j, nelim + 1)] * a22;
         for i in j..m {
@@ -2533,7 +2669,7 @@ fn tpp_factor(
                 let d22 = a[(nelim + 1, nelim + 1)];
 
                 // Apply elimination and Schur update
-                let max_l = tpp_apply_2x2(a.rb_mut(), nelim, m);
+                let max_l = tpp_apply_2x2(a.rb_mut(), nelim, m, n);
 
                 // Record pivot
                 global_d.set_2x2(Block2x2 {
@@ -2575,7 +2711,7 @@ fn tpp_factor(
                     col_order.swap(p, nelim);
                 }
 
-                let max_l = tpp_apply_1x1(a.rb_mut(), nelim, m);
+                let max_l = tpp_apply_1x1(a.rb_mut(), nelim, m, n);
 
                 global_d.set_1x1(nelim, a[(nelim, nelim)]);
                 stats.num_1x1 += 1;
@@ -2596,7 +2732,7 @@ fn tpp_factor(
             // Last resort: try column nelim as 1x1 (we started searching at nelim+1)
             let maxp = tpp_find_rc_abs_max_exclude(a.as_ref(), nelim, nelim, m, usize::MAX);
             if a[(nelim, nelim)].abs() >= u * maxp {
-                let max_l = tpp_apply_1x1(a.rb_mut(), nelim, m);
+                let max_l = tpp_apply_1x1(a.rb_mut(), nelim, m, n);
 
                 global_d.set_1x1(nelim, a[(nelim, nelim)]);
                 stats.num_1x1 += 1;
@@ -4645,7 +4781,7 @@ mod tests {
                     ..AptpOptions::default()
                 };
                 let result_p = aptp_factor_in_place(a_copy.as_mut(), p, &opts_partial).unwrap();
-                let error_p = check_partial_factorization_in_place(&a, &a_copy, &result_p);
+                let error_p = check_partial_factorization_in_place(&a, &a_copy, p, &result_p);
                 assert!(
                     error_p < 1e-10,
                     "targeted partial (ib={}, p={}): error {:.2e} >= 1e-10",
@@ -4821,11 +4957,30 @@ mod tests {
     fn check_partial_factorization_in_place(
         original: &Mat<f64>,
         factored: &Mat<f64>,
+        num_fully_summed: usize,
         result: &AptpFactorResult,
     ) -> f64 {
         let m = original.nrows();
         let q = result.num_eliminated;
+        let p = num_fully_summed;
         let perm = &result.perm;
+
+        // Apply deferred contribution GEMM to get the full Schur complement.
+        // After our restructuring, aptp_factor_in_place leaves A[p..m, p..m]
+        // with only assembled values (no per-block trailing updates).
+        // We need to apply the deferred GEMM to get the actual Schur complement.
+        let mut factored = factored.clone();
+        let nfs = m - p;
+        if nfs > 0 && q > 0 {
+            let mut contrib_buffer = Mat::zeros(nfs, nfs);
+            compute_contribution_gemm(&factored, p, q, m, &result.d, &mut contrib_buffer, Par::Seq);
+            // Copy the Schur complement back into the factored matrix
+            for i in 0..nfs {
+                for j in 0..=i {
+                    factored[(p + i, p + j)] = contrib_buffer[(i, j)];
+                }
+            }
+        }
         let d = &result.d;
 
         // Build PAP^T
@@ -5109,7 +5264,7 @@ mod tests {
             }
 
             // Check partial factorization correctness (PAP^T = LDL^T + [0;S])
-            let error = check_partial_factorization_in_place(&original, &a, &result);
+            let error = check_partial_factorization_in_place(&original, &a, config.p, &result);
 
             if error > worst_error {
                 worst_error = error;

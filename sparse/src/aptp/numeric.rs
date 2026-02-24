@@ -38,7 +38,9 @@ use faer::sparse::linalg::cholesky::SymbolicCholeskyRaw;
 use faer::{Mat, MatMut, Par};
 
 use super::diagonal::{MixedDiagonal, PivotEntry};
-use super::factor::{AptpFactorResult, AptpOptions, aptp_factor_in_place};
+use super::factor::{
+    AptpFactorResult, AptpOptions, aptp_factor_in_place, compute_contribution_gemm,
+};
 use super::pivot::{Block2x2, PivotType};
 use super::symbolic::AptpSymbolic;
 use crate::error::SparseError;
@@ -78,6 +80,11 @@ pub(crate) struct FactorizationWorkspace {
     delayed_cols_buf: Vec<usize>,
     /// Global-to-local row index mapping, length n (matrix dimension).
     global_to_local: Vec<usize>,
+    /// Pre-allocated contribution buffer, max_front × max_front. Receives the
+    /// deferred contribution GEMM output. Reused across supernodes via swap protocol:
+    /// final GEMM writes here → buffer moved into ContributionBlock → parent's
+    /// extend-add recycles buffer back.
+    contrib_buffer: Mat<f64>,
 }
 
 impl Default for FactorizationWorkspace {
@@ -100,6 +107,7 @@ impl FactorizationWorkspace {
                 frontal_row_indices: Vec::new(),
                 delayed_cols_buf: Vec::new(),
                 global_to_local: vec![NOT_IN_FRONT; n],
+                contrib_buffer: Mat::zeros(0, 0),
             };
         }
         Self {
@@ -107,6 +115,9 @@ impl FactorizationWorkspace {
             frontal_row_indices: Vec::with_capacity(max_front),
             delayed_cols_buf: Vec::with_capacity(max_front),
             global_to_local: vec![NOT_IN_FRONT; n],
+            // Lazily allocated on first use in factor_single_supernode.
+            // Recycled via extend_add buffer return, so typically allocates once.
+            contrib_buffer: Mat::new(),
         }
     }
 
@@ -117,6 +128,7 @@ impl FactorizationWorkspace {
             frontal_row_indices: Vec::new(),
             delayed_cols_buf: Vec::new(),
             global_to_local: Vec::new(),
+            contrib_buffer: Mat::new(),
         }
     }
 
@@ -150,6 +162,8 @@ impl FactorizationWorkspace {
         if self.frontal_data.nrows() < max_front || self.frontal_data.ncols() < max_front {
             self.frontal_data = Mat::zeros(max_front, max_front);
         }
+        // contrib_buffer is NOT pre-allocated here — it grows lazily in
+        // factor_single_supernode and is recycled via extend_add buffer return.
         if self.global_to_local.len() < n {
             self.global_to_local.resize(n, NOT_IN_FRONT);
         }
@@ -597,6 +611,9 @@ pub struct PerSupernodeStats {
     /// Wall-clock time for extracting the contribution block.
     #[cfg(feature = "diagnostic")]
     pub extract_contrib_time: std::time::Duration,
+    /// Wall-clock time for the deferred contribution GEMM.
+    #[cfg(feature = "diagnostic")]
+    pub contrib_gemm_time: std::time::Duration,
 }
 
 /// Aggregate statistics from multifrontal factorization.
@@ -651,6 +668,9 @@ pub struct FactorizationStats {
     /// Sum of contribution extraction times across all supernodes.
     #[cfg(feature = "diagnostic")]
     pub total_extract_contrib_time: std::time::Duration,
+    /// Sum of deferred contribution GEMM times across all supernodes.
+    #[cfg(feature = "diagnostic")]
+    pub total_contrib_gemm_time: std::time::Duration,
 }
 
 /// Assembled frontal matrix exported for diagnostic comparison.
@@ -884,6 +904,8 @@ impl AptpNumeric {
             total_extract_factors_time: std::time::Duration::ZERO,
             #[cfg(feature = "diagnostic")]
             total_extract_contrib_time: std::time::Duration::ZERO,
+            #[cfg(feature = "diagnostic")]
+            total_contrib_gemm_time: std::time::Duration::ZERO,
         };
         for sn_stat in &per_sn_stats {
             stats.total_1x1_pivots += sn_stat.num_1x1;
@@ -903,6 +925,7 @@ impl AptpNumeric {
                 stats.total_extend_add_time += sn_stat.extend_add_time;
                 stats.total_extract_factors_time += sn_stat.extract_factors_time;
                 stats.total_extract_contrib_time += sn_stat.extract_contrib_time;
+                stats.total_contrib_gemm_time += sn_stat.contrib_gemm_time;
             }
         }
 
@@ -1066,7 +1089,7 @@ impl AptpNumeric {
 
                 for &c in &children[s] {
                     if let Some(cb) = contributions[c].take() {
-                        extend_add(&mut frontal, &cb, &global_to_local);
+                        let _ = extend_add(&mut frontal, cb, &global_to_local);
                     }
                 }
             }
@@ -1090,12 +1113,26 @@ impl AptpNumeric {
             let ne = result.num_eliminated;
 
             if sn.parent.is_some() && ne < m {
+                let nfs = m - k;
+                let mut cb = Mat::zeros(m, m);
+                if nfs > 0 {
+                    compute_contribution_gemm(
+                        &frontal_data,
+                        k,
+                        ne,
+                        m,
+                        &result.d,
+                        &mut cb,
+                        Par::Seq,
+                    );
+                }
                 contributions[s] = Some(extract_contribution(
                     &frontal_data,
                     m,
                     k,
                     &frontal_rows,
                     &result,
+                    cb,
                 ));
             }
 
@@ -1262,14 +1299,19 @@ fn factor_single_supernode(
     for opt_cb in child_contributions {
         if let Some(cb) = opt_cb {
             // Check if this child had delays — if so, fall back to g2l
-            if cb.num_delayed > 0 || ndelay_in > 0 {
-                extend_add(&mut frontal, &cb, &workspace.global_to_local);
+            let recycled = if cb.num_delayed > 0 || ndelay_in > 0 {
+                extend_add(&mut frontal, cb, &workspace.global_to_local)
             } else {
                 // Fast path: use precomputed row mapping
                 let ea_start = assembly_maps.ea_offsets[ea_child_idx];
                 let ea_end = assembly_maps.ea_offsets[ea_child_idx + 1];
                 let ea_row_map = &assembly_maps.ea_map[ea_start..ea_end];
-                extend_add_mapped(&mut frontal, &cb, ea_row_map);
+                extend_add_mapped(&mut frontal, cb, ea_row_map)
+            };
+            // Recycle the returned buffer into workspace if it's larger than
+            // what we currently have (or if ours was moved out).
+            if recycled.nrows() >= workspace.contrib_buffer.nrows() {
+                workspace.contrib_buffer = recycled;
             }
         }
         // Always increment: ea_offsets indexes all children, including those
@@ -1306,6 +1348,32 @@ fn factor_single_supernode(
     #[cfg(feature = "diagnostic")]
     let kernel_time = kernel_start.elapsed();
 
+    // 6b. Deferred contribution GEMM: compute NFS×NFS Schur complement directly
+    //     into workspace.contrib_buffer. This replaces the per-block NFS×NFS
+    //     updates that were skipped during the blocking loop.
+    #[cfg(feature = "diagnostic")]
+    let contrib_gemm_start = std::time::Instant::now();
+
+    let nfs = m - k;
+    if sn.parent.is_some() && ne < m && nfs > 0 {
+        // Ensure contrib_buffer is large enough (rare: delayed cascades may exceed estimate)
+        if workspace.contrib_buffer.nrows() < m || workspace.contrib_buffer.ncols() < m {
+            workspace.contrib_buffer = Mat::zeros(m, m);
+        }
+        compute_contribution_gemm(
+            &workspace.frontal_data,
+            k,
+            ne,
+            m,
+            &result.d,
+            &mut workspace.contrib_buffer,
+            effective_par,
+        );
+    }
+
+    #[cfg(feature = "diagnostic")]
+    let contrib_gemm_time = contrib_gemm_start.elapsed();
+
     // 7. Extract front factors (reads from workspace frontal data)
     #[cfg(feature = "diagnostic")]
     let extraction_start = std::time::Instant::now();
@@ -1325,6 +1393,8 @@ fn factor_single_supernode(
     let extract_factors_time = extract_factors_start.elapsed();
 
     // 8. Prepare contribution for parent (if not root and not fully eliminated)
+    //    NFS×NFS data is in workspace.contrib_buffer (from deferred GEMM).
+    //    Delayed-column data (if any) is still in workspace.frontal_data.
     #[cfg(feature = "diagnostic")]
     let extract_contrib_start = std::time::Instant::now();
 
@@ -1335,6 +1405,7 @@ fn factor_single_supernode(
             k,
             &workspace.frontal_row_indices,
             &result,
+            std::mem::replace(&mut workspace.contrib_buffer, Mat::new()),
         ))
     } else {
         None
@@ -1373,6 +1444,8 @@ fn factor_single_supernode(
         extract_factors_time,
         #[cfg(feature = "diagnostic")]
         extract_contrib_time,
+        #[cfg(feature = "diagnostic")]
+        contrib_gemm_time,
     };
 
     // Reset global_to_local entries for reuse (O(m), not O(n))
@@ -1694,10 +1767,10 @@ fn scatter_original_entries_multi(
 /// - Liu (1992), Section 4.2: extend-add operator
 pub(crate) fn extend_add(
     parent: &mut FrontalMatrix<'_>,
-    child: &ContributionBlock,
+    child: ContributionBlock,
     global_to_local: &[usize],
-) {
-    let cb_size = child.data.nrows();
+) -> Mat<f64> {
+    let cb_size = child.row_indices.len();
     for i in 0..cb_size {
         let gi = child.row_indices[i];
         let li = global_to_local[gi];
@@ -1726,6 +1799,8 @@ pub(crate) fn extend_add(
             }
         }
     }
+    // Return the consumed data buffer for recycling into workspace.contrib_buffer
+    child.data
 }
 
 /// Extend-add using a precomputed child→parent row mapping.
@@ -1742,10 +1817,10 @@ pub(crate) fn extend_add(
 ///   parent frontal local row index. Length equals the child's pattern size.
 fn extend_add_mapped(
     parent: &mut FrontalMatrix<'_>,
-    child: &ContributionBlock,
+    child: ContributionBlock,
     ea_row_map: &[u32],
-) {
-    let cb_size = child.data.nrows();
+) -> Mat<f64> {
+    let cb_size = child.row_indices.len();
     debug_assert!(
         ea_row_map.len() >= cb_size,
         "extend_add_mapped: ea_row_map len {} < cb_size {}",
@@ -1768,6 +1843,8 @@ fn extend_add_mapped(
             }
         }
     }
+    // Return the consumed data buffer for recycling into workspace.contrib_buffer
+    child.data
 }
 
 /// Extract per-supernode factors from a factored frontal matrix.
@@ -1926,13 +2003,17 @@ pub(crate) fn extract_front_factors(
 
 /// Extract the contribution block from a factored frontal matrix.
 ///
-/// The contribution block is the trailing `(m - ne) × (m - ne)` submatrix
-/// of the factored frontal matrix, containing:
-/// - Delayed columns (positions 0..num_delayed)
-/// - Schur complement entries (positions num_delayed..size)
+/// The NFS×NFS Schur complement data is already in `contrib_buffer` (written
+/// by [`compute_contribution_gemm`]). This function adds any delayed-column
+/// data from the workspace and builds the index metadata.
 ///
-/// Uses per-column `col_as_slice` + `copy_from_slice` for bulk extraction,
-/// replacing element-by-element indexing.
+/// # Layout within returned `ContributionBlock.data`
+///
+/// ```text
+/// [0..num_delayed, 0..num_delayed]     → delayed × delayed (from workspace)
+/// [num_delayed..size, 0..num_delayed]  → NFS × delayed cross-terms (from workspace)
+/// [num_delayed..size, num_delayed..size] → NFS × NFS Schur complement (from contrib_buffer)
+/// ```
 ///
 /// # Arguments
 ///
@@ -1941,26 +2022,59 @@ pub(crate) fn extract_front_factors(
 /// - `k`: Number of fully-summed rows/columns.
 /// - `frontal_row_indices`: Global permuted column indices for each local row.
 /// - `result`: APTP factorization result.
+/// - `contrib_buffer`: Pre-allocated buffer already containing NFS×NFS data
+///   in `[0..nfs, 0..nfs]` (from deferred GEMM). Moved in; becomes the
+///   `ContributionBlock.data`.
 pub(crate) fn extract_contribution(
     frontal_data: &Mat<f64>,
     m: usize,
     k: usize,
     frontal_row_indices: &[usize],
     result: &AptpFactorResult,
+    mut contrib_buffer: Mat<f64>,
 ) -> ContributionBlock {
     let ne = result.num_eliminated;
     let size = m - ne;
     let num_delayed = k - ne;
+    let nfs = m - k; // = size - num_delayed
 
-    // Copy trailing submatrix (lower triangle only) via per-column bulk copies.
-    // Each column j copies the contiguous segment [ne+j .. ne+j+col_len) from the
-    // source column (ne+j) into destination column j at rows [j..size).
-    let mut data = Mat::zeros(size, size);
-    for j in 0..size {
-        let col_len = size - j;
-        let src = &frontal_data.col_as_slice(ne + j)[ne + j..ne + j + col_len];
-        data.col_as_slice_mut(j)[j..j + col_len].copy_from_slice(src);
+    // The NFS×NFS region (contrib_buffer[0..nfs, 0..nfs]) is already filled by
+    // compute_contribution_gemm. We need to handle delayed columns (if any) by
+    // shifting the NFS×NFS data to make room for the delayed portion.
+    if num_delayed > 0 {
+        // Delayed columns exist: we need to assemble the full (size × size) contribution.
+        // Layout: [delayed × delayed | NFS × delayed | NFS × NFS]
+        //
+        // Strategy: allocate a new buffer of the correct size, copy delayed regions
+        // from workspace, and NFS×NFS from contrib_buffer.
+        let mut data = Mat::zeros(size, size);
+
+        // Copy delayed × delayed from workspace: frontal_data[ne..k, ne..k]
+        // These positions are in the APTP-permuted order. The delayed columns
+        // are at positions ne..k in the factored frontal matrix.
+        for j in 0..num_delayed {
+            let col_len = num_delayed - j;
+            let src = &frontal_data.col_as_slice(ne + j)[ne + j..ne + j + col_len];
+            data.col_as_slice_mut(j)[j..j + col_len].copy_from_slice(src);
+        }
+
+        // Copy NFS × delayed cross-terms from workspace: frontal_data[k..m, ne..k]
+        for j in 0..num_delayed {
+            let src = &frontal_data.col_as_slice(ne + j)[k..m];
+            data.col_as_slice_mut(j)[num_delayed..size].copy_from_slice(src);
+        }
+
+        // Copy NFS × NFS from contrib_buffer[0..nfs, 0..nfs] into data[num_delayed..size, num_delayed..size]
+        for j in 0..nfs {
+            let col_len = nfs - j;
+            let src = &contrib_buffer.col_as_slice(j)[j..j + col_len];
+            data.col_as_slice_mut(num_delayed + j)[num_delayed + j..size].copy_from_slice(src);
+        }
+
+        contrib_buffer = data;
     }
+    // else: num_delayed == 0 → contrib_buffer already has the full contribution
+    // (NFS×NFS = entire contribution), no copy needed. True zero-copy path.
 
     // Build row indices:
     // - First num_delayed entries: delayed columns mapped through result.perm and frontal_row_indices
@@ -1977,7 +2091,7 @@ pub(crate) fn extract_contribution(
     row_indices.extend_from_slice(&frontal_row_indices[k..m]);
 
     ContributionBlock {
-        data,
+        data: contrib_buffer,
         row_indices,
         num_delayed,
     }
@@ -2134,7 +2248,12 @@ mod tests {
 
         if num_delayed > 0 {
             let ff = extract_front_factors(&data, m, k, &row_indices, &result);
-            let cb = extract_contribution(&data, m, k, &row_indices, &result);
+            let nfs = m - k;
+            let mut contrib_buf = Mat::zeros(m, m);
+            if nfs > 0 {
+                compute_contribution_gemm(&data, k, ne, m, &result.d, &mut contrib_buf, Par::Seq);
+            }
+            let cb = extract_contribution(&data, m, k, &row_indices, &result, contrib_buf);
 
             // Both must have the same number of delayed rows
             assert_eq!(cb.num_delayed, num_delayed);

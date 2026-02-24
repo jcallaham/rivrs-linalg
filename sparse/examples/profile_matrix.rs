@@ -183,7 +183,8 @@ fn main() {
         let asm_ms = stats.total_assembly_time.as_secs_f64() * 1000.0;
         let kern_ms = stats.total_kernel_time.as_secs_f64() * 1000.0;
         let ext_ms = stats.total_extraction_time.as_secs_f64() * 1000.0;
-        let accounted = asm_ms + kern_ms + ext_ms;
+        let cg_ms = stats.total_contrib_gemm_time.as_secs_f64() * 1000.0;
+        let accounted = asm_ms + kern_ms + ext_ms + cg_ms;
         eprintln!();
         eprintln!("=== Factor Time Breakdown ===");
         eprintln!(
@@ -195,6 +196,11 @@ fn main() {
             "  Kernel:      {:>10.2} ms  ({:>5.1}%)",
             kern_ms,
             kern_ms / factor_ms * 100.0
+        );
+        eprintln!(
+            "  ContribGEMM: {:>10.2} ms  ({:>5.1}%)",
+            cg_ms,
+            cg_ms / factor_ms * 100.0
         );
         eprintln!(
             "  Extraction:  {:>10.2} ms  ({:>5.1}%)",
@@ -237,6 +243,11 @@ fn main() {
             ea_ms / factor_ms * 100.0
         );
         eprintln!(
+            "  ContribGEMM:  {:>10.2} ms  ({:>5.1}%)",
+            cg_ms,
+            cg_ms / factor_ms * 100.0
+        );
+        eprintln!(
             "  ExtractFactr: {:>10.2} ms  ({:>5.1}%)",
             exf_ms,
             exf_ms / factor_ms * 100.0
@@ -246,7 +257,8 @@ fn main() {
             exc_ms,
             exc_ms / factor_ms * 100.0
         );
-        let sub_accounted = zero_ms + g2l_ms + scatter_ms + ea_ms + exf_ms + exc_ms + kern_ms;
+        let sub_accounted =
+            zero_ms + g2l_ms + scatter_ms + ea_ms + cg_ms + exf_ms + exc_ms + kern_ms;
         eprintln!(
             "  Other:        {:>10.2} ms  ({:>5.1}%)",
             factor_ms - sub_accounted,
@@ -410,6 +422,22 @@ fn export_trace(per_sn: &[PerSupernodeStats], matrix_name: &str, path: &str) {
                 }
             }));
             offset_us += kern_us;
+        }
+
+        // Contribution GEMM
+        let cg_us = s.contrib_gemm_time.as_secs_f64() * 1e6;
+        if cg_us > 0.0 {
+            events.push(json!({
+                "name": format!("s{}_cgemm", s.snode_id),
+                "cat": "contrib_gemm",
+                "ph": "X",
+                "ts": offset_us,
+                "dur": cg_us,
+                "pid": pid,
+                "tid": 0,
+                "args": { "snode": s.snode_id, "front_size": s.front_size }
+            }));
+            offset_us += cg_us;
         }
 
         // Extraction
