@@ -36,6 +36,8 @@ struct SupernodeRecord {
     #[serde(skip_serializing_if = "Option::is_none")]
     kernel_us: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    contrib_gemm_us: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     extraction_us: Option<f64>,
 }
 
@@ -51,6 +53,8 @@ struct FactorizationRecord {
     total_assembly_us: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     total_kernel_us: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    total_contrib_gemm_us: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     total_extraction_us: Option<f64>,
 }
@@ -197,11 +201,15 @@ fn main() {
             #[cfg(feature = "diagnostic")]
             total_kernel_us: Some(stats.total_kernel_time.as_secs_f64() * 1_000_000.0),
             #[cfg(feature = "diagnostic")]
+            total_contrib_gemm_us: Some(stats.total_contrib_gemm_time.as_secs_f64() * 1_000_000.0),
+            #[cfg(feature = "diagnostic")]
             total_extraction_us: Some(stats.total_extraction_time.as_secs_f64() * 1_000_000.0),
             #[cfg(not(feature = "diagnostic"))]
             total_assembly_us: None,
             #[cfg(not(feature = "diagnostic"))]
             total_kernel_us: None,
+            #[cfg(not(feature = "diagnostic"))]
+            total_contrib_gemm_us: None,
             #[cfg(not(feature = "diagnostic"))]
             total_extraction_us: None,
         };
@@ -222,11 +230,15 @@ fn main() {
                 #[cfg(feature = "diagnostic")]
                 kernel_us: Some(s.kernel_time.as_secs_f64() * 1_000_000.0),
                 #[cfg(feature = "diagnostic")]
+                contrib_gemm_us: Some(s.contrib_gemm_time.as_secs_f64() * 1_000_000.0),
+                #[cfg(feature = "diagnostic")]
                 extraction_us: Some(s.extraction_time.as_secs_f64() * 1_000_000.0),
                 #[cfg(not(feature = "diagnostic"))]
                 assembly_us: None,
                 #[cfg(not(feature = "diagnostic"))]
                 kernel_us: None,
+                #[cfg(not(feature = "diagnostic"))]
+                contrib_gemm_us: None,
                 #[cfg(not(feature = "diagnostic"))]
                 extraction_us: None,
             })

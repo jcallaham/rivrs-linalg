@@ -1,5 +1,203 @@
 # SSIDS Development Log
 
+## Phase 9.1e: Direct GEMM into Contribution Buffer
+
+**Status**: Complete
+**Branch**: `024-direct-gemm-contrib`
+**Date**: 2026-02-24
+
+### What Was Built
+
+Restructured the BLAS-3 blocking loop to defer the NFS×NFS Schur complement
+computation. Per-block trailing updates are restricted to the fully-summed
+region and cross-terms; a single post-loop GEMM computes the entire NFS×NFS
+Schur complement directly into a pre-allocated contribution buffer. This
+eliminates both the O(n²) extraction copy and the per-supernode allocation
+for the common zero-delay case.
+
+**Trailing update decomposition** (`factor.rs:update_trailing`):
+- Region 1 (FS×FS): lower-triangular GEMM via `tri_matmul` — unchanged
+- Region 2 (NFS×FS): rectangular GEMM for cross-terms — unchanged
+- Region 3 (NFS×NFS): **skipped** during blocking loop, deferred to post-loop
+
+**Deferred contribution GEMM** (`factor.rs:compute_contribution_gemm`):
+- Copies assembled NFS×NFS values from workspace into `contrib_buffer`
+- Applies rank-`ne` symmetric update: `contrib_buffer -= L21_NFS * D * L21_NFS^T`
+- Guards for nfs=0 and ne=0 edge cases
+- Called from `factor_single_supernode` after `aptp_factor_in_place` returns
+
+**Contribution buffer lifecycle** (`numeric.rs`):
+- `FactorizationWorkspace.contrib_buffer: Mat<f64>` — lazily allocated on first
+  use, recycled via `extend_add` buffer return
+- `extend_add` / `extend_add_mapped` take ownership of `ContributionBlock`,
+  return recycled `Mat<f64>` buffer
+- `extract_contribution` rewritten: zero-delay case is true zero-copy (buffer
+  move), delayed case copies only small delayed regions
+- Parallel path: lazy reallocation per thread when buffer moved to ContributionBlock
+
+**All three factorization dispatch paths updated**:
+- `factor_inner`: `nfs_boundary` parameter controls NFS skip
+- `two_level_factor`: passes `p - col_start` for correct local NFS boundary
+- `tpp_factor_as_primary` / `tpp_apply_1x1` / `tpp_apply_2x2`: Schur updates
+  restricted to FS columns
+
+**Diagnostic instrumentation**:
+- `contrib_gemm_time` on `PerSupernodeStats` and `total_contrib_gemm_time` on
+  `FactorizationStats` (behind `diagnostic` feature flag)
+- `profile_matrix.rs`: ContribGEMM in Factor Time Breakdown, Sub-Phase Breakdown,
+  and Chrome Trace export
+- `baseline_collection.rs`: `contrib_gemm_us` fields for baseline comparison
+
+### Key Results
+
+**SPRAL comparison (sequential, single thread):**
+- c-71: **2.16×** (was 2.53× in 9.1c) — 15% improvement
+- c-big: **2.30×** (was 4.11× in 9.1c) — 44% improvement, rivrs 34.6s → 19.4s
+- Median: **0.98×** (was 1.01× in 9.1c) — rivrs now faster than SPRAL on median
+- 33/65 matrices beat SPRAL (was 29/65 in 9.1c)
+- All 65/65 backward errors well within 5e-11, 483 unit tests pass
+
+**Sub-phase profiling (c-71, Docker environment):**
+
+| Sub-phase     | 9.1c    | 9.1e     | Notes |
+|---------------|---------|----------|-------|
+| ExtractContr  | 40.1%   | **0.0%** | Eliminated — extraction is now index-only |
+| Extend-add    | 33.3%   | 49.6%    | Same absolute time, higher % (newly dominant) |
+| Kernel        | 23.1%   | 4.2%     | NFS×NFS updates moved to ContribGEMM |
+| ContribGEMM   | —       | 37.1%    | New sub-phase (was inside kernel) |
+| Zeroing       | 1.1%    | 7.4%     | Same absolute time, higher % |
+
+**Memory behavior improvements (c-71 perf stat):**
+
+| Metric          | 9.1c        | 9.1e        |
+|-----------------|-------------|-------------|
+| dTLB misses     | 644M        | 608M        |
+| Page faults     | 934K        | 310K        |
+| sys time        | 3.1s (32%)  | 0.4s (7%)   |
+
+**Simplicial matrices slightly regressed** (noise or small per-supernode overhead
+from deferred GEMM on tiny fronts): dixmaanl 2.34→2.76×, linverse 2.17→2.57×,
+spmsrtls 2.24→2.61×. Absolute times are sub-40ms where measurement noise dominates.
+
+### Remaining Bottleneck Analysis
+
+The extraction copy is gone. The remaining gap vs SPRAL on c-71/c-big is
+dominated by **extend-add (49.6%)** and **zeroing (7.4%)** — both consequences
+of the shared-workspace architecture:
+
+1. **Extend-add**: 2765ms on c-71 (49.6% of factor time). Scatters child
+   contribution blocks into parent frontal matrix. For c-71 with ~2500-row
+   fronts, each extend-add moves ~48MB of data. The scatter is element-by-element
+   with index mapping (precomputed maps from 9.1c help overhead, but the raw
+   data movement is unavoidable with this architecture).
+
+2. **ContribGEMM**: 2069ms (37.1%). This is irreducible computation — the actual
+   Schur complement GEMM. The single large GEMM on full NFS×NFS regions may be
+   slightly less cache-friendly than the per-block incremental updates (32-column
+   blocks fit in L2/L3, but 2800×2800 NFS regions blow past L3).
+
+3. **Zeroing**: 411ms (7.4%). Must zero the shared workspace before each supernode.
+   SPRAL avoids this entirely with per-node factor storage.
+
+SPRAL avoids both extend-add scatter overhead and zeroing through per-node factor
+storage (AppendAlloc for `lcol`, BuddyAllocator for `contrib`). Each node owns its
+storage; assembly scatters directly into permanent locations. This is the remaining
+architectural gap — see Phase 9.1g in ssids-plan.md.
+
+### Algorithm References
+
+- Duff, Hogg & Lopez (2020), §5: two-tier allocators and contribution management
+- SPRAL `factor.hxx:92-103`: direct GEMM into `node.contrib`
+- SPRAL `assemble.hxx:27-38`: column-oriented scatter with 4x unrolled inner loop
+
+### Performance Benchmarks
+
+```bash
+cargo run --example spral_benchmark --release -- --threads 1 --rivrs
+```
+
+```
+Matrix                                     n  spral_fac  rivrs_fac   ratio   spral_be   rivrs_be
+----------------------------------------------------------------------------------------------------
+BenElechi/BenElechi1                  245874      1.068      1.254    1.17    6.2e-19    5.8e-19
+Koutsovasilis/F2                       71505      0.391      0.373    0.95    9.7e-19    9.5e-19
+PARSEC/H2O                             67024     28.825     29.511    1.02    1.5e-18    1.3e-18
+PARSEC/Si10H16                         17077      2.121      1.990    0.94    4.5e-17    4.5e-17
+PARSEC/Si5H12                          19896      3.475      3.891    1.12    1.8e-17    2.6e-18
+PARSEC/SiNa                             5743      0.206      0.171    0.83    7.5e-18    4.2e-18
+Newman/astro-ph                        16706      0.700      0.415    0.59     8.9e-9    1.5e-17
+Boeing/bcsstk39                        46772      0.134      0.132    0.99    2.6e-18    2.2e-18
+GHS_indef/bloweybq                     10001      0.002      0.005    2.17    1.6e-18    1.7e-18
+GHS_indef/copter2                      55476      0.541      0.421    0.78    1.2e-15    1.9e-16
+Boeing/crystk02                        13965      0.085      0.077    0.91    1.9e-18    1.9e-18
+Boeing/crystk03                        24696      0.208      0.181    0.87    1.4e-18    1.3e-18
+GHS_indef/dawson5                      51537      0.120      0.117    0.97    3.8e-16    8.8e-17
+GHS_indef/dixmaanl                     60000      0.014      0.038    2.76    3.0e-18    1.7e-18
+Oberwolfach/filter3D                  106437      0.352      0.352    1.00    6.2e-19    6.1e-19
+Oberwolfach/gas_sensor                 66917      0.570      0.503    0.88    8.0e-19    7.0e-19
+GHS_indef/helm3d01                     32226      0.179      0.152    0.85    6.3e-16    2.3e-16
+GHS_indef/linverse                     11999      0.003      0.008    2.57    7.4e-18    3.4e-18
+INPRO/msdoor                          415863      0.978      1.178    1.20    6.7e-19    6.4e-19
+ND/nd3k                                 9000      0.757      0.747    0.99    5.4e-18    2.8e-18
+Boeing/pwtk                           217918      0.941      0.939    1.00    4.4e-19    4.3e-19
+Cunningham/qa8fk                       66127      0.566      0.582    1.03    8.1e-19    7.3e-19
+Oberwolfach/rail_79841                 79841      0.041      0.095    2.34    5.9e-19    6.2e-19
+GHS_indef/sparsine                     50000     32.700     29.093    0.89    8.4e-15    3.0e-15
+GHS_indef/spmsrtls                     29995      0.007      0.018    2.61    1.0e-17    3.4e-18
+Oberwolfach/t2dal                       4257      0.002      0.004    1.64    1.8e-18    2.1e-18
+Oberwolfach/t3dh                       79171      1.562      1.732    1.11    8.8e-19    7.8e-19
+Cote/vibrobox                          12328      0.051      0.042    0.82    3.1e-18    2.8e-18
+TSOPF/TSOPF_FS_b162_c1                 10798      0.027      0.036    1.32    3.6e-17    3.5e-17
+TSOPF/TSOPF_FS_b39_c7                  28216      0.025      0.036    1.44    1.2e-16    7.5e-17
+GHS_indef/aug3dcqp                     35543      0.069      0.075    1.09    8.4e-19    1.4e-18
+GHS_indef/blockqp1                     60012      0.033      0.061    1.84    9.0e-14    9.3e-14
+GHS_indef/bratu3d                      27792      0.177      0.139    0.78    7.3e-18    1.5e-18
+GHS_indef/c-71                         76638      2.400      5.192    2.16    8.3e-19    8.5e-19
+Schenk_IBMNA/c-big                    345241      8.410     19.360    2.30    1.3e-17    4.7e-18
+GHS_indef/cont-201                     80595      0.076      0.086    1.14    2.3e-18    1.8e-18
+GHS_indef/cont-300                    180895      0.207      0.220    1.06    1.9e-18    1.1e-18
+GHS_indef/cvxqp3                       17500      0.259      0.138    0.53    1.5e-13    2.1e-14
+GHS_indef/d_pretok                    182730      0.346      0.350    1.01    1.0e-18    9.5e-19
+GHS_indef/mario001                     38434      0.016      0.037    2.31    1.8e-18    1.6e-18
+GHS_indef/ncvxqp1                      12111      0.098      0.064    0.65    5.9e-16    1.2e-16
+GHS_indef/ncvxqp3                      75000      2.277      1.450    0.64    1.5e-13    3.0e-14
+GHS_indef/ncvxqp5                      62500      0.894      0.560    0.63    1.2e-15    2.1e-16
+GHS_indef/ncvxqp7                      87500      3.191      2.355    0.74    8.7e-14    5.8e-14
+GHS_indef/stokes128                    49666      0.072      0.074    1.04    9.8e-19    1.3e-18
+GHS_indef/turon_m                     189924      0.297      0.328    1.10    1.1e-18    1.0e-18
+AMD/G3_circuit                       1585478      2.258      3.262    1.44    2.7e-19    2.8e-19
+Schenk_AFE/af_0_k101                  503625      2.127      2.122    1.00    3.5e-19    3.3e-19
+Schenk_AFE/af_shell7                  504855      1.883      1.942    1.03    3.2e-19    3.2e-19
+GHS_psdef/apache2                     715176      4.900      4.794    0.98    1.7e-19    1.8e-19
+GHS_psdef/bmwcra_1                    148770      1.666      1.553    0.93    6.4e-19    6.0e-19
+Oberwolfach/boneS01                   127224      1.142      1.083    0.95    6.9e-19    6.7e-19
+Rothberg/cfd2                         123440      0.898      0.853    0.95    5.7e-19    5.3e-19
+GHS_psdef/crankseg_1                   52804      0.897      0.820    0.91    1.7e-17    2.7e-17
+GHS_psdef/crankseg_2                   63838      1.259      1.156    0.92    3.6e-18    8.5e-18
+GHS_psdef/inline_1                    503712      4.189      4.437    1.06    6.1e-19    4.1e-19
+GHS_psdef/ldoor                       952203      3.122      3.067    0.98    4.4e-19    3.8e-19
+ND/nd12k                               36000     13.022     11.375    0.87    2.9e-18    1.6e-18
+ND/nd6k                                18000      3.047      2.578    0.85    3.9e-18    2.2e-18
+Um/offshore                           259789      2.371      2.148    0.91    9.0e-19    7.1e-19
+DNVS/ship_003                         121728      2.330      2.037    0.87    5.3e-19    5.3e-19
+DNVS/shipsec1                         140874      1.101      1.062    0.96    7.7e-19    7.2e-19
+DNVS/shipsec5                         179860      1.939      1.640    0.85    6.3e-19    5.9e-19
+DNVS/shipsec8                         114919      1.348      1.005    0.75    9.3e-19    8.1e-19
+DNVS/thread                            29736      3.691      1.545    0.42    1.7e-18    1.4e-18
+
+65/65 completed successfully
+```
+
+**Summary statistics (9.1c → 9.1e):**
+- Median ratio: 1.01× → **0.98×** (rivrs now faster than SPRAL on median matrix)
+- Matrices beating SPRAL: 29/65 → **33/65**
+- c-71: 2.53× → **2.16×**, c-big: 4.11× → **2.30×**
+- Best: thread 0.42×, cvxqp3 0.53×, astro-ph 0.59×
+- Worst simplicial: dixmaanl 2.76×, spmsrtls 2.61×, linverse 2.57×
+- Largest improvement: c-big (34.6s → 19.4s, 1.78× speedup)
+
+---
+
 ## Phase 9.1d: Contribution Block Architecture Investigation
 
 **Status**: Feature abandoned — pool-based reuse does not address the bottleneck

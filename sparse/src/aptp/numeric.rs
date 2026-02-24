@@ -38,7 +38,9 @@ use faer::sparse::linalg::cholesky::SymbolicCholeskyRaw;
 use faer::{Mat, MatMut, Par};
 
 use super::diagonal::{MixedDiagonal, PivotEntry};
-use super::factor::{AptpFactorResult, AptpOptions, aptp_factor_in_place};
+use super::factor::{
+    AptpFactorResult, AptpOptions, aptp_factor_in_place, compute_contribution_gemm,
+};
 use super::pivot::{Block2x2, PivotType};
 use super::symbolic::AptpSymbolic;
 use crate::error::SparseError;
@@ -78,6 +80,11 @@ pub(crate) struct FactorizationWorkspace {
     delayed_cols_buf: Vec<usize>,
     /// Global-to-local row index mapping, length n (matrix dimension).
     global_to_local: Vec<usize>,
+    /// Pre-allocated contribution buffer, max_front × max_front. Receives the
+    /// deferred contribution GEMM output. Reused across supernodes via swap protocol:
+    /// final GEMM writes here → buffer moved into ContributionBlock → parent's
+    /// extend-add recycles buffer back.
+    contrib_buffer: Mat<f64>,
 }
 
 impl Default for FactorizationWorkspace {
@@ -100,6 +107,7 @@ impl FactorizationWorkspace {
                 frontal_row_indices: Vec::new(),
                 delayed_cols_buf: Vec::new(),
                 global_to_local: vec![NOT_IN_FRONT; n],
+                contrib_buffer: Mat::zeros(0, 0),
             };
         }
         Self {
@@ -107,6 +115,9 @@ impl FactorizationWorkspace {
             frontal_row_indices: Vec::with_capacity(max_front),
             delayed_cols_buf: Vec::with_capacity(max_front),
             global_to_local: vec![NOT_IN_FRONT; n],
+            // Lazily allocated on first use in factor_single_supernode.
+            // Recycled via extend_add buffer return, so typically allocates once.
+            contrib_buffer: Mat::new(),
         }
     }
 
@@ -117,6 +128,7 @@ impl FactorizationWorkspace {
             frontal_row_indices: Vec::new(),
             delayed_cols_buf: Vec::new(),
             global_to_local: Vec::new(),
+            contrib_buffer: Mat::new(),
         }
     }
 
@@ -144,12 +156,12 @@ impl FactorizationWorkspace {
         }
     }
 
-    /// Ensure workspace capacity is at least `max_front × max_front` for frontal
-    /// data and `n` for global-to-local mapping. Grows buffers if needed.
-    fn ensure_capacity(&mut self, max_front: usize, n: usize) {
-        if self.frontal_data.nrows() < max_front || self.frontal_data.ncols() < max_front {
-            self.frontal_data = Mat::zeros(max_front, max_front);
-        }
+    /// Ensure `global_to_local` mapping is at least `n` entries.
+    ///
+    /// Used by the parallel path where frontal_data grows on demand in
+    /// `factor_single_supernode` (avoiding eager max_front² allocation
+    /// per thread that causes OOM on large-front matrices like H2O).
+    fn ensure_g2l(&mut self, n: usize) {
         if self.global_to_local.len() < n {
             self.global_to_local.resize(n, NOT_IN_FRONT);
         }
@@ -597,6 +609,9 @@ pub struct PerSupernodeStats {
     /// Wall-clock time for extracting the contribution block.
     #[cfg(feature = "diagnostic")]
     pub extract_contrib_time: std::time::Duration,
+    /// Wall-clock time for the deferred contribution GEMM.
+    #[cfg(feature = "diagnostic")]
+    pub contrib_gemm_time: std::time::Duration,
 }
 
 /// Aggregate statistics from multifrontal factorization.
@@ -651,6 +666,9 @@ pub struct FactorizationStats {
     /// Sum of contribution extraction times across all supernodes.
     #[cfg(feature = "diagnostic")]
     pub total_extract_contrib_time: std::time::Duration,
+    /// Sum of deferred contribution GEMM times across all supernodes.
+    #[cfg(feature = "diagnostic")]
+    pub total_contrib_gemm_time: std::time::Duration,
 }
 
 /// Assembled frontal matrix exported for diagnostic comparison.
@@ -884,6 +902,8 @@ impl AptpNumeric {
             total_extract_factors_time: std::time::Duration::ZERO,
             #[cfg(feature = "diagnostic")]
             total_extract_contrib_time: std::time::Duration::ZERO,
+            #[cfg(feature = "diagnostic")]
+            total_contrib_gemm_time: std::time::Duration::ZERO,
         };
         for sn_stat in &per_sn_stats {
             stats.total_1x1_pivots += sn_stat.num_1x1;
@@ -903,6 +923,7 @@ impl AptpNumeric {
                 stats.total_extend_add_time += sn_stat.extend_add_time;
                 stats.total_extract_factors_time += sn_stat.extract_factors_time;
                 stats.total_extract_contrib_time += sn_stat.extract_contrib_time;
+                stats.total_contrib_gemm_time += sn_stat.contrib_gemm_time;
             }
         }
 
@@ -1066,7 +1087,7 @@ impl AptpNumeric {
 
                 for &c in &children[s] {
                     if let Some(cb) = contributions[c].take() {
-                        extend_add(&mut frontal, &cb, &global_to_local);
+                        let _ = extend_add(&mut frontal, cb, &global_to_local);
                     }
                 }
             }
@@ -1090,12 +1111,26 @@ impl AptpNumeric {
             let ne = result.num_eliminated;
 
             if sn.parent.is_some() && ne < m {
+                let nfs = m - k;
+                let mut cb = Mat::zeros(m, m);
+                if nfs > 0 {
+                    compute_contribution_gemm(
+                        &frontal_data,
+                        k,
+                        ne,
+                        m,
+                        &result.d,
+                        &mut cb,
+                        Par::Seq,
+                    );
+                }
                 contributions[s] = Some(extract_contribution(
                     &frontal_data,
                     m,
                     k,
                     &frontal_rows,
                     &result,
+                    cb,
                 ));
             }
 
@@ -1262,14 +1297,19 @@ fn factor_single_supernode(
     for opt_cb in child_contributions {
         if let Some(cb) = opt_cb {
             // Check if this child had delays — if so, fall back to g2l
-            if cb.num_delayed > 0 || ndelay_in > 0 {
-                extend_add(&mut frontal, &cb, &workspace.global_to_local);
+            let recycled = if cb.num_delayed > 0 || ndelay_in > 0 {
+                extend_add(&mut frontal, cb, &workspace.global_to_local)
             } else {
                 // Fast path: use precomputed row mapping
                 let ea_start = assembly_maps.ea_offsets[ea_child_idx];
                 let ea_end = assembly_maps.ea_offsets[ea_child_idx + 1];
                 let ea_row_map = &assembly_maps.ea_map[ea_start..ea_end];
-                extend_add_mapped(&mut frontal, &cb, ea_row_map);
+                extend_add_mapped(&mut frontal, cb, ea_row_map)
+            };
+            // Recycle the returned buffer into workspace if it's larger than
+            // what we currently have (or if ours was moved out).
+            if recycled.nrows() >= workspace.contrib_buffer.nrows() {
+                workspace.contrib_buffer = recycled;
             }
         }
         // Always increment: ea_offsets indexes all children, including those
@@ -1306,6 +1346,32 @@ fn factor_single_supernode(
     #[cfg(feature = "diagnostic")]
     let kernel_time = kernel_start.elapsed();
 
+    // 6b. Deferred contribution GEMM: compute NFS×NFS Schur complement directly
+    //     into workspace.contrib_buffer. This replaces the per-block NFS×NFS
+    //     updates that were skipped during the blocking loop.
+    #[cfg(feature = "diagnostic")]
+    let contrib_gemm_start = std::time::Instant::now();
+
+    let nfs = m - k;
+    if sn.parent.is_some() && ne < m && nfs > 0 {
+        // Ensure contrib_buffer is large enough (rare: delayed cascades may exceed estimate)
+        if workspace.contrib_buffer.nrows() < m || workspace.contrib_buffer.ncols() < m {
+            workspace.contrib_buffer = Mat::zeros(m, m);
+        }
+        compute_contribution_gemm(
+            &workspace.frontal_data,
+            k,
+            ne,
+            m,
+            &result.d,
+            &mut workspace.contrib_buffer,
+            effective_par,
+        );
+    }
+
+    #[cfg(feature = "diagnostic")]
+    let contrib_gemm_time = contrib_gemm_start.elapsed();
+
     // 7. Extract front factors (reads from workspace frontal data)
     #[cfg(feature = "diagnostic")]
     let extraction_start = std::time::Instant::now();
@@ -1325,6 +1391,8 @@ fn factor_single_supernode(
     let extract_factors_time = extract_factors_start.elapsed();
 
     // 8. Prepare contribution for parent (if not root and not fully eliminated)
+    //    NFS×NFS data is in workspace.contrib_buffer (from deferred GEMM).
+    //    Delayed-column data (if any) is still in workspace.frontal_data.
     #[cfg(feature = "diagnostic")]
     let extract_contrib_start = std::time::Instant::now();
 
@@ -1335,6 +1403,7 @@ fn factor_single_supernode(
             k,
             &workspace.frontal_row_indices,
             &result,
+            std::mem::replace(&mut workspace.contrib_buffer, Mat::new()),
         ))
     } else {
         None
@@ -1373,6 +1442,8 @@ fn factor_single_supernode(
         extract_factors_time,
         #[cfg(feature = "diagnostic")]
         extract_contrib_time,
+        #[cfg(feature = "diagnostic")]
+        contrib_gemm_time,
     };
 
     // Reset global_to_local entries for reuse (O(m), not O(n))
@@ -1433,6 +1504,15 @@ fn factor_tree_levelset(
     let max_front = estimate_max_front_size(supernodes);
     let mut shared_workspace = FactorizationWorkspace::new(max_front, n);
 
+    // Pool of workspaces for the parallel path. Each rayon worker takes a
+    // workspace from the pool, uses it, and returns it. Unlike `thread_local!`
+    // with `static` lifetime, the pool is dropped when `factor_tree_levelset`
+    // returns, freeing all workspace memory. This prevents OOM on matrices
+    // with large fronts (e.g. PARSEC/H2O: max_front=9258 → 685 MB per workspace)
+    // when `parallel_scaling` or similar tools run multiple factorizations.
+    let workspace_pool: std::sync::Mutex<Vec<FactorizationWorkspace>> =
+        std::sync::Mutex::new(Vec::new());
+
     // Initial ready set: all leaf supernodes (no children)
     let mut ready: Vec<usize> = (0..n_supernodes)
         .filter(|&s| remaining_children[s] == 0)
@@ -1474,28 +1554,30 @@ fn factor_tree_levelset(
                     })
                     .collect::<Result<_, _>>()?
             } else {
-                // Parallel: use thread-local workspace so each rayon worker
-                // allocates once and reuses across all waves/supernodes.
-                // We use Cell::take/set (move semantics) instead of RefCell
-                // because factor_single_supernode may invoke rayon-parallel
-                // BLAS (Par::rayon) which can work-steal other tasks from
-                // this par_iter onto the same thread, causing re-entrant
-                // borrow panics with RefCell.
+                // Parallel: take workspaces from the caller-owned pool so each
+                // rayon worker gets exclusive ownership during factorization.
+                // The pool is reused across level-set waves and dropped when
+                // factor_tree_levelset returns (unlike thread_local! which leaks
+                // for the lifetime of the rayon thread pool).
+                //
+                // If rayon work-steals another par_iter task onto the same thread
+                // (due to nested Par::rayon BLAS), that task takes a separate
+                // workspace from the pool — no aliasing.
                 use rayon::iter::{IntoParallelIterator, ParallelIterator};
-                use std::cell::Cell;
-                thread_local! {
-                    static FACTOR_WORKSPACE: Cell<FactorizationWorkspace> =
-                        const { Cell::new(FactorizationWorkspace::empty()) };
-                }
                 batch_inputs
                     .into_par_iter()
                     .map(|(s, contribs)| {
-                        // Take the workspace out of thread-local (leaves empty behind).
-                        // If another task on this thread runs while we hold the workspace
-                        // (rayon work-stealing during nested parallelism), it will get
-                        // an empty workspace, resize it, and put it back when done.
-                        let mut ws = FACTOR_WORKSPACE.take();
-                        ws.ensure_capacity(max_front, n);
+                        // Poisoned mutex means a worker panicked — already fatal.
+                        let mut ws = workspace_pool
+                            .lock()
+                            .unwrap()
+                            .pop()
+                            .unwrap_or_else(FactorizationWorkspace::empty);
+                        // Only ensure global_to_local is sized; frontal_data
+                        // grows on demand in factor_single_supernode. Avoids
+                        // eagerly allocating max_front² per thread (OOM on
+                        // large-front matrices like H2O: 9258² × 8 = 685 MB).
+                        ws.ensure_g2l(n);
                         let result = factor_single_supernode(
                             s,
                             &supernodes[s],
@@ -1508,8 +1590,8 @@ fn factor_tree_levelset(
                             &mut ws,
                             assembly_maps,
                         );
-                        // Put workspace back for reuse by the next task on this thread.
-                        FACTOR_WORKSPACE.set(ws);
+                        // Poisoned mutex means a worker panicked — already fatal.
+                        workspace_pool.lock().unwrap().push(ws);
                         result
                     })
                     .collect::<Result<_, _>>()?
@@ -1694,10 +1776,10 @@ fn scatter_original_entries_multi(
 /// - Liu (1992), Section 4.2: extend-add operator
 pub(crate) fn extend_add(
     parent: &mut FrontalMatrix<'_>,
-    child: &ContributionBlock,
+    child: ContributionBlock,
     global_to_local: &[usize],
-) {
-    let cb_size = child.data.nrows();
+) -> Mat<f64> {
+    let cb_size = child.row_indices.len();
     for i in 0..cb_size {
         let gi = child.row_indices[i];
         let li = global_to_local[gi];
@@ -1726,6 +1808,8 @@ pub(crate) fn extend_add(
             }
         }
     }
+    // Return the consumed data buffer for recycling into workspace.contrib_buffer
+    child.data
 }
 
 /// Extend-add using a precomputed child→parent row mapping.
@@ -1742,10 +1826,10 @@ pub(crate) fn extend_add(
 ///   parent frontal local row index. Length equals the child's pattern size.
 fn extend_add_mapped(
     parent: &mut FrontalMatrix<'_>,
-    child: &ContributionBlock,
+    child: ContributionBlock,
     ea_row_map: &[u32],
-) {
-    let cb_size = child.data.nrows();
+) -> Mat<f64> {
+    let cb_size = child.row_indices.len();
     debug_assert!(
         ea_row_map.len() >= cb_size,
         "extend_add_mapped: ea_row_map len {} < cb_size {}",
@@ -1768,6 +1852,8 @@ fn extend_add_mapped(
             }
         }
     }
+    // Return the consumed data buffer for recycling into workspace.contrib_buffer
+    child.data
 }
 
 /// Extract per-supernode factors from a factored frontal matrix.
@@ -1926,13 +2012,17 @@ pub(crate) fn extract_front_factors(
 
 /// Extract the contribution block from a factored frontal matrix.
 ///
-/// The contribution block is the trailing `(m - ne) × (m - ne)` submatrix
-/// of the factored frontal matrix, containing:
-/// - Delayed columns (positions 0..num_delayed)
-/// - Schur complement entries (positions num_delayed..size)
+/// The NFS×NFS Schur complement data is already in `contrib_buffer` (written
+/// by [`compute_contribution_gemm`]). This function adds any delayed-column
+/// data from the workspace and builds the index metadata.
 ///
-/// Uses per-column `col_as_slice` + `copy_from_slice` for bulk extraction,
-/// replacing element-by-element indexing.
+/// # Layout within returned `ContributionBlock.data`
+///
+/// ```text
+/// [0..num_delayed, 0..num_delayed]     → delayed × delayed (from workspace)
+/// [num_delayed..size, 0..num_delayed]  → NFS × delayed cross-terms (from workspace)
+/// [num_delayed..size, num_delayed..size] → NFS × NFS Schur complement (from contrib_buffer)
+/// ```
 ///
 /// # Arguments
 ///
@@ -1941,26 +2031,59 @@ pub(crate) fn extract_front_factors(
 /// - `k`: Number of fully-summed rows/columns.
 /// - `frontal_row_indices`: Global permuted column indices for each local row.
 /// - `result`: APTP factorization result.
+/// - `contrib_buffer`: Pre-allocated buffer already containing NFS×NFS data
+///   in `[0..nfs, 0..nfs]` (from deferred GEMM). Moved in; becomes the
+///   `ContributionBlock.data`.
 pub(crate) fn extract_contribution(
     frontal_data: &Mat<f64>,
     m: usize,
     k: usize,
     frontal_row_indices: &[usize],
     result: &AptpFactorResult,
+    mut contrib_buffer: Mat<f64>,
 ) -> ContributionBlock {
     let ne = result.num_eliminated;
     let size = m - ne;
     let num_delayed = k - ne;
+    let nfs = m - k; // = size - num_delayed
 
-    // Copy trailing submatrix (lower triangle only) via per-column bulk copies.
-    // Each column j copies the contiguous segment [ne+j .. ne+j+col_len) from the
-    // source column (ne+j) into destination column j at rows [j..size).
-    let mut data = Mat::zeros(size, size);
-    for j in 0..size {
-        let col_len = size - j;
-        let src = &frontal_data.col_as_slice(ne + j)[ne + j..ne + j + col_len];
-        data.col_as_slice_mut(j)[j..j + col_len].copy_from_slice(src);
+    // The NFS×NFS region (contrib_buffer[0..nfs, 0..nfs]) is already filled by
+    // compute_contribution_gemm. We need to handle delayed columns (if any) by
+    // shifting the NFS×NFS data to make room for the delayed portion.
+    if num_delayed > 0 {
+        // Delayed columns exist: we need to assemble the full (size × size) contribution.
+        // Layout: [delayed × delayed | NFS × delayed | NFS × NFS]
+        //
+        // Strategy: allocate a new buffer of the correct size, copy delayed regions
+        // from workspace, and NFS×NFS from contrib_buffer.
+        let mut data = Mat::zeros(size, size);
+
+        // Copy delayed × delayed from workspace: frontal_data[ne..k, ne..k]
+        // These positions are in the APTP-permuted order. The delayed columns
+        // are at positions ne..k in the factored frontal matrix.
+        for j in 0..num_delayed {
+            let col_len = num_delayed - j;
+            let src = &frontal_data.col_as_slice(ne + j)[ne + j..ne + j + col_len];
+            data.col_as_slice_mut(j)[j..j + col_len].copy_from_slice(src);
+        }
+
+        // Copy NFS × delayed cross-terms from workspace: frontal_data[k..m, ne..k]
+        for j in 0..num_delayed {
+            let src = &frontal_data.col_as_slice(ne + j)[k..m];
+            data.col_as_slice_mut(j)[num_delayed..size].copy_from_slice(src);
+        }
+
+        // Copy NFS × NFS from contrib_buffer[0..nfs, 0..nfs] into data[num_delayed..size, num_delayed..size]
+        for j in 0..nfs {
+            let col_len = nfs - j;
+            let src = &contrib_buffer.col_as_slice(j)[j..j + col_len];
+            data.col_as_slice_mut(num_delayed + j)[num_delayed + j..size].copy_from_slice(src);
+        }
+
+        contrib_buffer = data;
     }
+    // else: num_delayed == 0 → contrib_buffer already has the full contribution
+    // (NFS×NFS = entire contribution), no copy needed. True zero-copy path.
 
     // Build row indices:
     // - First num_delayed entries: delayed columns mapped through result.perm and frontal_row_indices
@@ -1977,7 +2100,7 @@ pub(crate) fn extract_contribution(
     row_indices.extend_from_slice(&frontal_row_indices[k..m]);
 
     ContributionBlock {
-        data,
+        data: contrib_buffer,
         row_indices,
         num_delayed,
     }
@@ -2134,7 +2257,12 @@ mod tests {
 
         if num_delayed > 0 {
             let ff = extract_front_factors(&data, m, k, &row_indices, &result);
-            let cb = extract_contribution(&data, m, k, &row_indices, &result);
+            let nfs = m - k;
+            let mut contrib_buf = Mat::zeros(m, m);
+            if nfs > 0 {
+                compute_contribution_gemm(&data, k, ne, m, &result.d, &mut contrib_buf, Par::Seq);
+            }
+            let cb = extract_contribution(&data, m, k, &row_indices, &result, contrib_buf);
 
             // Both must have the same number of delayed rows
             assert_eq!(cb.num_delayed, num_delayed);
@@ -2616,5 +2744,125 @@ mod tests {
         assert_eq!(f[(5, 0)], 0.0, "no global(3,0) entry");
         assert_eq!(f[(5, 2)], 0.0, "no global(3,4) entry");
         assert_eq!(f[(5, 3)], 0.0, "no global(3,5) entry");
+    }
+
+    // -----------------------------------------------------------------------
+    // extend_add_mapped: precomputed-map scatter (zero-delay fast path)
+    // -----------------------------------------------------------------------
+
+    /// Test that `extend_add_mapped` correctly scatters a child contribution
+    /// into a parent frontal matrix using a precomputed u32 row mapping,
+    /// handling the lower-triangle symmetry swap when child ordering differs
+    /// from parent ordering.
+    #[test]
+    fn test_extend_add_mapped_hand_constructed() {
+        // Parent frontal: 5×5, initially zero (represents assembled parent).
+        let mut parent_data = Mat::<f64>::zeros(5, 5);
+        let parent_row_indices = vec![10, 20, 30, 40, 50]; // global indices (unused by mapped path)
+        let mut parent = FrontalMatrix {
+            data: parent_data.as_mut(),
+            row_indices: &parent_row_indices,
+            num_fully_summed: 3,
+        };
+
+        // Child contribution: 3×3 lower triangle.
+        //   [1.0          ]
+        //   [2.0  3.0     ]
+        //   [4.0  5.0  6.0]
+        let mut child_data = Mat::<f64>::zeros(3, 3);
+        child_data[(0, 0)] = 1.0;
+        child_data[(1, 0)] = 2.0;
+        child_data[(1, 1)] = 3.0;
+        child_data[(2, 0)] = 4.0;
+        child_data[(2, 1)] = 5.0;
+        child_data[(2, 2)] = 6.0;
+
+        let child = ContributionBlock {
+            data: child_data,
+            row_indices: vec![30, 10, 40], // global indices
+            num_delayed: 0,
+        };
+
+        // Precomputed map: child row 0 → parent local 2 (global 30),
+        //                  child row 1 → parent local 0 (global 10),
+        //                  child row 2 → parent local 3 (global 40).
+        // Note: child row 1 maps to a LOWER parent index than child row 0,
+        // so extend_add_mapped must handle the li < lj swap case.
+        let ea_row_map: Vec<u32> = vec![2, 0, 3];
+
+        let recycled = extend_add_mapped(&mut parent, child, &ea_row_map);
+
+        // Verify buffer is returned for recycling
+        assert_eq!(recycled.nrows(), 3);
+        assert_eq!(recycled.ncols(), 3);
+
+        // Expected scatter (lower triangle of parent):
+        //
+        // child(0,0)=1.0: li=2, lj=2 → parent(2,2) += 1.0
+        // child(1,0)=2.0: li=0, lj=2 → li < lj, swap → parent(2,0) += 2.0
+        // child(1,1)=3.0: li=0, lj=0 → parent(0,0) += 3.0
+        // child(2,0)=4.0: li=3, lj=2 → parent(3,2) += 4.0
+        // child(2,1)=5.0: li=3, lj=0 → parent(3,0) += 5.0
+        // child(2,2)=6.0: li=3, lj=3 → parent(3,3) += 6.0
+
+        let p = parent.data.as_ref();
+        assert_eq!(p[(0, 0)], 3.0, "child(1,1)=3.0 → parent(0,0)");
+        assert_eq!(p[(2, 0)], 2.0, "child(1,0)=2.0 swapped → parent(2,0)");
+        assert_eq!(p[(2, 2)], 1.0, "child(0,0)=1.0 → parent(2,2)");
+        assert_eq!(p[(3, 0)], 5.0, "child(2,1)=5.0 → parent(3,0)");
+        assert_eq!(p[(3, 2)], 4.0, "child(2,0)=4.0 → parent(3,2)");
+        assert_eq!(p[(3, 3)], 6.0, "child(2,2)=6.0 → parent(3,3)");
+
+        // Verify no spurious entries (untouched positions remain zero)
+        assert_eq!(p[(1, 0)], 0.0, "row 1 untouched");
+        assert_eq!(p[(1, 1)], 0.0, "row 1 untouched");
+        assert_eq!(p[(4, 0)], 0.0, "row 4 untouched");
+        assert_eq!(p[(4, 4)], 0.0, "row 4 untouched");
+    }
+
+    /// Test that `extend_add_mapped` accumulates contributions from multiple
+    /// children into the same parent.
+    #[test]
+    fn test_extend_add_mapped_accumulates() {
+        let mut parent_data = Mat::<f64>::zeros(4, 4);
+        let parent_row_indices = vec![0, 1, 2, 3];
+        let mut parent = FrontalMatrix {
+            data: parent_data.as_mut(),
+            row_indices: &parent_row_indices,
+            num_fully_summed: 2,
+        };
+
+        // First child: 2×2, maps to parent rows [1, 3]
+        let mut c1_data = Mat::<f64>::zeros(2, 2);
+        c1_data[(0, 0)] = 10.0;
+        c1_data[(1, 0)] = 20.0;
+        c1_data[(1, 1)] = 30.0;
+        let child1 = ContributionBlock {
+            data: c1_data,
+            row_indices: vec![1, 3],
+            num_delayed: 0,
+        };
+        let map1: Vec<u32> = vec![1, 3];
+
+        let _ = extend_add_mapped(&mut parent, child1, &map1);
+
+        // Second child: 2×2, also maps to parent rows [1, 3]
+        let mut c2_data = Mat::<f64>::zeros(2, 2);
+        c2_data[(0, 0)] = 5.0;
+        c2_data[(1, 0)] = 7.0;
+        c2_data[(1, 1)] = 9.0;
+        let child2 = ContributionBlock {
+            data: c2_data,
+            row_indices: vec![1, 3],
+            num_delayed: 0,
+        };
+        let map2: Vec<u32> = vec![1, 3];
+
+        let _ = extend_add_mapped(&mut parent, child2, &map2);
+
+        let p = parent.data.as_ref();
+        assert_eq!(p[(1, 1)], 15.0, "10 + 5 accumulated");
+        assert_eq!(p[(3, 1)], 27.0, "20 + 7 accumulated");
+        assert_eq!(p[(3, 3)], 39.0, "30 + 9 accumulated");
     }
 }

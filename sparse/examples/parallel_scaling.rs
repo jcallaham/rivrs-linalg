@@ -111,6 +111,7 @@ fn main() {
         let mut max_front = 0;
         let mut num_supernodes = 0;
 
+        let rss_before = rivrs_sparse::benchmarking::read_peak_rss_kb();
         for &nthreads in &thread_counts {
             let par = if nthreads <= 1 {
                 Par::Seq
@@ -193,7 +194,38 @@ fn main() {
                 solve_efficiency: solve_speedup / effective_threads,
             });
 
+            // Log current RSS before dropping solver
+            let rss_with_solver = rivrs_sparse::benchmarking::read_current_rss_kb().unwrap_or(0);
             eprint!("T{}:{:.1}ms ", nthreads, factor_ms);
+
+            // Drop solver explicitly and force glibc to return freed pages to OS.
+            // Without malloc_trim, glibc holds freed pages in its arena — for H2O
+            // (5.9 GB peak), only ~1.3 GB is returned on drop, leaving 4.5 GB of
+            // unreturned-but-freed memory that causes OOM on the next thread count.
+            drop(solver);
+            #[cfg(target_os = "linux")]
+            {
+                unsafe extern "C" {
+                    fn malloc_trim(pad: usize) -> i32;
+                }
+                unsafe {
+                    malloc_trim(0);
+                }
+            }
+            let rss_after_drop = rivrs_sparse::benchmarking::read_current_rss_kb().unwrap_or(0);
+            if rss_with_solver > 100_000 {
+                eprint!(
+                    "[rss:{}→{}MB] ",
+                    rss_with_solver / 1024,
+                    rss_after_drop / 1024
+                );
+            }
+        }
+        let rss_end = rivrs_sparse::benchmarking::read_current_rss_kb().unwrap_or(0);
+        if let Some(before) = rss_before {
+            if rss_end > 100_000 || before > 100_000 {
+                eprint!("[matrix rss:{}→{}MB] ", before / 1024, rss_end / 1024);
+            }
         }
         eprintln!();
 
