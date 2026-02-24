@@ -1567,6 +1567,7 @@ fn factor_tree_levelset(
                 batch_inputs
                     .into_par_iter()
                     .map(|(s, contribs)| {
+                        // Poisoned mutex means a worker panicked — already fatal.
                         let mut ws = workspace_pool
                             .lock()
                             .unwrap()
@@ -1589,6 +1590,7 @@ fn factor_tree_levelset(
                             &mut ws,
                             assembly_maps,
                         );
+                        // Poisoned mutex means a worker panicked — already fatal.
                         workspace_pool.lock().unwrap().push(ws);
                         result
                     })
@@ -2742,5 +2744,125 @@ mod tests {
         assert_eq!(f[(5, 0)], 0.0, "no global(3,0) entry");
         assert_eq!(f[(5, 2)], 0.0, "no global(3,4) entry");
         assert_eq!(f[(5, 3)], 0.0, "no global(3,5) entry");
+    }
+
+    // -----------------------------------------------------------------------
+    // extend_add_mapped: precomputed-map scatter (zero-delay fast path)
+    // -----------------------------------------------------------------------
+
+    /// Test that `extend_add_mapped` correctly scatters a child contribution
+    /// into a parent frontal matrix using a precomputed u32 row mapping,
+    /// handling the lower-triangle symmetry swap when child ordering differs
+    /// from parent ordering.
+    #[test]
+    fn test_extend_add_mapped_hand_constructed() {
+        // Parent frontal: 5×5, initially zero (represents assembled parent).
+        let mut parent_data = Mat::<f64>::zeros(5, 5);
+        let parent_row_indices = vec![10, 20, 30, 40, 50]; // global indices (unused by mapped path)
+        let mut parent = FrontalMatrix {
+            data: parent_data.as_mut(),
+            row_indices: &parent_row_indices,
+            num_fully_summed: 3,
+        };
+
+        // Child contribution: 3×3 lower triangle.
+        //   [1.0          ]
+        //   [2.0  3.0     ]
+        //   [4.0  5.0  6.0]
+        let mut child_data = Mat::<f64>::zeros(3, 3);
+        child_data[(0, 0)] = 1.0;
+        child_data[(1, 0)] = 2.0;
+        child_data[(1, 1)] = 3.0;
+        child_data[(2, 0)] = 4.0;
+        child_data[(2, 1)] = 5.0;
+        child_data[(2, 2)] = 6.0;
+
+        let child = ContributionBlock {
+            data: child_data,
+            row_indices: vec![30, 10, 40], // global indices
+            num_delayed: 0,
+        };
+
+        // Precomputed map: child row 0 → parent local 2 (global 30),
+        //                  child row 1 → parent local 0 (global 10),
+        //                  child row 2 → parent local 3 (global 40).
+        // Note: child row 1 maps to a LOWER parent index than child row 0,
+        // so extend_add_mapped must handle the li < lj swap case.
+        let ea_row_map: Vec<u32> = vec![2, 0, 3];
+
+        let recycled = extend_add_mapped(&mut parent, child, &ea_row_map);
+
+        // Verify buffer is returned for recycling
+        assert_eq!(recycled.nrows(), 3);
+        assert_eq!(recycled.ncols(), 3);
+
+        // Expected scatter (lower triangle of parent):
+        //
+        // child(0,0)=1.0: li=2, lj=2 → parent(2,2) += 1.0
+        // child(1,0)=2.0: li=0, lj=2 → li < lj, swap → parent(2,0) += 2.0
+        // child(1,1)=3.0: li=0, lj=0 → parent(0,0) += 3.0
+        // child(2,0)=4.0: li=3, lj=2 → parent(3,2) += 4.0
+        // child(2,1)=5.0: li=3, lj=0 → parent(3,0) += 5.0
+        // child(2,2)=6.0: li=3, lj=3 → parent(3,3) += 6.0
+
+        let p = parent.data.as_ref();
+        assert_eq!(p[(0, 0)], 3.0, "child(1,1)=3.0 → parent(0,0)");
+        assert_eq!(p[(2, 0)], 2.0, "child(1,0)=2.0 swapped → parent(2,0)");
+        assert_eq!(p[(2, 2)], 1.0, "child(0,0)=1.0 → parent(2,2)");
+        assert_eq!(p[(3, 0)], 5.0, "child(2,1)=5.0 → parent(3,0)");
+        assert_eq!(p[(3, 2)], 4.0, "child(2,0)=4.0 → parent(3,2)");
+        assert_eq!(p[(3, 3)], 6.0, "child(2,2)=6.0 → parent(3,3)");
+
+        // Verify no spurious entries (untouched positions remain zero)
+        assert_eq!(p[(1, 0)], 0.0, "row 1 untouched");
+        assert_eq!(p[(1, 1)], 0.0, "row 1 untouched");
+        assert_eq!(p[(4, 0)], 0.0, "row 4 untouched");
+        assert_eq!(p[(4, 4)], 0.0, "row 4 untouched");
+    }
+
+    /// Test that `extend_add_mapped` accumulates contributions from multiple
+    /// children into the same parent.
+    #[test]
+    fn test_extend_add_mapped_accumulates() {
+        let mut parent_data = Mat::<f64>::zeros(4, 4);
+        let parent_row_indices = vec![0, 1, 2, 3];
+        let mut parent = FrontalMatrix {
+            data: parent_data.as_mut(),
+            row_indices: &parent_row_indices,
+            num_fully_summed: 2,
+        };
+
+        // First child: 2×2, maps to parent rows [1, 3]
+        let mut c1_data = Mat::<f64>::zeros(2, 2);
+        c1_data[(0, 0)] = 10.0;
+        c1_data[(1, 0)] = 20.0;
+        c1_data[(1, 1)] = 30.0;
+        let child1 = ContributionBlock {
+            data: c1_data,
+            row_indices: vec![1, 3],
+            num_delayed: 0,
+        };
+        let map1: Vec<u32> = vec![1, 3];
+
+        let _ = extend_add_mapped(&mut parent, child1, &map1);
+
+        // Second child: 2×2, also maps to parent rows [1, 3]
+        let mut c2_data = Mat::<f64>::zeros(2, 2);
+        c2_data[(0, 0)] = 5.0;
+        c2_data[(1, 0)] = 7.0;
+        c2_data[(1, 1)] = 9.0;
+        let child2 = ContributionBlock {
+            data: c2_data,
+            row_indices: vec![1, 3],
+            num_delayed: 0,
+        };
+        let map2: Vec<u32> = vec![1, 3];
+
+        let _ = extend_add_mapped(&mut parent, child2, &map2);
+
+        let p = parent.data.as_ref();
+        assert_eq!(p[(1, 1)], 15.0, "10 + 5 accumulated");
+        assert_eq!(p[(3, 1)], 27.0, "20 + 7 accumulated");
+        assert_eq!(p[(3, 3)], 39.0, "30 + 9 accumulated");
     }
 }

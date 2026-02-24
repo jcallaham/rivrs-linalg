@@ -1648,7 +1648,9 @@ pub(crate) fn compute_contribution_gemm(
     // L21_NFS = frontal_data[p..m, 0..ne]
     let l21_nfs = frontal_data.as_ref().submatrix(p, 0, nfs, ne);
 
-    // Allocate W buffer for L*D product
+    // TODO: Pre-allocate W in FactorizationWorkspace to amortize across supernodes.
+    // Currently allocates per supernode; for matrices with thousands of supernodes
+    // this adds allocation pressure in the hot loop.
     let mut w = Mat::zeros(nfs, ne);
     compute_ld_into(l21_nfs, d, ne, w.as_mut());
 
@@ -5288,6 +5290,120 @@ mod tests {
              backup/restore/update_cross_terms logic in factor_inner.",
             worst_error,
             worst_config
+        );
+    }
+
+    // ---- NFS boundary in two-level factor tests ----
+
+    #[test]
+    fn test_two_level_nfs_boundary_mid_block() {
+        // Exercises the local nfs_boundary = p - col_start computation in
+        // two_level_factor. When p is not a multiple of outer_block_size,
+        // the last outer block has nfs_boundary < block_cols, meaning the
+        // NFS region starts inside an inner block. update_trailing must
+        // correctly restrict its Schur update to the FS region and skip
+        // the NFS×NFS region (deferred to compute_contribution_gemm).
+        //
+        // If nfs_boundary is wrong, the Schur complement (contribution
+        // block) will be corrupted, failing the reconstruction check.
+
+        struct Config {
+            m: usize,
+            p: usize,
+            nb: usize,
+            ib: usize,
+            seed: u64,
+        }
+
+        let configs = [
+            // p=20, nb=16: first block nfs_boundary=20, second block nfs_boundary=4
+            // (NFS starts at col 4 of the second 16-col outer block)
+            Config {
+                m: 48,
+                p: 20,
+                nb: 16,
+                ib: 8,
+                seed: 42,
+            },
+            // p=40, nb=32: first block nfs_boundary=40, second block nfs_boundary=8
+            Config {
+                m: 64,
+                p: 40,
+                nb: 32,
+                ib: 8,
+                seed: 42,
+            },
+            // p=10, nb=8: first block nfs_boundary=10, second block nfs_boundary=2
+            // (very small NFS boundary in inner block)
+            Config {
+                m: 24,
+                p: 10,
+                nb: 8,
+                ib: 4,
+                seed: 137,
+            },
+            // p=25, nb=16: blocks at col_start=0 (nfs=25), col_start=16 (nfs=9)
+            Config {
+                m: 48,
+                p: 25,
+                nb: 16,
+                ib: 8,
+                seed: 271,
+            },
+            // Deliberately misalign p with ib too: p=13, nb=8, ib=4
+            // block 0: nfs_boundary=13, block 1: nfs_boundary=5 (mid-ib boundary)
+            Config {
+                m: 32,
+                p: 13,
+                nb: 8,
+                ib: 4,
+                seed: 42,
+            },
+        ];
+
+        let mut worst_error = 0.0_f64;
+        let mut worst_label = String::new();
+
+        for (idx, c) in configs.iter().enumerate() {
+            let a = deterministic_indefinite_matrix(c.m, c.seed, 5.0);
+
+            let opts = AptpOptions {
+                outer_block_size: c.nb,
+                inner_block_size: c.ib,
+                threshold: 0.01,
+                failed_pivot_method: FailedPivotMethod::Pass,
+                ..AptpOptions::default()
+            };
+
+            let original = a.clone();
+            let mut a_copy = a;
+            let result = aptp_factor_in_place(a_copy.as_mut(), c.p, &opts).unwrap();
+
+            let sum = result.stats.num_1x1 + 2 * result.stats.num_2x2 + result.stats.num_delayed;
+            assert_eq!(
+                sum, c.p,
+                "config {}: statistics invariant {} != {}",
+                idx, sum, c.p
+            );
+
+            let error = check_partial_factorization_in_place(&original, &a_copy, c.p, &result);
+
+            if error > worst_error {
+                worst_error = error;
+                worst_label = format!(
+                    "config {} (m={}, p={}, nb={}, ib={}, seed={})",
+                    idx, c.m, c.p, c.nb, c.ib, c.seed
+                );
+            }
+        }
+
+        assert!(
+            worst_error < 1e-10,
+            "Worst reconstruction error: {:.2e} at {}\n\
+             This indicates the local nfs_boundary computation in \
+             two_level_factor is producing incorrect Schur complements.",
+            worst_error,
+            worst_label
         );
     }
 

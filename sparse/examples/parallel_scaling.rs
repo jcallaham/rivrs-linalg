@@ -195,8 +195,7 @@ fn main() {
             });
 
             // Log current RSS before dropping solver
-            let rss_with_solver =
-                rivrs_sparse::benchmarking::read_current_rss_kb().unwrap_or(0);
+            let rss_with_solver = rivrs_sparse::benchmarking::read_current_rss_kb().unwrap_or(0);
             eprint!("T{}:{:.1}ms ", nthreads, factor_ms);
 
             // Drop solver explicitly and force glibc to return freed pages to OS.
@@ -213,8 +212,7 @@ fn main() {
                     malloc_trim(0);
                 }
             }
-            let rss_after_drop =
-                rivrs_sparse::benchmarking::read_current_rss_kb().unwrap_or(0);
+            let rss_after_drop = rivrs_sparse::benchmarking::read_current_rss_kb().unwrap_or(0);
             if rss_with_solver > 100_000 {
                 eprint!(
                     "[rss:{}→{}MB] ",
