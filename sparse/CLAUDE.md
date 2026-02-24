@@ -8,7 +8,7 @@ This directory contains sparse linear algebra solver implementations for rivrs-l
 
 **Parent Project**: rivrs-linalg - Numerical Linear Algebra for Rivrs
 **Domain**: Sparse direct solvers (SSIDS, LDL^T factorization, APTP pivoting)
-**Current Status**: Phase 9.1c complete — assembly/extraction optimization + sub-phase profiling. c-71: 2.48× SPRAL (was 4.06×). Identified contribution block allocation as dominant bottleneck (40.1% + 33.3% of factor time). 65/65 SuiteSparse matrices passing.
+**Current Status**: Phase 9.1c complete — assembly/extraction optimization + sub-phase profiling. c-71: 2.48× SPRAL (was 4.06×). Phase 9.1d pool-based contribution reuse investigated and abandoned (allocation overhead eliminated but copy bottleneck is architectural). Architecture review recommends SPRAL-style direct GEMM into contribution buffer. 65/65 SuiteSparse matrices passing.
 
 ### Development docs
 
@@ -16,6 +16,7 @@ This directory contains sparse linear algebra solver implementations for rivrs-l
 - `docs/ssids-log.md` — Changelog for development updates, organized by phase. Records what was built, changed, fixed, and why.
 - `docs/phase-8.1g-report.md` — Performance analysis report with workload distribution and Phase 8.2 parallelism recommendations.
 - `docs/phase9/phase-9.1c-profiling-report.md` — Sub-phase profiling + perf stat analysis identifying contribution block allocation as dominant bottleneck.
+- `docs/phase9/phase-9.1d-contrib-architecture-review.md` — Architecture review comparing pool-based reuse (abandoned) vs SPRAL's zero-copy design. Recommends direct GEMM into contribution buffer.
 
 ## Licensing Strategy - Clean Room Implementation
 
@@ -402,15 +403,14 @@ unit tests of the symbolic analysis and factorization kernel on small matrices.
 - Phase 9.1c: Assembly & extraction optimization — Precomputed scatter maps (AssemblyMaps), bulk column-slice copies, fill(0.0) zeroing, sub-phase timing instrumentation. c-71: 4.06×→2.48× SPRAL. Sub-phase profiling identified contribution block allocation as dominant bottleneck (extract_contrib 40.1% + extend-add 33.3% of factor time). perf stat: 644B dTLB misses, 3.1s/32% sys time from mmap churn.
 
 **Next:**
-- Phase 9.1d: Contribution workspace reuse — eliminate per-supernode Mat allocation for contribution blocks
+- Phase 9.1d: Direct GEMM into contribution buffer — SPRAL-style architecture where final trailing GEMM writes Schur complement directly to pre-allocated contribution buffer, eliminating O(n²) extraction copy (14-19% of factor time)
 - Phase 9.1e: Small leaf subtree fast path
 - Phase 9.2: Release preparation (docs, examples, crates.io)
 
 ## Recent Changes
-- 023-contrib-workspace-reuse: Added Rust 1.87+ (edition 2024) + faer 0.22, rayon 1.x, serde/serde_json (diagnostic export)
 - 022-assembly-extraction-opt: Added Rust 1.87+ (edition 2024) + faer 0.22 (existing — no new deps)
 - 021-workspace-reuse: Added N/A (internal optimization; no new technologies)
 
 ## Active Technologies
-- Rust 1.87+ (edition 2024) + faer 0.22, rayon 1.x, serde/serde_json (diagnostic export) (023-contrib-workspace-reuse)
-- N/A (in-memory buffers; no persistent storage changes) (023-contrib-workspace-reuse)
+- Rust 1.87+ (edition 2024) + faer 0.22, rayon 1.x, serde/serde_json (diagnostic export) (022-assembly-extraction-opt)
+- N/A (internal optimization; no new technologies) (021-workspace-reuse)

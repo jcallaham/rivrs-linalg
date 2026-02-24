@@ -252,20 +252,6 @@ fn main() {
             factor_ms - sub_accounted,
             (factor_ms - sub_accounted) / factor_ms * 100.0
         );
-
-        // Pool statistics
-        eprintln!();
-        eprintln!("=== Contribution Pool ===");
-        eprintln!(
-            "  Pool hits:  {}  Pool misses: {}  Hit rate: {:.1}%",
-            stats.pool_hits,
-            stats.pool_misses,
-            if stats.pool_hits + stats.pool_misses > 0 {
-                stats.pool_hits as f64 / (stats.pool_hits + stats.pool_misses) as f64 * 100.0
-            } else {
-                0.0
-            }
-        );
     }
 
     // --- Per-supernode top-N ---
