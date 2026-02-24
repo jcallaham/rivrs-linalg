@@ -146,8 +146,8 @@
 - [X] T034 [P] Updated `examples/profile_matrix.rs`: ContribGEMM in Factor Time Breakdown, Sub-Phase Breakdown, and Chrome Trace export
 - [X] T035 `cargo test --features diagnostic` passes (all 483 tests + 11 doctests)
 - [X] T036 `cargo clippy --all-targets` and `cargo clippy --all-targets --features diagnostic` clean (no warnings)
-- [ ] T037 Run quickstart.md validation on Linux workstation: `cargo run --example profile_matrix --features diagnostic --release -- c-71` — verified on PARSEC/SiNa: ExtractContr=0.0%, ContribGEMM=62.0% (SC-001, SC-002)
-- [ ] T038 Run `cargo run --example baseline_collection --features diagnostic --release -- --ci-only` on Linux workstation to collect baseline and compare with Phase 9.1c (SC-003, SC-004)
+- [X] T037 Run quickstart.md validation on Linux workstation: `cargo run --example profile_matrix --features diagnostic --release -- c-71` — verified on PARSEC/SiNa: ExtractContr=0.0%, ContribGEMM=62.0% (SC-001, SC-002)
+- [X] T038 Run `cargo run --example baseline_collection --features diagnostic --release -- --ci-only` on Linux workstation to collect baseline and compare with Phase 9.1c (SC-003, SC-004)
 
 ---
 
