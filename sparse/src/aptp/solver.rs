@@ -87,6 +87,21 @@ pub struct FactorOptions {
     /// Minimum supernode size for amalgamation. Default: 32.
     /// Setting `nemin = 1` disables amalgamation.
     pub nemin: usize,
+    /// Front-size threshold for small-leaf subtree fast path. Supernodes with
+    /// front size strictly less than this value may be grouped into small-leaf
+    /// subtrees and processed via a streamlined code path that reuses a single
+    /// small workspace, avoiding per-supernode dispatch overhead.
+    ///
+    /// Default: 256. Set to 0 to disable the fast path entirely.
+    ///
+    /// # Relationship to `INTRA_NODE_THRESHOLD`
+    ///
+    /// This threshold determines which subtrees use the fast path (workspace
+    /// reuse, sequential processing). `INTRA_NODE_THRESHOLD` (also 256) controls
+    /// whether intra-node BLAS uses parallel or sequential execution. They are
+    /// independent but share the same default because fronts below 256 benefit
+    /// from neither parallel BLAS nor the general-path overhead.
+    pub small_leaf_threshold: usize,
 }
 
 impl Default for FactorOptions {
@@ -98,6 +113,7 @@ impl Default for FactorOptions {
             inner_block_size: 32,
             par: Par::Seq,
             nemin: 32,
+            small_leaf_threshold: 256,
         }
     }
 }
@@ -116,6 +132,9 @@ pub struct SolverOptions {
     /// Minimum supernode size for amalgamation. Default: 32.
     /// Setting `nemin = 1` disables amalgamation.
     pub nemin: usize,
+    /// Front-size threshold for small-leaf subtree fast path.
+    /// Default: 256. Set to 0 to disable. See [`FactorOptions::small_leaf_threshold`].
+    pub small_leaf_threshold: usize,
 }
 
 impl Default for SolverOptions {
@@ -126,6 +145,7 @@ impl Default for SolverOptions {
             fallback: AptpFallback::BunchKaufman,
             par: Par::Seq,
             nemin: 32,
+            small_leaf_threshold: 256,
         }
     }
 }
@@ -287,6 +307,7 @@ impl SparseLDLT {
             inner_block_size: options.inner_block_size,
             par: options.par,
             nemin: options.nemin,
+            small_leaf_threshold: options.small_leaf_threshold,
             ..AptpOptions::default()
         };
 
@@ -425,6 +446,7 @@ impl SparseLDLT {
             fallback: options.fallback,
             par: options.par,
             nemin: options.nemin,
+            small_leaf_threshold: options.small_leaf_threshold,
             ..FactorOptions::default()
         };
 

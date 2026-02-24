@@ -225,6 +225,7 @@ pub(crate) fn amalgamate(mut supernodes: Vec<SupernodeInfo>, nemin: usize) -> Ve
                     pattern: Vec::new(),
                     parent: None,
                     owned_ranges: Vec::new(),
+                    in_small_leaf: false,
                 },
             );
             sn.parent = sn.parent.map(|p| old_to_new[p]);
@@ -253,6 +254,7 @@ mod tests {
             pattern,
             parent,
             owned_ranges: vec![col_begin..col_end],
+            in_small_leaf: false,
         }
     }
 

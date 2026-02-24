@@ -114,6 +114,9 @@ pub struct AptpOptions {
     ///
     /// Corresponds to `options%nemin` (`datatypes.f90:21`).
     pub nemin: usize,
+    /// Front-size threshold for small-leaf subtree fast path. Default: 256.
+    /// Set to 0 to disable.
+    pub small_leaf_threshold: usize,
 }
 
 impl Default for AptpOptions {
@@ -127,6 +130,7 @@ impl Default for AptpOptions {
             failed_pivot_method: FailedPivotMethod::Tpp,
             par: Par::Seq,
             nemin: 32,
+            small_leaf_threshold: 256,
         }
     }
 }

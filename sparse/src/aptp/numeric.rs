@@ -441,6 +441,40 @@ pub(crate) struct SupernodeInfo {
     /// to other supernodes. `owned_ranges` tracks the true owned columns for
     /// scatter. Default: `[col_begin..col_end]`.
     pub owned_ranges: Vec<std::ops::Range<usize>>,
+    /// True if this supernode belongs to a classified small-leaf subtree.
+    /// Set by `classify_small_leaf_subtrees()` after amalgamation.
+    pub in_small_leaf: bool,
+}
+
+/// A classified small-leaf subtree eligible for the fast-path factorization.
+///
+/// Produced by [`classify_small_leaf_subtrees`] after amalgamation and consumed
+/// by `factor_small_leaf_subtree` during the pre-pass before the main level-set
+/// loop. All supernodes in the subtree have front_size < `small_leaf_threshold`,
+/// enabling a streamlined code path with a single small reusable workspace.
+///
+/// # Invariants
+///
+/// - `nodes.len() >= 2` (single-node "subtrees" are excluded)
+/// - `*nodes.last().unwrap() == root`
+/// - All nodes have `in_small_leaf = true`
+/// - `max_front_size < small_leaf_threshold`
+/// - Nodes are in postorder: children appear before parents
+///
+/// # References
+///
+/// - SPRAL `SymbolicSubtree.hxx:57-84` (BSD-3): subtree classification
+/// - SPRAL `SmallLeafNumericSubtree.hxx:187-446` (BSD-3): fast-path factorization
+pub(crate) struct SmallLeafSubtree {
+    /// Supernode ID of the subtree root (topmost node in the subtree).
+    pub root: usize,
+    /// Supernode IDs in postorder (leaves first, root last).
+    pub nodes: Vec<usize>,
+    /// Maximum front size across all nodes in the subtree.
+    pub max_front_size: usize,
+    /// Parent supernode outside the subtree that receives the root's contribution,
+    /// or `None` if the subtree root is also a tree root.
+    pub parent_of_root: Option<usize>,
 }
 
 // No methods needed — fields accessed directly within this module.
@@ -1647,6 +1681,7 @@ pub(crate) fn build_supernode_info(symbolic: &AptpSymbolic) -> Vec<SupernodeInfo
                         pattern,
                         parent,
                         owned_ranges: vec![begin[s]..end[s]],
+                        in_small_leaf: false,
                     }
                 })
                 .collect()
@@ -1681,6 +1716,7 @@ pub(crate) fn build_supernode_info(symbolic: &AptpSymbolic) -> Vec<SupernodeInfo
                         pattern,
                         parent,
                         owned_ranges: vec![j..j + 1],
+                        in_small_leaf: false,
                     }
                 })
                 .collect()
