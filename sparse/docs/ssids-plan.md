@@ -2784,60 +2784,99 @@ Expected impact: 1.5-2× speedup on c-71/c-big by reducing assembly/extraction
 overhead. If contribution copy alone is halved, c-71 should approach 3× and
 c-big should approach 3×.
 
-*9.1d Contribution workspace reuse**
+*9.1d: Contribution workspace reuse (ABANDONED)*
 
-The contribution copy is the single largest remaining allocation bottleneck.
-Two complementary approaches:
+Investigated pool-based contribution buffer reuse. A free-list pool on
+`FactorizationWorkspace` eliminated allocation syscall overhead (sys time
+3.1s→0.5s, page faults 934K→317K) but did not improve factor time. DFS
+traversal caused catastrophic pool buffer oversizing (2374× max oversize ratio,
+11.9 GB wasted physical memory). Level-set path had poor hit rate (18.4%).
 
-**Approach 1 — Contribution workspace on FactorizationWorkspace** (high priority):
-Add a pre-allocated `contribution_data: Mat<f64>` and `contribution_row_indices: Vec<usize>`
-to `FactorizationWorkspace`, sized to the maximum contribution dimension. Change
-`extract_contribution` to write into this workspace instead of allocating.
+Root cause: the bottleneck is O(n²) data movement (copying the Schur complement
+out of the frontal workspace), not allocation. The pool addresses the wrong
+problem. See `docs/phase9/phase-9.1d-contrib-architecture-review.md` for the
+full investigation and SPRAL architecture comparison.
 
-Key design challenge: the contribution from child s must survive until parent p
-assembles its frontal matrix. With the current level-set traversal, a parent's
-children may be processed in different waves. The last child processed before the
-parent leaves its contribution in the workspace, but earlier children's workspace
-data has been overwritten.
+All source code changes rolled back. Approach replaced by 9.1e below.
 
-**Solution**: In the sequential path, restructure the loop so each child's
-contribution is extended-add'd into the parent's frontal matrix immediately after
-the child is factored. This requires:
-1. The parent's frontal matrix must be allocated before its children are processed
-2. Each child's extend-add happens right after its `extract_contribution` (or better,
-   directly from the frontal workspace — see Approach 2)
-3. Scatter of original entries into the parent happens after all children complete
+*9.1e: Direct GEMM into contribution buffer (SPRAL-style architecture)*
 
-This is a departure from the current "collect all contributions, then assemble"
-pattern, but matches SPRAL's approach more closely.
+The critical optimization identified in 9.1d's architecture review. Instead of
+writing the Schur complement GEMM into the frontal workspace's trailing submatrix
+and then copying it out, write it directly into a pre-allocated contribution
+buffer. This is how SPRAL handles contributions and eliminates the dominant copy
+bottleneck (14-19% of factor time on c-71).
 
-**Approach 2 — Direct extend-add from frontal workspace** (highest priority):
-Skip the contribution copy entirely for the sequential path. After factoring
-supernode s, extend-add directly from the trailing submatrix of the frontal
-workspace into the parent's frontal matrix. The contribution data is already
-in the workspace — the copy to `ContributionBlock` is redundant when the
-workspace is still valid.
+**How SPRAL does it** (SPRAL `factor.hxx:92-103`):
 
-Requirements:
-1. Parent's frontal matrix must be pre-allocated (separate buffer from child's)
-2. The extend-add must happen before the workspace is reused for the next supernode
-3. Need to handle delayed columns correctly (row mapping changes with delays)
-4. For multi-child supernodes, only the last child can use direct extend-add;
-   earlier children must use the contribution workspace (Approach 1)
+The final trailing update in `factor_node_indef` targets `node.contrib` directly:
+```
+calcLD(m-n, nelim, &lcol[nelim*ldl+n], ldl, &d[2*nelim], ld, ldld);
+host_gemm(OP_N, OP_T, m-n, m-n, nelim,
+    -1.0, &lcol[nelim*ldl+n], ldl, ld, ldld,
+    rbeta, node.contrib, m-n);
+```
 
-**Combined approach for sequential path**:
-- Two `Mat<f64>` buffers: `frontal_data` (current) and `contribution_data` (new)
-- Factor child → extend-add directly from `frontal_data` trailing submatrix into
-  parent's `contribution_data` or (if parent is the next supernode) directly into
-  parent's frontal matrix
-- Only allocate owned `ContributionBlock` for the parallel path where the
-  contribution must cross thread boundaries
+In our implementation (`factor.rs:update_trailing`), the GEMM writes to the
+workspace trailing submatrix, and then `extract_contribution` copies it out.
+For front=2475, elim=26: this is 2449² = 6M elements = 48 MB of redundant
+reads + writes that SPRAL avoids entirely.
 
-Expected impact: Eliminate 40% (extract_contrib) + reduce 33% (extend-add avoids
-intermediate copy) of factor time on c-71/c-big. Target: c-71 ≤ 1.5× SPRAL.
+**Implementation approach**:
 
+1. Pre-allocate a contribution buffer on `FactorizationWorkspace`, sized to
+   `max_contrib²` (predictable from symbolic analysis: `max_front - min_elim`).
 
-*9.1e: Small leaf subtree fast path*
+2. Modify `factor_inner` / `update_trailing` so the final trailing GEMM
+   (rows/columns beyond fully-summed) writes to the contribution buffer instead
+   of the frontal workspace. This requires splitting the GEMM target:
+   - Intermediate block updates (within fully-summed columns) continue to update
+     the frontal workspace in-place, since subsequent blocks read accumulated data
+   - Only the final trailing update (non-fully-summed rows/columns) targets the
+     separate contribution buffer
+
+3. `extract_contribution` becomes a no-op for data (just builds `row_indices`).
+
+4. The parallel path continues to use owned `ContributionBlock` values for
+   cross-thread transfer, but the buffer comes from the pre-allocated workspace
+   rather than a fresh `Mat::zeros`.
+
+**Rust-specific considerations**:
+
+The borrow checker makes it harder to have the GEMM write to a separate buffer
+while reading from the frontal workspace. SPRAL simply passes raw pointers.
+Options:
+- Use `MatMut::col_as_slice_mut` to pass raw slices to the GEMM
+- Split the frontal workspace into non-overlapping submatrix views before the
+  GEMM call (faer's `submatrix_mut` supports disjoint splits)
+- Worst case: use `unsafe` for the pointer aliasing (the memory regions are
+  provably disjoint)
+
+**Delayed columns add complexity**: The contribution includes both delayed columns
+(in the fully-summed region) and non-fully-summed rows. The final GEMM must
+account for this split. When columns are delayed, the "contribution" region is
+not a simple trailing submatrix — it includes the delayed columns' rows.
+
+SPRAL references:
+- `factor.hxx:92-103` — direct GEMM into `node.contrib`
+- `NumericNode.hxx` — `alloc_contrib` / `free_contrib` via BuddyAllocator
+- `assemble.hxx:27-38` — column-oriented scatter (`asm_col`, 4x unrolled)
+- `AppendAlloc.hxx` — bump allocator for permanent factor storage
+- `BuddyAllocator.hxx` — 16-level buddy system for transient contributions
+
+Reference Markdown files:
+- `/workspace/rivrs-linalg/references/ssids/hogg2016.md` — APTP algorithm and
+  factorization architecture (Hogg & Scott 2016)
+- `/workspace/rivrs-linalg/references/ssids/duff2020.md` — Two-tier allocator
+  design: AppendAlloc + BuddyAllocator (Duff, Hogg & Lopez 2020)
+- `/workspace/rivrs-linalg/references/ssids/liu1992.md` — Multifrontal method
+  and supernodal contribution management (Liu 1992)
+
+Expected impact: Eliminate 14-19% of factor time (extract_contribution) on
+c-71/c-big. Combined with reduced cache pollution from eliminating the copy,
+target is c-71 ≤ 2× SPRAL.
+
+*9.1f: Small leaf subtree fast path*
 
 **Motivation** (from post-9.1b profiling):
 
@@ -2877,8 +2916,8 @@ supernodal matrices (they don't hit this path).
 
 **Phase 9.1 Success Criteria:**
 - [X] c-71 and c-big within 10× of SPRAL factor time (was 25-30×, now 4× after 9.1a+b)
-- [ ] c-71 and c-big within 2× of SPRAL factor time (currently 4× — target of 9.1c+d)
-- [ ] Simplicial matrices (bloweybq, dixmaanl, etc.) within 1.5× of SPRAL (currently 2-3× — target of 9.1e)
+- [ ] c-71 and c-big within 2× of SPRAL factor time (currently 4× — target of 9.1e)
+- [ ] Simplicial matrices (bloweybq, dixmaanl, etc.) within 1.5× of SPRAL (currently 2-3× — target of 9.1f)
 - [ ] Full SuiteSparse suite median factor time ratio ≤ 1.0× vs SPRAL (currently 1.01×)
 - [ ] No regressions on any matrix in the benchmark suite
 - [X] Per-supernode profiling analysis documented (assembly/extraction/kernel breakdown for key matrices) — Phase 9.1c sub-phase timing

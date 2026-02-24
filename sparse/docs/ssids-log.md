@@ -1,84 +1,78 @@
 # SSIDS Development Log
 
-## Phase 9.1d: Contribution Workspace Reuse
+## Phase 9.1d: Contribution Block Architecture Investigation
 
-**Status**: Complete
+**Status**: Feature abandoned — pool-based reuse does not address the bottleneck
 **Branch**: `023-contrib-workspace-reuse`
-**Date**: 2026-02-23
+**Date**: 2026-02-23 – 2026-02-24
 
-### What Was Built
+### What Was Tried
 
-Eliminated per-supernode heap allocation for contribution blocks in the
-multifrontal factorization loop. Phase 9.1c profiling showed 73% of c-71
-factor time in `extract_contribution` (40.1%) and `extend_add` (33.3%),
-dominated by first-touch page faults during `Mat::zeros` on freshly mapped
-memory. Buffer reuse provides 1.7-2.3x empirical speedup on extraction by
-keeping pages physically resident.
+Implemented a free-list buffer pool (`Vec<Mat<f64>>`) on `FactorizationWorkspace`
+with first-fit allocation for contribution blocks, plus an iterative DFS postorder
+traversal (`factor_tree_dfs`) for the sequential path to improve pool locality.
 
-**Contribution buffer pool (Layer 1 — all paths):**
+### Results
 
-- `contribution_pool: Vec<Mat<f64>>` field on `FactorizationWorkspace`
-- Free functions `take_from_pool(pool, size)` / `return_to_pool(pool, buf)` for
-  borrow-split-safe pool operations (avoids workspace borrow conflicts)
-- `take_contribution_buffer` / `return_contribution_buffer` methods on workspace
-  delegate to the free functions
-- `extract_contribution` accepts `pool: Option<&mut Vec<Mat<f64>>>` parameter;
-  uses `take_from_pool` when pool provided, falls back to `Mat::zeros` otherwise
-- After `extend_add` loop in `factor_single_supernode`, consumed contribution
-  buffers are collected in a `Vec` and returned to pool (deferred return avoids
-  borrow conflict with frontal matrix)
-- `ContributionBlock::into_parts(self) -> (Mat<f64>, Vec<usize>, usize)` enables
-  consuming a contribution block and recovering the `Mat<f64>` for pool return
+The pool eliminated allocation syscall overhead but did not improve factor time:
 
-**DFS postorder sequential path (Layer 2 — sequential only):**
+| Metric                | 9.1c (before) | 9.1d (pool)  |
+|-----------------------|---------------|--------------|
+| sys time              | 3.1s (32%)    | 0.49s (7.3%) |
+| page faults           | 934K          | 317K         |
+| Factor time (c-71)    | 5,920 ms      | ~6,050 ms    |
+| ExtractContr          | 40.1%         | 19.3%        |
+| Extend-add            | 33.3%         | 40.1%        |
+| Kernel                | 23.1%         | 33.1%        |
 
-- `factor_tree_dfs` function: iterative DFS postorder traversal using explicit
-  stack with `DfsState::Enter` / `DfsState::Process` states
-- Uses `factor_single_supernode` for each node (pool-based extraction)
-- Wired into `AptpNumeric::factor` dispatch: DFS for `Par::Seq`, level-set for
-  parallel paths
-- Dual-buffer infrastructure added (`frontal_data_alt`, `frontal_row_indices_alt`
-  on `FactorizationWorkspace`) and `extend_add_from_frontal` function implemented
-  for future direct extend-add optimization (deferred due to Rust borrow checker
-  constraints — reading one buffer while mutably borrowing the other requires
-  unsafe or further refactoring)
+ExtractContr halved in absolute time (~2,374 → ~1,172 ms), but extend-add and
+kernel times increased by comparable amounts, netting to zero improvement.
 
-**Parallel path pool (Layer 3 — parallel paths):**
+Pool diagnostic data revealed catastrophic buffer oversizing on the DFS path
+(77.3% hit rate but 2374× max oversize ratio, 11.9 GB wasted physical memory).
+The level-set path had poor hit rate (18.4%) because entire waves of contributions
+are consumed before buffers return to the pool.
 
-- Parallel path goes through `factor_single_supernode` which now uses the pool
-- Thread-local `Cell<FactorizationWorkspace>` pattern preserves pool across waves
-- `ContributionBlock` values crossing thread boundaries use owned `Mat<f64>` from
-  the pool (buffer NOT returned when contribution must be transferred)
+### Root Cause
 
-**Bug fix: cb_size in extend_add / extend_add_mapped:**
+The bottleneck is **architectural**, not allocation-related. Our single reusable
+frontal workspace requires an O(n²) copy of the Schur complement for every
+supernode (`extract_contribution`). The pool addresses allocation overhead
+(syscall cost) but not the data movement cost of this copy.
 
-- `extend_add` and `extend_add_mapped` were using `child.data.nrows()` for
-  `cb_size`, but pool buffers can be larger than the logical contribution size
-- Fixed to use `child.row_indices.len()` — the logical contribution size
+### How SPRAL Avoids This
 
-### Key Decisions
+SPRAL uses a fundamentally different memory architecture:
 
-- **Free functions for pool ops**: Borrow-split pattern — `take_from_pool` and
-  `return_to_pool` take `&mut Vec<Mat<f64>>` directly, allowing the borrow
-  checker to see that pool access is independent of other workspace fields
-- **Deferred return pattern**: Consumed contribution buffers collected in a
-  `Vec<Mat<f64>>` during the extend-add loop, returned after `drop(frontal)`.
-  Avoids borrow conflict between frontal matrix and pool
-- **DFS without dual-buffer ping-pong**: The DFS traversal structure is in place,
-  but all nodes use pool-based extraction (same as level-set path). Direct
-  extend-add from the frontal buffer requires further borrow-checker work or
-  unsafe code, deferred to a follow-up
-- **Logical cb_size from row_indices**: Pool buffers are over-allocated (sized to
-  max_front), so `data.nrows()` != logical contribution size. Using
-  `row_indices.len()` is always correct regardless of buffer provenance
+1. **Per-node factor storage**: Each node owns its own `lcol` allocated from
+   AppendAlloc (bump allocator). The assembled frontal matrix IS the permanent
+   factor storage — no `extract_front_factors` copy needed.
+
+2. **Direct GEMM into contribution buffer**: The final Schur complement GEMM
+   writes directly into `node.contrib` (allocated from BuddyAllocator), not into
+   the trailing submatrix of a shared workspace. No `extract_contribution` copy.
+
+3. **Split assembly**: `assemble_pre` (before factor) scatters into `lcol`;
+   `assemble_post` (after factor) scatters remaining child contributions into
+   `node.contrib`. This is possible because `lcol` and `contrib` are separate.
+
+For c-71 (front=2475, elim=26): the contribution is 2449² = 6M entries = 48 MB
+of reads + 48 MB of writes that SPRAL avoids entirely.
+
+### Key Decision
+
+Rolled back all source code changes (pool, DFS traversal, pool diagnostics).
+The recommended path forward is SPRAL-style direct GEMM into a pre-allocated
+contribution buffer (see Phase 9.1e in ssids-plan.md).
 
 ### Algorithm References
 
-- Liu (1992), §6 Algorithm 6.1: supernodal multifrontal stack-based contribution
-  management. DFS postorder traversal with LIFO contribution stack.
-- Duff, Hogg & Lopez (2020), §5: two-tier allocators (stack for factors, buddy
-  for contributions). OS page cache exhaustion as performance bottleneck.
-- SPRAL `factor_cpu.cxx:73-168`: `factor_subtree` with workspace reuse pattern
+- Duff, Hogg & Lopez (2020), §5: two-tier allocators (AppendAlloc for factors,
+  BuddyAllocator for contributions)
+- SPRAL `factor.hxx:92-103`: direct GEMM into `node.contrib`
+- SPRAL `assemble.hxx:27-38`: column-oriented scatter with 4x unrolled inner loop
+- SPRAL `AppendAlloc.hxx`: bump allocator (calloc, AVX-aligned, never freed)
+- SPRAL `BuddyAllocator.hxx`: 16-level buddy system for transient contributions
 
 ---
 
