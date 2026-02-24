@@ -41,18 +41,18 @@
 
 > **Write these tests FIRST, verify they FAIL, then implement.**
 
-- [ ] T006 [P] [US2] Write unit test `test_classify_all_small` in `src/aptp/numeric.rs`: construct a 5-supernode linear chain (all front_size < 256), verify all marked `in_small_leaf = true` and one `SmallLeafSubtree` returned with 5 nodes in postorder.
-- [ ] T007 [P] [US2] Write unit test `test_classify_mixed_tree` in `src/aptp/numeric.rs`: construct a tree where leaves are small but root is large (front_size >= 256). Verify leaves are `in_small_leaf = true`, root is `false`. Subtree excludes root.
-- [ ] T008 [P] [US2] Write unit test `test_classify_single_node_excluded` in `src/aptp/numeric.rs`: construct a tree with isolated small leaf supernodes (no small siblings or parents). Verify no `SmallLeafSubtree` is returned (minimum 2 nodes required).
-- [ ] T009 [P] [US2] Write unit test `test_classify_threshold_boundary` in `src/aptp/numeric.rs`: supernode with front_size exactly equal to threshold (256) must NOT qualify. Supernode with front_size 255 qualifies. Strict less-than comparison.
-- [ ] T010 [P] [US2] Write unit test `test_classify_disabled` in `src/aptp/numeric.rs`: when `small_leaf_threshold = 0`, no subtrees are classified (empty `Vec<SmallLeafSubtree>`).
-- [ ] T011 [P] [US2] Write unit test `test_classify_multiple_subtrees` in `src/aptp/numeric.rs`: construct a tree with two independent small-leaf subtrees. Verify both are returned, each with correct nodes and root.
+- [X] T006 [P] [US2] Write unit test `test_classify_all_small` in `src/aptp/numeric.rs`: construct a 5-supernode linear chain (all front_size < 256), verify all marked `in_small_leaf = true` and one `SmallLeafSubtree` returned with 5 nodes in postorder.
+- [X] T007 [P] [US2] Write unit test `test_classify_mixed_tree` in `src/aptp/numeric.rs`: construct a tree where leaves are small but root is large (front_size >= 256). Verify leaves are `in_small_leaf = true`, root is `false`. Subtree excludes root.
+- [X] T008 [P] [US2] Write unit test `test_classify_single_node_excluded` in `src/aptp/numeric.rs`: construct a tree with isolated small leaf supernodes (no small siblings or parents). Verify no `SmallLeafSubtree` is returned (minimum 2 nodes required).
+- [X] T009 [P] [US2] Write unit test `test_classify_threshold_boundary` in `src/aptp/numeric.rs`: supernode with front_size exactly equal to threshold (256) must NOT qualify. Supernode with front_size 255 qualifies. Strict less-than comparison.
+- [X] T010 [P] [US2] Write unit test `test_classify_disabled` in `src/aptp/numeric.rs`: when `small_leaf_threshold = 0`, no subtrees are classified (empty `Vec<SmallLeafSubtree>`).
+- [X] T011 [P] [US2] Write unit test `test_classify_multiple_subtrees` in `src/aptp/numeric.rs`: construct a tree with two independent small-leaf subtrees. Verify both are returned, each with correct nodes and root.
 
 ### Implementation for Classification
 
-- [ ] T012 [US2] Implement `classify_small_leaf_subtrees()` in `src/aptp/numeric.rs`. Takes `&mut [SupernodeInfo]`, `&[Vec<usize>]` (children_map), and `threshold: usize`. Bottom-up pass: compute front_size per node, mark `in_small_leaf` on SupernodeInfo. Identify subtree roots (in_small_leaf with non-in_small_leaf parent). Collect descendant nodes in postorder via iterative DFS. Filter subtrees with < 2 nodes. Return `Vec<SmallLeafSubtree>`.
-- [ ] T013 [US2] Wire `classify_small_leaf_subtrees()` into `AptpNumeric::factor()` in `src/aptp/numeric.rs`: call after `amalgamate_supernodes()` and `build_children_map()`, before `build_assembly_maps()`. Pass `options.small_leaf_threshold`. Store returned `Vec<SmallLeafSubtree>` for use by `factor_tree_levelset()`.
-- [ ] T014 [US2] Verify all classification tests pass: `cargo test classify`
+- [X] T012 [US2] Implement `classify_small_leaf_subtrees()` in `src/aptp/numeric.rs`. Takes `&mut [SupernodeInfo]`, `&[Vec<usize>]` (children_map), and `threshold: usize`. Bottom-up pass: compute front_size per node, mark `in_small_leaf` on SupernodeInfo. Identify subtree roots (in_small_leaf with non-in_small_leaf parent). Collect descendant nodes in postorder via iterative DFS. Filter subtrees with < 2 nodes. Return `Vec<SmallLeafSubtree>`.
+- [X] T013 [US2] Wire `classify_small_leaf_subtrees()` into `AptpNumeric::factor()` in `src/aptp/numeric.rs`: call after `amalgamate_supernodes()` and `build_children_map()`, before `build_assembly_maps()`. Pass `options.small_leaf_threshold`. Store returned `Vec<SmallLeafSubtree>` for use by `factor_tree_levelset()`.
+- [X] T014 [US2] Verify all classification tests pass: `cargo test classify`
 
 **Checkpoint**: Classification correctly identifies small-leaf subtrees on synthetic tree structures. No factorization behavior changes yet — subtrees are identified but not yet used.
 

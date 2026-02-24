@@ -849,10 +849,17 @@ impl AptpNumeric {
         // Build supernode info (unified abstraction over supernodal/simplicial)
         let supernodes = build_supernode_info(symbolic);
         let n_supernodes_before = supernodes.len();
-        let supernodes = super::amalgamation::amalgamate(supernodes, nemin);
+        let mut supernodes = super::amalgamation::amalgamate(supernodes, nemin);
         let n_supernodes = supernodes.len();
         let merges_performed = n_supernodes_before - n_supernodes;
         let children = build_children_map(&supernodes);
+
+        // Classify small-leaf subtrees for the fast-path pre-pass
+        let small_leaf_subtrees = classify_small_leaf_subtrees(
+            &mut supernodes,
+            &children,
+            options.small_leaf_threshold,
+        );
 
         // Get fill-reducing permutation
         let (perm_fwd, perm_inv) = symbolic.perm_vecs();
@@ -882,6 +889,7 @@ impl AptpNumeric {
             scaling,
             n,
             &assembly_maps,
+            &small_leaf_subtrees,
         )?;
 
         #[cfg(feature = "diagnostic")]
@@ -1519,6 +1527,7 @@ fn factor_tree_levelset(
     scaling: Option<&[f64]>,
     n: usize,
     assembly_maps: &AssemblyMaps,
+    small_leaf_subtrees: &[SmallLeafSubtree],
 ) -> Result<Vec<(usize, FrontFactors, PerSupernodeStats)>, SparseError> {
     let n_supernodes = supernodes.len();
 
@@ -1532,6 +1541,43 @@ fn factor_tree_levelset(
     // Collect all results
     let mut all_results: Vec<(usize, FrontFactors, PerSupernodeStats)> =
         Vec::with_capacity(n_supernodes);
+
+    // --- Small-leaf subtree pre-pass ---
+    // Factor all classified small-leaf subtrees before the main level-set loop.
+    // Each subtree uses a lightweight workspace (bounded by threshold²) and
+    // processes its nodes sequentially in postorder. The root's contribution
+    // enters the global contributions vector for the parent's extend-add.
+    for subtree in small_leaf_subtrees {
+        let mut sl_workspace = FactorizationWorkspace::new(subtree.max_front_size, n);
+
+        for &node_id in &subtree.nodes {
+            let child_contribs: Vec<Option<ContributionBlock>> = children[node_id]
+                .iter()
+                .map(|&c| contributions[c].take())
+                .collect();
+
+            let result = factor_single_supernode(
+                node_id,
+                &supernodes[node_id],
+                child_contribs,
+                matrix,
+                perm_fwd,
+                perm_inv,
+                options,
+                scaling,
+                &mut sl_workspace,
+                assembly_maps,
+            )?;
+
+            contributions[node_id] = result.contribution;
+            all_results.push((node_id, result.ff, result.stats));
+        }
+
+        // Decrement remaining_children for the subtree root's parent
+        if let Some(parent) = subtree.parent_of_root {
+            remaining_children[parent] -= 1;
+        }
+    }
 
     // Pre-allocate workspace for the sequential path. Sized to the estimated
     // maximum front dimension. Reused across all supernodes.
@@ -1547,9 +1593,9 @@ fn factor_tree_levelset(
     let workspace_pool: std::sync::Mutex<Vec<FactorizationWorkspace>> =
         std::sync::Mutex::new(Vec::new());
 
-    // Initial ready set: all leaf supernodes (no children)
+    // Initial ready set: all leaf supernodes (no children) that are NOT in small-leaf subtrees
     let mut ready: Vec<usize> = (0..n_supernodes)
-        .filter(|&s| remaining_children[s] == 0)
+        .filter(|&s| remaining_children[s] == 0 && !supernodes[s].in_small_leaf)
         .collect();
 
     while !ready.is_empty() {
@@ -1734,6 +1780,127 @@ pub(crate) fn build_children_map(infos: &[SupernodeInfo]) -> Vec<Vec<usize>> {
         }
     }
     children
+}
+
+/// Classify post-amalgamation supernodes into small-leaf subtrees for the fast path.
+///
+/// Performs a single O(n_supernodes) bottom-up pass to identify contiguous leaf
+/// subtrees where every supernode has `front_size < threshold`. Sets `in_small_leaf`
+/// on qualifying supernodes and returns a `Vec<SmallLeafSubtree>` describing each
+/// identified subtree (with at least 2 nodes).
+///
+/// # Arguments
+///
+/// - `supernodes`: Post-amalgamation supernode descriptors (mutated: `in_small_leaf` set).
+/// - `children_map`: Children map (`children[s]` = list of child supernode indices).
+/// - `threshold`: Front-size threshold. Supernodes with `front_size >= threshold` are
+///   excluded. If `threshold == 0`, returns empty (fast path disabled).
+///
+/// # Algorithm
+///
+/// 1. Compute `front_size[s] = sum(owned_ranges[s].len()) + pattern[s].len()`.
+/// 2. Bottom-up (postorder): mark `in_small_leaf[s] = true` iff `front_size[s] < threshold`
+///    AND (s is a leaf OR all children have `in_small_leaf = true`).
+/// 3. Identify subtree roots: `in_small_leaf[s] = true` and parent has `in_small_leaf = false`
+///    (or no parent).
+/// 4. Collect descendant nodes in postorder via iterative stack-based traversal.
+/// 5. Filter subtrees with < 2 nodes.
+///
+/// # References
+///
+/// - SPRAL `SymbolicSubtree.hxx:57-84` (BSD-3): bottom-up classification
+/// - Duff, Hogg & Lopez (2020), Algorithm 6.1: find_subtree_partition
+pub(crate) fn classify_small_leaf_subtrees(
+    supernodes: &mut [SupernodeInfo],
+    children_map: &[Vec<usize>],
+    threshold: usize,
+) -> Vec<SmallLeafSubtree> {
+    if threshold == 0 {
+        return Vec::new();
+    }
+
+    let n_supernodes = supernodes.len();
+
+    // Step 1-2: Bottom-up classification (supernodes are in postorder: s=0 is leftmost leaf)
+    for s in 0..n_supernodes {
+        let owned_cols: usize = supernodes[s].owned_ranges.iter().map(|r| r.len()).sum();
+        let front_size = owned_cols + supernodes[s].pattern.len();
+
+        if front_size >= threshold {
+            supernodes[s].in_small_leaf = false;
+            continue;
+        }
+
+        if children_map[s].is_empty() {
+            // Leaf node with small front
+            supernodes[s].in_small_leaf = true;
+        } else if children_map[s].iter().all(|&c| supernodes[c].in_small_leaf) {
+            // Interior node: all children are in_small_leaf and this node is small
+            supernodes[s].in_small_leaf = true;
+        } else {
+            supernodes[s].in_small_leaf = false;
+        }
+    }
+
+    // Step 3: Identify subtree roots
+    let mut subtrees = Vec::new();
+    for s in 0..n_supernodes {
+        if !supernodes[s].in_small_leaf {
+            continue;
+        }
+        let is_root = match supernodes[s].parent {
+            None => true,
+            Some(p) => !supernodes[p].in_small_leaf,
+        };
+        if !is_root {
+            continue;
+        }
+
+        // Step 4: Collect descendant nodes in postorder via iterative DFS.
+        // Two-stack approach: first stack drives DFS, second collects in reverse postorder.
+        let mut nodes = Vec::new();
+        let mut stack = vec![s];
+        let mut visit_stack = Vec::new();
+        while let Some(node) = stack.pop() {
+            visit_stack.push(node);
+            // Push children (they'll be processed before parent due to stack LIFO)
+            for &c in &children_map[node] {
+                if supernodes[c].in_small_leaf {
+                    stack.push(c);
+                }
+            }
+        }
+        // visit_stack is in reverse postorder — reverse to get postorder
+        while let Some(node) = visit_stack.pop() {
+            nodes.push(node);
+        }
+
+        // Step 5: Filter subtrees with < 2 nodes
+        if nodes.len() < 2 {
+            // Single-node "subtree" — not worth the fast path overhead
+            supernodes[s].in_small_leaf = false;
+            continue;
+        }
+
+        // Compute max_front_size across all nodes in the subtree
+        let max_front_size = nodes
+            .iter()
+            .map(|&node| {
+                let owned: usize = supernodes[node].owned_ranges.iter().map(|r| r.len()).sum();
+                owned + supernodes[node].pattern.len()
+            })
+            .max()
+            .unwrap_or(0);
+
+        subtrees.push(SmallLeafSubtree {
+            root: s,
+            nodes,
+            max_front_size,
+            parent_of_root: supernodes[s].parent,
+        });
+    }
+
+    subtrees
 }
 
 /// Scatter original sparse matrix entries into a frontal matrix from multiple owned ranges.
@@ -2900,5 +3067,193 @@ mod tests {
         assert_eq!(p[(1, 1)], 15.0, "10 + 5 accumulated");
         assert_eq!(p[(3, 1)], 27.0, "20 + 7 accumulated");
         assert_eq!(p[(3, 3)], 39.0, "30 + 9 accumulated");
+    }
+
+    // -----------------------------------------------------------------------
+    // Small-leaf subtree classification tests (T006–T011)
+    // -----------------------------------------------------------------------
+
+    /// Helper: create a SupernodeInfo with given parameters for classification tests.
+    /// `ncols` = number of owned columns, `pattern_len` = number of off-diagonal rows.
+    /// front_size = ncols + pattern_len.
+    #[allow(clippy::single_range_in_vec_init)]
+    fn make_snode(
+        col_begin: usize,
+        ncols: usize,
+        pattern_len: usize,
+        parent: Option<usize>,
+    ) -> SupernodeInfo {
+        SupernodeInfo {
+            col_begin,
+            col_end: col_begin + ncols,
+            pattern: (0..pattern_len).map(|i| 1000 + col_begin + i).collect(),
+            parent,
+            owned_ranges: vec![col_begin..col_begin + ncols],
+            in_small_leaf: false,
+        }
+    }
+
+    /// T006: Linear chain of 5 small supernodes — all should be in_small_leaf.
+    #[test]
+    fn test_classify_all_small() {
+        // Chain: 0 → 1 → 2 → 3 → 4 (each has 2 owned cols, 3 pattern → front_size=5)
+        let mut supernodes = vec![
+            make_snode(0, 2, 3, Some(1)),
+            make_snode(2, 2, 3, Some(2)),
+            make_snode(4, 2, 3, Some(3)),
+            make_snode(6, 2, 3, Some(4)),
+            make_snode(8, 2, 3, None),
+        ];
+        let children = build_children_map(&supernodes);
+
+        let subtrees = classify_small_leaf_subtrees(&mut supernodes, &children, 256);
+
+        // All 5 nodes should be in_small_leaf
+        for sn in &supernodes {
+            assert!(sn.in_small_leaf, "snode {} should be in_small_leaf", sn.col_begin);
+        }
+        // One subtree with all 5 nodes in postorder
+        assert_eq!(subtrees.len(), 1);
+        assert_eq!(subtrees[0].nodes.len(), 5);
+        assert_eq!(subtrees[0].nodes, vec![0, 1, 2, 3, 4]);
+        assert_eq!(subtrees[0].root, 4);
+        assert_eq!(subtrees[0].parent_of_root, None);
+    }
+
+    /// T007: Mixed tree — small leaves, large root.
+    #[test]
+    fn test_classify_mixed_tree() {
+        // Tree: leaves 0,1 → parent 2 (large)
+        // Nodes 0,1: front_size=5 (small)
+        // Node 2: front_size=300 (large, >= 256)
+        let mut supernodes = vec![
+            make_snode(0, 2, 3, Some(2)),   // front=5, small
+            make_snode(2, 2, 3, Some(2)),   // front=5, small
+            make_snode(4, 100, 200, None),  // front=300, large
+        ];
+        let children = build_children_map(&supernodes);
+
+        let subtrees = classify_small_leaf_subtrees(&mut supernodes, &children, 256);
+
+        // Node 2 is large → not in_small_leaf
+        assert!(!supernodes[2].in_small_leaf);
+        // Nodes 0,1 are small leaves but they don't form a subtree with ≥2 nodes
+        // that has a common root — they are separate single-leaf subtrees
+        // Each leaf alone is 1 node which is < 2, so no subtrees
+        assert!(!supernodes[0].in_small_leaf, "single node excluded");
+        assert!(!supernodes[1].in_small_leaf, "single node excluded");
+        assert_eq!(subtrees.len(), 0);
+    }
+
+    /// T008: Single isolated small leaves — no subtree formed (min 2 nodes).
+    #[test]
+    fn test_classify_single_node_excluded() {
+        // Three independent small leaves (no parent linkage between them)
+        let mut supernodes = vec![
+            make_snode(0, 2, 3, None),  // root, small, standalone
+            make_snode(2, 2, 3, None),  // root, small, standalone
+            make_snode(4, 2, 3, None),  // root, small, standalone
+        ];
+        let children = build_children_map(&supernodes);
+
+        let subtrees = classify_small_leaf_subtrees(&mut supernodes, &children, 256);
+
+        // Each is a single-node subtree → excluded
+        assert_eq!(subtrees.len(), 0);
+        // in_small_leaf should be false for single-node subtrees (cleared by filter)
+        for sn in &supernodes {
+            assert!(!sn.in_small_leaf);
+        }
+    }
+
+    /// T009: Threshold boundary — front_size == 256 excluded, 255 included.
+    #[test]
+    fn test_classify_threshold_boundary() {
+        // Node 0: front_size=255 (qualifies), child of node 1
+        // Node 1: front_size=256 (does NOT qualify — strict less-than)
+        let mut supernodes = vec![
+            make_snode(0, 100, 155, Some(1)),  // front=255
+            make_snode(100, 128, 128, None),   // front=256
+        ];
+        let children = build_children_map(&supernodes);
+
+        let subtrees = classify_small_leaf_subtrees(&mut supernodes, &children, 256);
+
+        assert!(!supernodes[1].in_small_leaf, "front_size=256 must NOT qualify");
+        // Node 0 is a small leaf but its parent is NOT small → single-node subtree → excluded
+        assert!(!supernodes[0].in_small_leaf, "single node excluded");
+        assert_eq!(subtrees.len(), 0);
+
+        // Now with front_size=255 for the parent too
+        let mut supernodes2 = vec![
+            make_snode(0, 100, 155, Some(1)),  // front=255
+            make_snode(100, 127, 128, None),   // front=255
+        ];
+        let children2 = build_children_map(&supernodes2);
+        let subtrees2 = classify_small_leaf_subtrees(&mut supernodes2, &children2, 256);
+
+        assert!(supernodes2[0].in_small_leaf);
+        assert!(supernodes2[1].in_small_leaf);
+        assert_eq!(subtrees2.len(), 1);
+        assert_eq!(subtrees2[0].nodes, vec![0, 1]);
+    }
+
+    /// T010: Disabled when threshold=0.
+    #[test]
+    fn test_classify_disabled() {
+        let mut supernodes = vec![
+            make_snode(0, 2, 3, Some(1)),
+            make_snode(2, 2, 3, None),
+        ];
+        let children = build_children_map(&supernodes);
+
+        let subtrees = classify_small_leaf_subtrees(&mut supernodes, &children, 0);
+
+        assert_eq!(subtrees.len(), 0);
+        assert!(!supernodes[0].in_small_leaf);
+        assert!(!supernodes[1].in_small_leaf);
+    }
+
+    /// T011: Two independent small-leaf subtrees.
+    #[test]
+    fn test_classify_multiple_subtrees() {
+        // Tree:
+        //   0 → 2 (subtree A)
+        //   1 → 2 (subtree A)
+        //   2 → 5 (large root)
+        //   3 → 4 (subtree B)
+        //   4 → 5 (subtree B is just 3→4)
+        //   5 = large root
+        let mut supernodes = vec![
+            make_snode(0, 2, 3, Some(2)),    // 0: front=5, small
+            make_snode(2, 2, 3, Some(2)),    // 1: front=5, small
+            make_snode(4, 2, 3, Some(5)),    // 2: front=5, small (parent is large)
+            make_snode(6, 2, 3, Some(4)),    // 3: front=5, small
+            make_snode(8, 2, 3, Some(5)),    // 4: front=5, small (parent is large)
+            make_snode(10, 100, 200, None),  // 5: front=300, large
+        ];
+        let children = build_children_map(&supernodes);
+
+        let subtrees = classify_small_leaf_subtrees(&mut supernodes, &children, 256);
+
+        // Two subtrees: {0,1,2} and {3,4}
+        assert_eq!(subtrees.len(), 2);
+
+        // Subtree A: root=2, nodes=[0,1,2] in postorder
+        assert_eq!(subtrees[0].root, 2);
+        assert_eq!(subtrees[0].nodes, vec![0, 1, 2]);
+        assert_eq!(subtrees[0].parent_of_root, Some(5));
+
+        // Subtree B: root=4, nodes=[3,4] in postorder
+        assert_eq!(subtrees[1].root, 4);
+        assert_eq!(subtrees[1].nodes, vec![3, 4]);
+        assert_eq!(subtrees[1].parent_of_root, Some(5));
+
+        // Large root is not in_small_leaf
+        assert!(!supernodes[5].in_small_leaf);
+        // All others are
+        for s in 0..5 {
+            assert!(supernodes[s].in_small_leaf, "snode {} should be in_small_leaf", s);
+        }
     }
 }
