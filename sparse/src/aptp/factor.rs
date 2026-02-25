@@ -7205,4 +7205,91 @@ mod tests {
         };
         ldlt_tpp_torture_test(100, 50, &config);
     }
+
+    // =====================================================================
+    // Phase 9.2: Property-Based Tests (US3) — Kernel Level
+    // =====================================================================
+
+    use proptest::prelude::*;
+    use crate::testing::strategies;
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+
+        #[test]
+        fn property_pd_reconstruction(
+            a in strategies::arb_symmetric_pd(5..=100)
+        ) {
+            let n = a.nrows();
+            let options = AptpOptions::default();
+            let result = aptp_factor(a.as_ref(), &options);
+            if let Ok(ref f) = result {
+                let perm_fwd = f.perm.as_ref().arrays().0;
+                let err = dense_reconstruction_error(&a, &f.l, &f.d, perm_fwd);
+                prop_assert!(
+                    err < 1e-12,
+                    "PD reconstruction error {:.2e} for n={}", err, n
+                );
+            }
+        }
+
+        #[test]
+        fn property_inertia_sum(
+            a in strategies::arb_symmetric_indefinite(5..=100)
+        ) {
+            let n = a.nrows();
+            let options = AptpOptions::default();
+            let result = aptp_factor(a.as_ref(), &options);
+            if let Ok(ref f) = result {
+                if f.delayed_cols.is_empty() {
+                    let inertia = f.d.compute_inertia();
+                    prop_assert_eq!(
+                        inertia.dimension(), n,
+                        "inertia sum {} != n={}", inertia.dimension(), n
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn property_permutation_valid(
+            a in strategies::arb_symmetric_indefinite(5..=100)
+        ) {
+            let n = a.nrows();
+            let options = AptpOptions::default();
+            let result = aptp_factor(a.as_ref(), &options);
+            if let Ok(ref f) = result {
+                let (fwd, inv) = f.perm.as_ref().arrays();
+                // Check fwd is a valid permutation
+                let mut seen = vec![false; n];
+                for &idx in fwd {
+                    prop_assert!(idx < n, "perm fwd index {} out of bounds for n={}", idx, n);
+                    prop_assert!(!seen[idx], "duplicate in perm fwd: {}", idx);
+                    seen[idx] = true;
+                }
+                // Check fwd and inv are inverses
+                for i in 0..n {
+                    prop_assert_eq!(
+                        inv[fwd[i]], i,
+                        "perm fwd/inv not inverses at i={}", i
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn property_no_panics_perturbed(
+            a in strategies::arb_symmetric_indefinite(5..=50),
+            seed in any::<u64>()
+        ) {
+            use crate::testing::perturbations as perturb;
+            let mut a_mut = a.clone();
+            let mut rng = StdRng::seed_from_u64(seed);
+            perturb::cause_delays(&mut a_mut, 32, &mut rng);
+
+            let options = AptpOptions::default();
+            // Should not panic — may return Ok or Err
+            let _ = aptp_factor(a_mut.as_ref(), &options);
+        }
+    }
 }

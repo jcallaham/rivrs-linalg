@@ -86,12 +86,12 @@
 
 ### Implementation for User Story 3
 
-- [ ] T023 [P] [US3] Implement `arb_symmetric_pd(size_range)` and `arb_symmetric_indefinite(size_range)` strategies in `src/testing/strategies.rs` — wrap existing `generate_random_symmetric` generator, return dense `Mat<f64>`, shrink toward smaller sizes. Include basic unit tests that generate a few matrices and verify symmetry + definiteness.
-- [ ] T024 [P] [US3] Implement `arb_sparse_symmetric(size_range, density_range)` strategy in `src/testing/strategies.rs` — generate sparse symmetric CSC matrices suitable for `SparseLDLT`, shrink toward smaller sizes and lower density. Include unit tests.
-- [ ] T025 [US3] Implement kernel-level property tests in `src/aptp/factor.rs` `#[cfg(test)]` module — `proptest!` block with properties: (1) reconstruction error < 1e-12 for PD matrices, (2) inertia sum = n for indefinite matrices, (3) permutation valid (each index once, fwd/inv are inverses), (4) no panics on perturbed matrices (using perturbation helpers from Phase 2).
-- [ ] T026 [US3] Implement end-to-end property tests in `tests/property.rs` — `proptest!` block with properties: (1) backward error < 5e-11 for PD sparse matrices through `SparseLDLT::solve_full`, (2) backward error < 5e-11 or clean error for indefinite sparse matrices, (3) inertia consistency through full pipeline. Use `arb_sparse_symmetric` strategy.
-- [ ] T027 [US3] Run property tests: `cargo test property`. Fix any failures (property violations trigger automatic shrinking — investigate minimal counterexamples). Tune proptest config if needed (case count, max shrink iters).
-- [ ] T028 [US3] Verify no regressions: `cargo test` (all non-ignored pass), `cargo clippy --all-targets`.
+- [X] T023 [P] [US3] Implement `arb_symmetric_pd(size_range)` and `arb_symmetric_indefinite(size_range)` strategies in `src/testing/strategies.rs` — wrap existing `generate_random_symmetric` generator, return dense `Mat<f64>`, shrink toward smaller sizes. Include basic unit tests that generate a few matrices and verify symmetry + definiteness.
+- [X] T024 [P] [US3] Implement `arb_sparse_symmetric(size_range, density_range)` strategy in `src/testing/strategies.rs` — generate sparse symmetric CSC matrices suitable for `SparseLDLT`, shrink toward smaller sizes and lower density. Include unit tests.
+- [X] T025 [US3] Implement kernel-level property tests in `src/aptp/factor.rs` `#[cfg(test)]` module — `proptest!` block with properties: (1) reconstruction error < 1e-12 for PD matrices, (2) inertia sum = n for indefinite matrices, (3) permutation valid (each index once, fwd/inv are inverses), (4) no panics on perturbed matrices (using perturbation helpers from Phase 2).
+- [X] T026 [US3] Implement end-to-end property tests in `tests/property.rs` — `proptest!` block with properties: (1) backward error < 5e-11 for PD sparse matrices through `SparseLDLT::solve_full`, (2) backward error < 5e-11 or clean error for indefinite sparse matrices, (3) inertia consistency through full pipeline. Use `arb_sparse_symmetric` strategy.
+- [X] T027 [US3] Run property tests: `cargo test property`. Fix any failures (property violations trigger automatic shrinking — investigate minimal counterexamples). Tune proptest config if needed (case count, max shrink iters).
+- [X] T028 [US3] Verify no regressions: `cargo test` (all non-ignored pass), `cargo clippy --all-targets`.
 
 **Checkpoint**: Property tests pass — structural invariants verified across 256+ generated matrices. US3 independently verifiable.
 
