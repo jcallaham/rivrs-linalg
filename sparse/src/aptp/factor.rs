@@ -6893,4 +6893,316 @@ mod tests {
         assert!((b[(3, 0)] - 32.0).abs() < 1e-15, "b[(3,0)]={}", b[(3, 0)]);
         assert!((b[(3, 2)] - 30.0).abs() < 1e-15, "b[(3,2)]={}", b[(3, 2)]);
     }
+
+    // =====================================================================
+    // Phase 9.2: SPRAL-Style Torture Tests (US2)
+    // =====================================================================
+    //
+    // These tests exercise the dense APTP kernel with randomized adversarial
+    // perturbations, matching SPRAL's torture test approach.
+    //
+    // References:
+    // - SPRAL tests/ssids/kernels/ldlt_app.cxx (BSD-3): torture test pattern
+    // - SPRAL tests/ssids/kernels/ldlt_tpp.cxx (BSD-3): TPP torture test pattern
+
+    use crate::testing::perturbations::TortureTestConfig;
+    use rand::Rng;
+    use rand::SeedableRng;
+    use rand::rngs::StdRng;
+
+    /// Run APP (complete pivoting) torture test for a single (m, n) configuration.
+    fn ldlt_app_torture_test(m: usize, n: usize, config: &TortureTestConfig) {
+        use crate::testing::perturbations;
+
+        let options = AptpOptions {
+            inner_block_size: 32.min(n),
+            ..AptpOptions::default()
+        };
+        let num_fully_summed = n;
+
+        let mut rng = StdRng::seed_from_u64(config.seed);
+        let mut failures = Vec::new();
+
+        for instance in 0..config.num_instances {
+            let mut a = perturbations::generate_dense_symmetric_indefinite(m, &mut rng);
+
+            // Apply probabilistic perturbation (70/20/10 split)
+            let roll: f64 = rng.r#gen::<f64>();
+            let is_singular;
+            if roll < config.delay_probability {
+                perturbations::cause_delays(&mut a, options.inner_block_size, &mut rng);
+                is_singular = false;
+            } else if roll < config.delay_probability + config.singular_probability {
+                if m >= 2 {
+                    let col1 = Rng::gen_range(&mut rng, 0..m);
+                    let mut col2 = Rng::gen_range(&mut rng, 0..m);
+                    while col2 == col1 {
+                        col2 = Rng::gen_range(&mut rng, 0..m);
+                    }
+                    perturbations::make_singular(&mut a, col1, col2);
+                }
+                is_singular = true;
+            } else {
+                if m >= options.inner_block_size && options.inner_block_size >= 2 {
+                    let max_start = m - options.inner_block_size;
+                    let block_row = Rng::gen_range(&mut rng, 0..=max_start);
+                    perturbations::make_dblk_singular(
+                        &mut a,
+                        block_row,
+                        options.inner_block_size,
+                    );
+                }
+                is_singular = true;
+            }
+
+            // Capture the perturbed matrix BEFORE factorization (which modifies in-place)
+            let original = a.clone();
+
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                aptp_factor_in_place(a.as_mut(), num_fully_summed, &options)
+            }));
+
+            match result {
+                Err(_) => {
+                    failures.push(format!("instance {}: PANIC", instance));
+                }
+                Ok(Err(e)) => {
+                    if !is_singular {
+                        failures.push(format!("instance {}: unexpected error: {}", instance, e));
+                    }
+                }
+                Ok(Ok(ref fr)) => {
+                    let total = fr.num_eliminated + fr.delayed_cols.len();
+                    if total != num_fully_summed {
+                        failures.push(format!(
+                            "instance {}: elim({}) + delayed({}) = {} != nfs({})",
+                            instance, fr.num_eliminated, fr.delayed_cols.len(), total, num_fully_summed
+                        ));
+                        continue;
+                    }
+                    // Reconstruction check only for square (m == n) non-singular cases.
+                    if m == n && !is_singular && fr.num_eliminated == num_fully_summed {
+                        let l = extract_l(a.as_ref(), &fr.d, fr.num_eliminated);
+                        let err = dense_reconstruction_error(
+                            &original, &l, &fr.d, &fr.perm[..fr.num_eliminated],
+                        );
+                        if err > config.backward_error_threshold {
+                            failures.push(format!(
+                                "instance {}: recon error {:.2e} > {:.2e}",
+                                instance, err, config.backward_error_threshold
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        assert!(
+            failures.is_empty(),
+            "APP torture (m={}, n={}) had {} failures:\n{}",
+            m, n, failures.len(), failures.join("\n")
+        );
+    }
+
+    /// Run TPP (threshold partial pivoting) torture test for a single (m, n) config.
+    fn ldlt_tpp_torture_test(m: usize, n: usize, config: &TortureTestConfig) {
+        use crate::testing::perturbations;
+
+        let options = AptpOptions {
+            inner_block_size: n + 1, // ensure TPP path
+            ..AptpOptions::default()
+        };
+        let num_fully_summed = n;
+
+        let mut rng = StdRng::seed_from_u64(config.seed);
+        let mut failures = Vec::new();
+
+        for instance in 0..config.num_instances {
+            let mut a = perturbations::generate_dense_symmetric_indefinite(m, &mut rng);
+
+            // TPP perturbation: 70% delays, 30% singular (no dblk_singular)
+            let roll: f64 = rng.r#gen::<f64>();
+            let is_singular;
+            if roll < config.delay_probability {
+                perturbations::cause_delays(&mut a, options.inner_block_size, &mut rng);
+                is_singular = false;
+            } else {
+                if m >= 2 {
+                    let col1 = Rng::gen_range(&mut rng, 0..m);
+                    let mut col2 = Rng::gen_range(&mut rng, 0..m);
+                    while col2 == col1 {
+                        col2 = Rng::gen_range(&mut rng, 0..m);
+                    }
+                    perturbations::make_singular(&mut a, col1, col2);
+                }
+                is_singular = true;
+            }
+
+            // Capture perturbed matrix BEFORE factorization
+            let original = a.clone();
+
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                aptp_factor_in_place(a.as_mut(), num_fully_summed, &options)
+            }));
+
+            match result {
+                Err(_) => {
+                    failures.push(format!("instance {}: PANIC", instance));
+                }
+                Ok(Err(e)) => {
+                    if !is_singular {
+                        failures.push(format!("instance {}: unexpected error: {}", instance, e));
+                    }
+                }
+                Ok(Ok(ref fr)) => {
+                    let total = fr.num_eliminated + fr.delayed_cols.len();
+                    if total != num_fully_summed {
+                        failures.push(format!(
+                            "instance {}: elim({}) + delayed({}) = {} != nfs({})",
+                            instance, fr.num_eliminated, fr.delayed_cols.len(), total, num_fully_summed
+                        ));
+                        continue;
+                    }
+                    // Reconstruction + L growth check only for square non-singular
+                    if m == n && !is_singular && fr.num_eliminated == num_fully_summed {
+                        let l = extract_l(a.as_ref(), &fr.d, fr.num_eliminated);
+                        let err = dense_reconstruction_error(
+                            &original, &l, &fr.d, &fr.perm[..fr.num_eliminated],
+                        );
+                        if err > config.backward_error_threshold {
+                            failures.push(format!(
+                                "instance {}: recon error {:.2e} > {:.2e}",
+                                instance, err, config.backward_error_threshold
+                            ));
+                        }
+                        // L growth bound: max |L_ij| <= 1/threshold
+                        let l_bound = 1.0 / options.threshold;
+                        let mut max_l = 0.0_f64;
+                        for i in 0..l.nrows() {
+                            for j in 0..fr.num_eliminated {
+                                if i != j {
+                                    max_l = max_l.max(l[(i, j)].abs());
+                                }
+                            }
+                        }
+                        if max_l > l_bound * (1.0 + 1e-10) {
+                            failures.push(format!(
+                                "instance {}: L growth |L|={:.4} > 1/u={:.4}",
+                                instance, max_l, l_bound
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        assert!(
+            failures.is_empty(),
+            "TPP torture (m={}, n={}) had {} failures:\n{}",
+            m, n, failures.len(), failures.join("\n")
+        );
+    }
+
+    // ---- APP Torture Test Entry Points ----
+
+    #[test]
+    #[ignore] // Long-running: ~500 factorizations per test
+    fn torture_app_32x32() {
+        let config = TortureTestConfig {
+            num_instances: 500,
+            seed: 42_000,
+            ..TortureTestConfig::default()
+        };
+        ldlt_app_torture_test(32, 32, &config);
+    }
+
+    #[test]
+    #[ignore]
+    fn torture_app_64x64() {
+        let config = TortureTestConfig {
+            num_instances: 500,
+            seed: 42_001,
+            ..TortureTestConfig::default()
+        };
+        ldlt_app_torture_test(64, 64, &config);
+    }
+
+    #[test]
+    #[ignore]
+    fn torture_app_128x128() {
+        let config = TortureTestConfig {
+            num_instances: 500,
+            seed: 42_002,
+            ..TortureTestConfig::default()
+        };
+        ldlt_app_torture_test(128, 128, &config);
+    }
+
+    #[test]
+    #[ignore]
+    fn torture_app_128x48() {
+        let config = TortureTestConfig {
+            num_instances: 500,
+            seed: 42_003,
+            ..TortureTestConfig::default()
+        };
+        ldlt_app_torture_test(128, 48, &config);
+    }
+
+    #[test]
+    #[ignore]
+    fn torture_app_256x256() {
+        let config = TortureTestConfig {
+            num_instances: 500,
+            seed: 42_004,
+            ..TortureTestConfig::default()
+        };
+        ldlt_app_torture_test(256, 256, &config);
+    }
+
+    // ---- TPP Torture Test Entry Points ----
+
+    #[test]
+    #[ignore]
+    fn torture_tpp_8x4() {
+        let config = TortureTestConfig {
+            num_instances: 500,
+            seed: 43_000,
+            ..TortureTestConfig::default()
+        };
+        ldlt_tpp_torture_test(8, 4, &config);
+    }
+
+    #[test]
+    #[ignore]
+    fn torture_tpp_33x21() {
+        let config = TortureTestConfig {
+            num_instances: 500,
+            seed: 43_001,
+            ..TortureTestConfig::default()
+        };
+        ldlt_tpp_torture_test(33, 21, &config);
+    }
+
+    #[test]
+    #[ignore]
+    fn torture_tpp_100x100() {
+        let config = TortureTestConfig {
+            num_instances: 500,
+            seed: 43_002,
+            ..TortureTestConfig::default()
+        };
+        ldlt_tpp_torture_test(100, 100, &config);
+    }
+
+    #[test]
+    #[ignore]
+    fn torture_tpp_100x50() {
+        let config = TortureTestConfig {
+            num_instances: 500,
+            seed: 43_003,
+            ..TortureTestConfig::default()
+        };
+        ldlt_tpp_torture_test(100, 50, &config);
+    }
 }
