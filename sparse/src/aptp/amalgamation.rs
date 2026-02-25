@@ -259,10 +259,10 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Phase 2: Foundational — do_merge and sorted_union_excluding tests
+    // Foundational — do_merge and sorted_union_excluding tests
     // -----------------------------------------------------------------------
 
-    /// T008: Structural match — parent with 1 eliminated col and cc(parent) == cc(child) - 1.
+    /// Structural match — parent with 1 eliminated col and cc(parent) == cc(child) - 1.
     #[test]
     fn test_do_merge_structural_match() {
         // Parent: 1 eliminated col, cc = 5.  Child: 2 eliminated cols, cc = 6.
@@ -270,14 +270,14 @@ mod tests {
         assert!(do_merge(1, 5, 2, 6, 32));
     }
 
-    /// T009: Both nodes small (nemin condition).
+    /// Both nodes small (nemin condition).
     #[test]
     fn test_do_merge_nemin_both_small() {
         // Both have nelim < nemin=32
         assert!(do_merge(4, 20, 8, 30, 32));
     }
 
-    /// T010: One node is large (>= nemin), should NOT merge.
+    /// One node is large (>= nemin), should NOT merge.
     #[test]
     fn test_do_merge_one_large() {
         // Parent has nelim=32 >= nemin=32, child has nelim=4 < nemin
@@ -286,27 +286,27 @@ mod tests {
         assert!(!do_merge(4, 20, 32, 50, 32));
     }
 
-    /// T011: Both nodes large, should NOT merge.
+    /// Both nodes large, should NOT merge.
     #[test]
     fn test_do_merge_both_large() {
         assert!(!do_merge(40, 60, 35, 50, 32));
     }
 
-    /// T012: Sorted union of disjoint sets.
+    /// Sorted union of disjoint sets.
     #[test]
     fn test_sorted_union_disjoint() {
         let result = sorted_union_excluding(&[1, 3, 5], &[2, 4, 6], 0..0);
         assert_eq!(result, vec![1, 2, 3, 4, 5, 6]);
     }
 
-    /// T013: Sorted union of overlapping sets.
+    /// Sorted union of overlapping sets.
     #[test]
     fn test_sorted_union_overlapping() {
         let result = sorted_union_excluding(&[1, 3, 5], &[3, 5, 7], 0..0);
         assert_eq!(result, vec![1, 3, 5, 7]);
     }
 
-    /// T014: Sorted union with exclusion range.
+    /// Sorted union with exclusion range.
     #[test]
     fn test_sorted_union_with_exclusion() {
         let result = sorted_union_excluding(&[5, 8, 10], &[3, 5, 7], 3..6);
@@ -314,10 +314,10 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Phase 3: US1 — Core amalgamation algorithm tests
+    // Core amalgamation algorithm tests
     // -----------------------------------------------------------------------
 
-    /// T019: All supernodes large (> nemin) — no merges, output identical to input.
+    /// All supernodes large (> nemin) — no merges, output identical to input.
     #[test]
     fn test_no_merges_large_supernodes() {
         let supernodes = vec![
@@ -335,7 +335,7 @@ mod tests {
         );
     }
 
-    /// T020: Simple parent-child pair, both small — should merge.
+    /// Simple parent-child pair, both small — should merge.
     #[test]
     fn test_nemin_merge_simple_pair() {
         // child: cols [0,4), pattern [4,5,10]
@@ -351,7 +351,7 @@ mod tests {
         assert!(result[0].parent.is_none());
     }
 
-    /// T021: Structural match merge — parent with 1 col, cc matches child.
+    /// Structural match merge — parent with 1 col, cc matches child.
     #[test]
     fn test_structural_match_merge() {
         // child: cols [0,3), pattern [3,10,20] → cc=6
@@ -369,7 +369,7 @@ mod tests {
         assert_eq!(result[0].pattern, vec![10, 20, 30, 40]);
     }
 
-    /// T022: Chain of 5 small supernodes — progressive merge in postorder.
+    /// Chain of 5 small supernodes — progressive merge in postorder.
     #[test]
     fn test_chain_merge() {
         // s0→s1→s2→s3→s4 (chain), all nelim=2
@@ -394,7 +394,7 @@ mod tests {
         assert!(result[0].pattern.is_empty());
     }
 
-    /// T023: Parent with 4 small children — all merge into parent.
+    /// Parent with 4 small children — all merge into parent.
     #[test]
     fn test_bushy_tree_merge() {
         // 4 children (indices 0-3), all small, all point to parent (index 4)
@@ -419,7 +419,7 @@ mod tests {
         assert_eq!(result[0].col_end, 10);
     }
 
-    /// T024: Parent with 3 children — 2 small, 1 large — only small merge.
+    /// Parent with 3 children — 2 small, 1 large — only small merge.
     #[test]
     fn test_partial_merge_mixed_sizes() {
         let supernodes = vec![
@@ -448,7 +448,7 @@ mod tests {
         assert_eq!(result[0].col_end - result[0].col_begin, 40);
     }
 
-    /// T025: When child C merges into parent P, C's grandchildren become P's children.
+    /// When child C merges into parent P, C's grandchildren become P's children.
     #[test]
     fn test_parent_reparenting() {
         // gc0, gc1 → child → parent (root)
@@ -473,7 +473,7 @@ mod tests {
         assert_eq!(result[0].col_end, 10);
     }
 
-    /// T026: Pattern union on merge — verify merged pattern is correct.
+    /// Pattern union on merge — verify merged pattern is correct.
     #[test]
     fn test_pattern_union_on_merge() {
         // child: cols [0,2), pattern [2,5,10,20]
@@ -488,7 +488,7 @@ mod tests {
         assert_eq!(result[0].pattern, vec![5, 10, 15, 20]);
     }
 
-    /// T027: After amalgamation, all parent indices > child indices (postorder).
+    /// After amalgamation, all parent indices > child indices (postorder).
     #[test]
     fn test_postorder_preserved() {
         let supernodes = vec![
@@ -514,7 +514,7 @@ mod tests {
         }
     }
 
-    /// T028: Single supernode (root) — returned unchanged.
+    /// Single supernode (root) — returned unchanged.
     #[test]
     fn test_single_supernode_passthrough() {
         let supernodes = vec![sn(0, 10, vec![], None)];
@@ -524,7 +524,7 @@ mod tests {
         assert_eq!(result[0].col_end, 10);
     }
 
-    /// T028b: 100 single-column supernodes (simulating simplicial like bloweybq).
+    /// 100 single-column supernodes (simulating simplicial like bloweybq).
     #[test]
     fn test_simplicial_many_single_column_supernodes() {
         let n = 100;
@@ -576,7 +576,7 @@ mod tests {
         }
     }
 
-    /// T028c: Root with 20 small children — accumulated nelim may prevent later merges.
+    /// Root with 20 small children — accumulated nelim may prevent later merges.
     #[test]
     fn test_star_tree_many_children() {
         // 20 children (each nelim=2), parent (nelim=4), nemin=32
@@ -608,10 +608,10 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Phase 5 / US3: Configurable nemin threshold tests
+    // Configurable nemin threshold tests
     // -----------------------------------------------------------------------
 
-    /// T042: nemin=1 disables amalgamation — same input as test_nemin_merge_simple_pair
+    /// nemin=1 disables amalgamation — same input as test_nemin_merge_simple_pair
     /// should produce no merges, output identical to input.
     #[test]
     fn test_nemin_1_disables_amalgamation() {
@@ -632,7 +632,7 @@ mod tests {
         assert_eq!(result[1].col_end, 8);
     }
 
-    /// T043: nemin=64 merges more aggressively — supernodes with nelim in 32-63
+    /// nemin=64 merges more aggressively — supernodes with nelim in 32-63
     /// should merge with nemin=64 but not with nemin=32.
     #[test]
     fn test_nemin_64_more_aggressive() {

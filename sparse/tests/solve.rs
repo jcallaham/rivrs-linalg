@@ -1,11 +1,11 @@
-//! Tests for triangular solve & solver API (Phase 7).
+//! Tests for triangular solve & solver API.
 //!
-//! Organized by user story:
-//! - US3: Per-supernode triangular solve correctness
-//! - US1: End-to-end sparse solve
-//! - US2: Three-phase API with reuse
-//! - US4: Scaling integration
-//! - US5: Workspace-efficient solve
+//! Test categories:
+//! - Per-supernode triangular solve correctness
+//! - End-to-end sparse solve
+//! - Three-phase API with reuse
+//! - Scaling integration
+//! - Workspace-efficient solve
 
 mod common;
 
@@ -25,7 +25,7 @@ use rivrs_sparse::validate::sparse_backward_error;
 use common::{sparse_from_lower_triplets, sparse_matvec};
 
 // ---------------------------------------------------------------------------
-// US3: Per-supernode triangular solve correctness
+// Per-supernode triangular solve correctness
 // ---------------------------------------------------------------------------
 
 /// Test the full aptp_solve pipeline on a small hand-constructed matrix.
@@ -151,7 +151,7 @@ fn test_aptp_solve_diagonal() {
 }
 
 // ---------------------------------------------------------------------------
-// US1: End-to-end backward error tests
+// End-to-end backward error tests
 // ---------------------------------------------------------------------------
 
 /// Test SparseLDLT::solve_full on hand-constructed matrices.
@@ -300,7 +300,7 @@ fn test_solve_suitesparse_ci() {
 }
 
 // ---------------------------------------------------------------------------
-// US1: Error handling and edge cases
+// Error handling and edge cases
 // ---------------------------------------------------------------------------
 
 /// Test SolveBeforeFactor error.
@@ -467,7 +467,7 @@ fn test_solve_api_equivalence() {
 }
 
 // ---------------------------------------------------------------------------
-// US2: Three-phase API with reuse
+// Three-phase API with reuse
 // ---------------------------------------------------------------------------
 
 /// Test refactoring with different numeric values.
@@ -568,7 +568,7 @@ fn test_multiple_rhs_reuse() {
 }
 
 // ---------------------------------------------------------------------------
-// US5: Workspace-efficient solve
+// Workspace-efficient solve
 // ---------------------------------------------------------------------------
 
 /// Test that solve_scratch returns sufficient workspace.
@@ -652,7 +652,7 @@ fn test_workspace_reuse() {
 }
 
 // ---------------------------------------------------------------------------
-// US4: Scaling integration (MatchOrderMetis round-trip)
+// Scaling integration (MatchOrderMetis round-trip)
 // ---------------------------------------------------------------------------
 
 /// Test that MatchOrderMetis scaling is correctly applied/unapplied during solve.
@@ -1035,10 +1035,10 @@ fn test_solve_suitesparse_full() {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 8.2: Parallel correctness tests
+// Parallel correctness tests
 // ---------------------------------------------------------------------------
 
-/// T010: Factor + solve CI subset matrices with Par::rayon(4), assert backward error < 5e-11.
+/// Factor + solve CI subset matrices with Par::rayon(4), assert backward error < 5e-11.
 #[test]
 fn test_parallel_factor_ci_subset() {
     use rivrs_sparse::io::registry;
@@ -1090,7 +1090,7 @@ fn test_parallel_factor_ci_subset() {
     }
 }
 
-/// T011: Factor same matrix with Par::Seq and Par::rayon(4), verify both are correct
+/// Factor same matrix with Par::Seq and Par::rayon(4), verify both are correct
 /// and agree to machine precision.
 ///
 /// Uses a 500-node random sparse matrix (with METIS ordering) to ensure the
@@ -1176,7 +1176,7 @@ fn test_parallel_factor_determinism() {
     );
 }
 
-/// T012: Parallel factorization produces correct results across matrix sizes.
+/// Parallel factorization produces correct results across matrix sizes.
 ///
 /// Tests both small hand-constructed matrices (where threshold gating forces
 /// Par::Seq for BLAS) AND larger generated matrices (where tree-level par_iter
@@ -1306,7 +1306,7 @@ fn test_parallel_correctness_mixed_sizes() {
     assert!(be < 1e-10, "parallel random-500 backward error: {:.2e}", be);
 }
 
-/// T031: Parallel solve correctness — factor + solve CI subset with Par::rayon(4).
+/// Parallel solve correctness — factor + solve CI subset with Par::rayon(4).
 #[test]
 fn test_parallel_solve_ci_subset() {
     use rivrs_sparse::io::registry;
@@ -1347,7 +1347,7 @@ fn test_parallel_solve_ci_subset() {
     }
 }
 
-/// T032: Parallel solve consistency — factor+solve with Par::Seq vs Par::rayon(4),
+/// Parallel solve consistency — factor+solve with Par::Seq vs Par::rayon(4),
 /// verify both are correct and agree to machine precision.
 ///
 /// Uses a 500-node random matrix to exercise tree-level parallelism in both
@@ -1428,10 +1428,10 @@ fn test_parallel_solve_determinism() {
 }
 
 // ---------------------------------------------------------------------------
-// Phase 9.1a: Supernode Amalgamation Integration Tests
+// Supernode Amalgamation Integration Tests
 // ---------------------------------------------------------------------------
 
-/// T033: Verify amalgamation reduces c-71 supernode count below 12K.
+/// Verify amalgamation reduces c-71 supernode count below 12K.
 ///
 /// c-71 (n=76638, nnz=468096) is an optimization matrix with ~35K tiny
 /// supernodes before amalgamation. With nemin=32, most merge into larger
@@ -1468,7 +1468,7 @@ fn test_amalgamation_c71_supernode_count() {
     );
 }
 
-/// T034: Verify c-71 achieves acceptable backward error after amalgamation.
+/// Verify c-71 achieves acceptable backward error after amalgamation.
 ///
 /// Factorize + solve c-71 with default settings (nemin=32, MatchOrderMetis),
 /// assert backward error < 5e-11 (SPRAL's threshold).
@@ -1508,7 +1508,7 @@ fn test_amalgamation_c71_backward_error() {
     );
 }
 
-/// T046: nemin=1 disables amalgamation — solve result should be bitwise identical
+/// nemin=1 disables amalgamation — solve result should be bitwise identical
 /// to a solve without amalgamation (since nemin=1 makes do_merge always return false).
 ///
 /// Uses a hand-constructed matrix where the result is deterministic regardless
@@ -1561,10 +1561,10 @@ fn test_nemin_1_bitwise_identical() {
 }
 
 // ---------------------------------------------------------------------------
-// Small-leaf fast-path tests (T015–T019)
+// Small-leaf fast-path tests
 // ---------------------------------------------------------------------------
 
-/// T015: Small chain matrix with fast path active.
+/// Small chain matrix with fast path active.
 #[test]
 fn test_fast_path_small_chain() {
     // Arrow matrix: dense column structure produces small supernodes
@@ -1598,7 +1598,7 @@ fn test_fast_path_small_chain() {
     );
 }
 
-/// T016: Compare fast path vs disabled — both must be correct.
+/// Compare fast path vs disabled — both must be correct.
 #[test]
 fn test_fast_path_matches_general() {
     let n = 30;
@@ -1649,7 +1649,7 @@ fn test_fast_path_matches_general() {
     );
 }
 
-/// T017: Matrix that forces delayed pivots in a small-leaf subtree.
+/// Matrix that forces delayed pivots in a small-leaf subtree.
 #[test]
 fn test_fast_path_delayed_pivots() {
     // Matrix with zero diagonal entries to force 2x2 pivots / delays
@@ -1691,7 +1691,7 @@ fn test_fast_path_delayed_pivots() {
     );
 }
 
-/// T018: Mixed tree — small subtree contribution feeds into large supernode.
+/// Mixed tree — small subtree contribution feeds into large supernode.
 #[test]
 fn test_fast_path_contribution_boundary() {
     // Build a matrix with both small and large supernodes.
@@ -1737,7 +1737,7 @@ fn test_fast_path_contribution_boundary() {
     );
 }
 
-/// T018b: MC64 scaling with fast path — validate FR-009 (identical scaling in both paths).
+/// MC64 scaling with fast path — validate identical scaling in both paths.
 #[test]
 fn test_fast_path_mc64_scaling() {
     use rivrs_sparse::io::registry;
@@ -1791,7 +1791,7 @@ fn test_fast_path_mc64_scaling() {
     );
 }
 
-/// T019: CI-subset SuiteSparse matrices with fast path enabled.
+/// CI-subset SuiteSparse matrices with fast path enabled.
 #[test]
 fn test_fast_path_suitesparse_ci() {
     use rivrs_sparse::io::registry;

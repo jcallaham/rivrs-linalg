@@ -1162,7 +1162,7 @@ mod tests {
         )
     }
 
-    // ---- T004: build_cost_graph tests ----
+    // ---- build_cost_graph tests ----
 
     #[test]
     fn test_build_cost_graph_3x3() {
@@ -1267,7 +1267,7 @@ mod tests {
         assert!(has_entry(1, 2), "entry (2,1) should exist in col 1");
     }
 
-    // ---- T006: greedy_initial_matching tests ----
+    // ---- greedy_initial_matching tests ----
 
     #[test]
     fn test_greedy_matching_4x4() {
@@ -1318,7 +1318,7 @@ mod tests {
         }
     }
 
-    // ---- T007: dijkstra_augment tests ----
+    // ---- dijkstra_augment tests ----
 
     #[test]
     fn test_dijkstra_augment_3x3() {
@@ -1366,7 +1366,7 @@ mod tests {
         }
     }
 
-    // ---- T008: symmetrize_scaling tests ----
+    // ---- symmetrize_scaling tests ----
 
     #[test]
     fn test_symmetrize_scaling_known_duals() {
@@ -1403,7 +1403,7 @@ mod tests {
         }
     }
 
-    // ---- T009 (partial): end-to-end mc64_matching tests ----
+    // ---- end-to-end mc64_matching tests ----
 
     #[test]
     fn test_mc64_diagonal_identity() {
@@ -1561,7 +1561,7 @@ mod tests {
         verify_spral_scaling_properties("unit_test", matrix, result);
     }
 
-    // ---- T018: duff_pralet_correction tests ----
+    // ---- duff_pralet_correction tests ----
 
     #[test]
     fn test_duff_pralet_4x4_singular() {
@@ -1652,7 +1652,7 @@ mod tests {
         }
     }
 
-    // ---- T019 (unit part): structurally singular mc64_matching ----
+    // ---- structurally singular mc64_matching ----
 
     #[test]
     fn test_mc64_singular_zero_diagonal() {

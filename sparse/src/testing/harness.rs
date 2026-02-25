@@ -62,7 +62,7 @@ impl fmt::Display for TestResult {
 /// and returns a `TestResult`. This works for the `MockSolver` (which uses
 /// reference data directly) but will need rethinking for the real solver,
 /// where `test_factor` needs symbolic analysis output and `test_solve` needs
-/// the factorization. Options for Phase 1+:
+/// the factorization. Options:
 ///
 /// - Add associated types for intermediate state (analysis result, factorization)
 /// - Split into separate traits per phase

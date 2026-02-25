@@ -266,7 +266,7 @@ pub struct AptpStatistics {
 pub struct AptpPivotRecord {
     /// Original column index.
     pub col: usize,
-    /// Classification from Phase 2 (OneByOne, TwoByTwo, Delayed).
+    /// Classification (OneByOne, TwoByTwo, Delayed).
     pub pivot_type: PivotType,
     /// Worst stability metric for this column's L entries.
     pub max_l_entry: f64,
@@ -421,7 +421,7 @@ pub fn aptp_factor_in_place(
 /// 4. Returns [`AptpFactorization`] with all components as owned types
 ///
 /// Suitable for standalone testing and small matrices. For large frontal
-/// matrices in multifrontal factorization (Phase 6), use
+/// matrices in multifrontal factorization, use
 /// [`aptp_factor_in_place`] directly to avoid the copy.
 pub fn aptp_factor(
     a: MatRef<'_, f64>,
@@ -3231,7 +3231,7 @@ mod tests {
     use super::*;
     use faer::Mat;
 
-    // ---- Phase 2: Test infrastructure (T004-T005) ----
+    // ---- Test infrastructure ----
 
     /// Reconstruct P^T L D L^T P from factorization components.
     fn reconstruct_dense_ldlt(l: &Mat<f64>, d: &MixedDiagonal, perm: &[usize]) -> Mat<f64> {
@@ -3327,7 +3327,7 @@ mod tests {
         Mat::from_fn(n, n, |i, j| if i >= j { f(i, j) } else { f(j, i) })
     }
 
-    // ---- Phase 2 infrastructure test ----
+    // ---- Infrastructure test ----
 
     #[test]
     fn test_reconstruction_trivial_identity() {
@@ -3367,7 +3367,7 @@ mod tests {
 
     #[test]
     fn test_cp_identity() {
-        // T006: 3×3 identity → D=[1,1,1], no permutation
+        // 3×3 identity → D=[1,1,1], no permutation
         let a = Mat::identity(3, 3);
         let mut a_copy = a.clone();
         let result = complete_pivoting_factor(a_copy.as_mut(), 1e-20);
@@ -3388,7 +3388,7 @@ mod tests {
 
     #[test]
     fn test_cp_diagonal_pivot_ordering() {
-        // T007: 3×3 diagonal with known pivot ordering (largest diagonal first)
+        // 3×3 diagonal with known pivot ordering (largest diagonal first)
         let a = symmetric_matrix(3, |i, j| if i == j { [2.0, 5.0, 3.0][i] } else { 0.0 });
         let mut a_copy = a.clone();
         let result = complete_pivoting_factor(a_copy.as_mut(), 1e-20);
@@ -3416,7 +3416,7 @@ mod tests {
 
     #[test]
     fn test_cp_2x2_pivot() {
-        // T008: 4×4 matrix requiring 2×2 pivot (off-diagonal maximum)
+        // 4×4 matrix requiring 2×2 pivot (off-diagonal maximum)
         // Designed so max entry is off-diagonal and Δ condition passes
         let a = symmetric_matrix(4, |i, j| {
             let vals = [
@@ -3449,7 +3449,7 @@ mod tests {
 
     #[test]
     fn test_cp_failed_2x2_fallback() {
-        // T009: 4×4 matrix where 2×2 Δ test fails → fallback to 1×1 on max diagonal
+        // 4×4 matrix where 2×2 Δ test fails → fallback to 1×1 on max diagonal
         // Need |Δ| < 0.5 * |a_tm|^2
         // a_mm * a_tt - a_tm^2 should be small relative to a_tm^2
         // Let a_mm = 1.0, a_tt = 1.0, a_tm = 2.0
@@ -3491,7 +3491,7 @@ mod tests {
 
     #[test]
     fn test_cp_singular_block() {
-        // T010: singular/near-singular block → zero pivot handling
+        // singular/near-singular block → zero pivot handling
         let mut a = Mat::zeros(3, 3);
         a[(0, 0)] = 1e-25;
         a[(1, 1)] = 1e-25;
@@ -3509,7 +3509,7 @@ mod tests {
 
     #[test]
     fn test_cp_reconstruction_random() {
-        // T011: reconstruction on random symmetric indefinite matrices
+        // reconstruction on random symmetric indefinite matrices
         // Use deterministic seed for reproducibility
         let sizes = [8, 16, 32];
         for &n in &sizes {
@@ -3556,8 +3556,6 @@ mod tests {
             );
         }
     }
-
-    // ---- US1 Tests (T006-T012) ----
 
     #[test]
     fn test_1x1_trivial_diagonal() {
@@ -3700,8 +3698,6 @@ mod tests {
         let sum = result.stats.num_1x1 + 2 * result.stats.num_2x2 + result.stats.num_delayed;
         assert_eq!(sum, 5, "statistics sum {} != n=5", sum);
     }
-
-    // ---- US2 Tests (T022-T026) ----
 
     #[test]
     fn test_2x2_pivot_known_indefinite() {
@@ -3856,8 +3852,6 @@ mod tests {
         }
     }
 
-    // ---- US3 Tests (T033-T036) ----
-
     #[test]
     fn test_pd_statistics() {
         let a = symmetric_matrix(4, |i, j| {
@@ -3955,7 +3949,7 @@ mod tests {
         assert_eq!(inertia.zero, 0, "expected 0 zero");
     }
 
-    // ---- Phase 6: Polish tests ----
+    // ---- Polish tests ----
 
     #[test]
     fn test_partial_factorization() {
@@ -4160,7 +4154,7 @@ mod tests {
         assert!(matches!(result, Err(SparseError::InvalidInput { .. })));
     }
 
-    // ---- Phase 6: Random matrix stress tests (T041-T042) ----
+    // ---- Random matrix stress tests ----
 
     #[cfg(feature = "test-util")]
     mod stress_tests {
@@ -4283,7 +4277,7 @@ mod tests {
         }
     }
 
-    // ---- Phase 6: Integration tests with test data (T046-T047) ----
+    // ---- Integration tests with test data ----
 
     #[cfg(feature = "test-util")]
     mod integration_tests {
@@ -4383,11 +4377,11 @@ mod tests {
         }
     }
 
-    // ---- Phase 3: factor_inner tests (T022) ----
+    // ---- factor_inner tests ----
 
     #[test]
     fn test_factor_inner_reconstruction_moderate() {
-        // T022: factor_inner on matrices of moderate size (128, 256)
+        // factor_inner on matrices of moderate size (128, 256)
         // verifying reconstruction < 1e-12.
         let sizes = [64, 128, 256];
         let opts = AptpOptions::default();
@@ -4459,11 +4453,11 @@ mod tests {
         );
     }
 
-    // ---- Phase 5: Two-level integration tests (T030-T034) ----
+    // ---- Two-level integration tests ----
 
     #[test]
     fn test_two_level_dispatch_small_block_size() {
-        // T031/T032: Test the two-level dispatch by setting outer_block_size small
+        // Test the two-level dispatch by setting outer_block_size small
         // so matrices of moderate size trigger two_level_factor.
         let sizes = [33, 64, 100];
         let opts = AptpOptions {
@@ -4509,7 +4503,7 @@ mod tests {
 
     #[test]
     fn test_two_level_single_outer_block() {
-        // T031: frontal dimension == nb → single outer block, equivalent to factor_inner
+        // frontal dimension == nb → single outer block, equivalent to factor_inner
         let n = 32;
         let opts = AptpOptions {
             outer_block_size: 32,
@@ -4537,7 +4531,7 @@ mod tests {
 
     #[test]
     fn test_two_level_boundary_nb_plus_1() {
-        // T032: frontal dimension == nb+1 → two blocks, second block has 1 column
+        // frontal dimension == nb+1 → two blocks, second block has 1 column
         let n = 33;
         let opts = AptpOptions {
             outer_block_size: 32,
@@ -4569,7 +4563,7 @@ mod tests {
 
     #[test]
     fn test_two_level_partial_factorization() {
-        // T033: partial factorization (num_fully_summed < m) with dimension > nb
+        // partial factorization (num_fully_summed < m) with dimension > nb
         // This triggers two_level_factor with a contribution block.
         let n = 80;
         let p = 50; // > outer_block_size=32, triggers two-level
@@ -6895,7 +6889,7 @@ mod tests {
     }
 
     // =====================================================================
-    // Phase 9.2: SPRAL-Style Torture Tests (US2)
+    // SPRAL-Style Torture Tests
     // =====================================================================
     //
     // These tests exercise the dense APTP kernel with randomized adversarial
@@ -7223,7 +7217,7 @@ mod tests {
     }
 
     // =====================================================================
-    // Phase 9.2: Property-Based Tests (US3) — Kernel Level
+    // Property-Based Tests — Kernel Level
     // =====================================================================
 
     use crate::testing::strategies;

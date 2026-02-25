@@ -67,7 +67,7 @@ impl Block2x2 {
 mod tests {
     use super::*;
 
-    // ---- T007: PivotType tests ----
+    // ---- PivotType tests ----
 
     #[test]
     fn pivot_type_one_by_one() {
@@ -122,7 +122,7 @@ mod tests {
         );
     }
 
-    // ---- T008: Block2x2 tests ----
+    // ---- Block2x2 tests ----
 
     #[test]
     fn block2x2_field_storage() {

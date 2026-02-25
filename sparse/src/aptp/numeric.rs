@@ -3,7 +3,7 @@
 //! Implements the multifrontal method with A Posteriori Threshold Pivoting (APTP)
 //! for computing P^T A P = L D L^T factorizations of sparse symmetric indefinite
 //! matrices. The factorization traverses the assembly tree in postorder, assembling
-//! dense frontal matrices and factoring them using Phase 5's [`aptp_factor_in_place`]
+//! dense frontal matrices and factoring them using the [`aptp_factor_in_place`]
 //! kernel.
 //!
 //! # Algorithm Overview
@@ -18,7 +18,7 @@
 //! # Key Types
 //!
 //! - [`AptpNumeric`] — complete factorization result (public API)
-//! - [`FrontFactors`] — per-supernode factors (public, used by Phase 7 solve)
+//! - [`FrontFactors`] — per-supernode factors (public, used by triangular solve)
 //! - [`FactorizationStats`] — aggregate statistics (public)
 //! - `SupernodeInfo` — unified supernode descriptor (internal)
 //! - `FrontalMatrix` — temporary dense assembly matrix (internal)
@@ -274,7 +274,7 @@ fn build_assembly_maps(
     let col_ptrs = symbolic.col_ptr();
     let row_indices_csc = symbolic.row_idx();
 
-    // ---- Phase 1: Build amap (original entry scatter maps) ----
+    // ---- Build amap (original entry scatter maps) ----
     // Each entry is 4 u32: [src_csc_index, dest_frontal_linear, scale_row, scale_col]
     // where scale_row = perm_inv[orig_row], scale_col = perm_inv[orig_col]
     // (precomputed for efficient MC64 scaling at assembly time).
@@ -350,7 +350,7 @@ fn build_assembly_maps(
         amap_offsets[s + 1] = entry_end;
     }
 
-    // ---- Phase 2: Build extend-add maps ----
+    // ---- Build extend-add maps ----
 
     let mut ea_map = Vec::new();
     let mut ea_offsets = vec![0usize];
@@ -497,7 +497,7 @@ pub(crate) struct FrontalMatrix<'a> {
     /// Dense m × m storage (lower triangle used). Borrows from workspace.
     pub data: MatMut<'a, f64>,
     /// Global permuted column indices for each local row (length m).
-    /// Used by callers that need index mapping (e.g., scatter maps in Phase 4).
+    /// Used by callers that need index mapping (e.g., scatter maps).
     #[allow(dead_code)]
     pub row_indices: &'a [usize],
     /// Number of fully-summed rows/columns (supernode cols + delayed from children).
@@ -529,8 +529,8 @@ pub(crate) struct ContributionBlock {
 /// Per-supernode factorization result.
 ///
 /// Stores the L11, D11, and L21 blocks extracted from the factored frontal
-/// matrix, along with permutation and index information needed by Phase 7
-/// (triangular solve).
+/// matrix, along with permutation and index information needed by the
+/// triangular solve.
 ///
 /// # Invariants
 ///
@@ -734,7 +734,7 @@ pub struct ExportedFrontal {
 /// Complete multifrontal numeric factorization result.
 ///
 /// Contains per-supernode factors and aggregate statistics. Created by
-/// [`AptpNumeric::factor`] and used by Phase 7 (triangular solve) to
+/// [`AptpNumeric::factor`] and used by the triangular solve to
 /// perform forward/backward substitution.
 ///
 /// # Usage
@@ -812,7 +812,7 @@ impl AptpNumeric {
     /// Factor a sparse symmetric matrix using the multifrontal method with APTP.
     ///
     /// Traverses the assembly tree in postorder, assembling and factoring dense
-    /// frontal matrices at each supernode using Phase 5's APTP kernel.
+    /// frontal matrices at each supernode using the dense APTP kernel.
     ///
     /// # Arguments
     ///
@@ -3669,7 +3669,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Small-leaf subtree classification tests (T006–T011)
+    // Small-leaf subtree classification tests
     // -----------------------------------------------------------------------
 
     /// Helper: create a SupernodeInfo with given parameters for classification tests.
@@ -3692,7 +3692,7 @@ mod tests {
         }
     }
 
-    /// T006: Linear chain of 5 small supernodes — all should be in_small_leaf.
+    /// Linear chain of 5 small supernodes — all should be in_small_leaf.
     #[test]
     fn test_classify_all_small() {
         // Chain: 0 → 1 → 2 → 3 → 4 (each has 2 owned cols, 3 pattern → front_size=5)
@@ -3723,7 +3723,7 @@ mod tests {
         assert_eq!(subtrees[0].parent_of_root, None);
     }
 
-    /// T007: Mixed tree — small leaves, large root.
+    /// Mixed tree — small leaves, large root.
     #[test]
     fn test_classify_mixed_tree() {
         // Tree: leaves 0,1 → parent 2 (large)
@@ -3748,7 +3748,7 @@ mod tests {
         assert_eq!(subtrees.len(), 0);
     }
 
-    /// T008: Single isolated small leaves — no subtree formed (min 2 nodes).
+    /// Single isolated small leaves — no subtree formed (min 2 nodes).
     #[test]
     fn test_classify_single_node_excluded() {
         // Three independent small leaves (no parent linkage between them)
@@ -3769,7 +3769,7 @@ mod tests {
         }
     }
 
-    /// T009: Threshold boundary — front_size == 256 excluded, 255 included.
+    /// Threshold boundary — front_size == 256 excluded, 255 included.
     #[test]
     fn test_classify_threshold_boundary() {
         // Node 0: front_size=255 (qualifies), child of node 1
@@ -3804,7 +3804,7 @@ mod tests {
         assert_eq!(subtrees2[0].nodes, vec![0, 1]);
     }
 
-    /// T010: Disabled when threshold=0.
+    /// Disabled when threshold=0.
     #[test]
     fn test_classify_disabled() {
         let mut supernodes = vec![make_snode(0, 2, 3, Some(1)), make_snode(2, 2, 3, None)];
@@ -3817,7 +3817,7 @@ mod tests {
         assert!(!supernodes[1].in_small_leaf);
     }
 
-    /// T011: Two independent small-leaf subtrees.
+    /// Two independent small-leaf subtrees.
     #[test]
     fn test_classify_multiple_subtrees() {
         // Tree:

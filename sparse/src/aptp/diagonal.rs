@@ -515,7 +515,7 @@ mod tests {
     use super::*;
     use crate::aptp::pivot::{Block2x2, PivotType};
 
-    // ---- T009: MixedDiagonal construction and query ----
+    // ---- MixedDiagonal construction and query ----
 
     #[test]
     fn new_creates_all_delayed() {
@@ -585,7 +585,7 @@ mod tests {
         assert_eq!(diag.dimension(), 6);
     }
 
-    // ---- T010: solve_in_place ----
+    // ---- solve_in_place ----
 
     #[test]
     fn solve_all_1x1() {
@@ -698,7 +698,7 @@ mod tests {
         assert!(x.is_empty());
     }
 
-    // ---- T011: Edge case tests ----
+    // ---- Edge case tests ----
 
     #[test]
     fn dimension_0() {
@@ -775,7 +775,7 @@ mod tests {
         });
     }
 
-    // ---- T017: compute_inertia unit tests ----
+    // ---- compute_inertia unit tests ----
 
     #[test]
     fn inertia_all_positive_1x1() {
@@ -906,7 +906,7 @@ mod tests {
 
     #[test]
     fn scale_test_n_10000() {
-        // SC-001: MixedDiagonal at n=10,000 with random mixed pivot pattern
+        // MixedDiagonal at n=10,000 with random mixed pivot pattern
         let n = 10_000;
         let mut diag = MixedDiagonal::new(n);
 
@@ -965,7 +965,7 @@ mod tests {
         let rel_err = norm_diff / norm_b;
         assert!(
             rel_err < 1e-14,
-            "SC-001 scale test: relative error {:.2e} exceeds 1e-14",
+            "scale test: relative error {:.2e} exceeds 1e-14",
             rel_err
         );
     }

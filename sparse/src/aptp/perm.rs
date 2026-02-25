@@ -54,7 +54,7 @@ pub fn perm_from_forward(fwd: Vec<usize>) -> Result<Perm<usize>, SparseError> {
 mod tests {
     use super::*;
 
-    // ---- T021: perm_from_forward unit tests ----
+    // ---- perm_from_forward unit tests ----
 
     #[test]
     fn identity_permutation() {
@@ -149,7 +149,7 @@ mod tests {
 
     #[test]
     fn scale_test_n_10000() {
-        // SC-004: perm_from_forward at n=10,000, verify round-trip identity
+        // perm_from_forward at n=10,000, verify round-trip identity
         let n = 10_000;
         // Create a permutation: rotate by 1
         let fwd: Vec<usize> = (0..n).map(|i| (i + 1) % n).collect();

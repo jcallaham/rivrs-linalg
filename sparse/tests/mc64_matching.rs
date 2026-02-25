@@ -35,7 +35,7 @@ fn verify_spral_properties(name: &str, matrix: &SparseColMat<usize, f64>, result
     verify_spral_scaling_properties(name, matrix, result);
 }
 
-// ---- T009: End-to-end hand-constructed tests ----
+// ---- End-to-end hand-constructed tests ----
 
 #[test]
 fn test_mc64_3x3_diagonal() {
@@ -112,7 +112,7 @@ fn test_mc64_2x2_trivial() {
     verify_spral_properties("2x2_trivial", &matrix, &result);
 }
 
-// ---- T014: Edge case matrices ----
+// ---- Edge case matrices ----
 
 #[test]
 fn test_mc64_badly_scaled() {
@@ -219,7 +219,7 @@ fn test_mc64_6x6_larger_indefinite() {
     verify_spral_properties("6x6_indef", &matrix, &result);
 }
 
-// ---- T015: MC64 + METIS independent composition tests ----
+// ---- MC64 + METIS independent composition tests ----
 
 #[test]
 fn test_mc64_metis_independent_composition() {
@@ -329,7 +329,7 @@ fn test_mc64_metis_independent_composition() {
     }
 }
 
-// ---- T019: Structurally singular matrix integration tests ----
+// ---- Structurally singular matrix integration tests ----
 
 #[test]
 fn test_mc64_structurally_singular() {
@@ -360,7 +360,7 @@ fn test_mc64_structurally_singular() {
     }
 }
 
-// ---- T020: SuiteSparse CI subset tests ----
+// ---- SuiteSparse CI subset tests ----
 
 #[test]
 fn test_mc64_suitesparse_ci_subset() {
@@ -453,7 +453,7 @@ fn test_mc64_suitesparse_ci_subset() {
         // For full-rank matrices with clean structure, the optimal matching ensures
         // each matched entry scales to exactly 1.0. However, some matrices (e.g.
         // structural problems like DNVS/thread) exhibit row_max < 1.0 due to
-        // row_max formula limitations documented in ssids-log Phase 4.2.
+        // row_max formula limitations documented in ssids-log.
         // We use the same quality reporting as the full SuiteSparse test:
         // report statistics, hard-fail only if min_row_max < 0.75 (nonsingular)
         // or median < 0.5 (singular).
@@ -543,7 +543,7 @@ fn test_mc64_suitesparse_ci_subset() {
     }
 }
 
-// ---- T021: Full SuiteSparse validation ----
+// ---- Full SuiteSparse validation ----
 //
 // Matrices are loaded and validated one at a time to avoid OOM on large
 // collections. Each matrix is dropped before loading the next. Run with:

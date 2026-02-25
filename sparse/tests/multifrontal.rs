@@ -1,10 +1,10 @@
-//! Tests for multifrontal numeric factorization (Phase 6).
+//! Tests for multifrontal numeric factorization.
 //!
-//! Organized by user story:
-//! - US3: Assembly of frontal matrices
-//! - US2: Delayed pivot propagation
-//! - US1: End-to-end factorization
-//! - US4: Schur complement validation
+//! Test categories:
+//! - Assembly of frontal matrices
+//! - Delayed pivot propagation
+//! - End-to-end factorization
+//! - Schur complement validation
 
 mod common;
 
@@ -141,10 +141,10 @@ fn multifrontal_reconstruction_error(
 }
 
 // ===========================================================================
-// US3: Assembly tests (T010-T014)
+// Assembly tests
 // ===========================================================================
 
-/// T010: Test build_supernode_info for supernodal symbolic analysis.
+/// Test build_supernode_info for supernodal symbolic analysis.
 /// Uses a matrix that should produce supernodal analysis.
 #[test]
 fn test_build_supernode_info_supernodal() {
@@ -179,7 +179,7 @@ fn test_build_supernode_info_supernodal() {
     }
 }
 
-/// T011: Test build_supernode_info for simplicial symbolic analysis.
+/// Test build_supernode_info for simplicial symbolic analysis.
 /// Uses a small diagonal matrix where faer produces simplicial.
 #[test]
 fn test_build_supernode_info_simplicial() {
@@ -205,7 +205,7 @@ fn test_build_supernode_info_simplicial() {
     assert_eq!(numeric.stats().total_delayed, 0);
 }
 
-/// T012: Test scatter of original entries for a leaf supernode.
+/// Test scatter of original entries for a leaf supernode.
 /// Verifies correct assembly by checking factorization of a simple matrix.
 #[test]
 fn test_scatter_leaf_supernode() {
@@ -234,7 +234,7 @@ fn test_scatter_leaf_supernode() {
     );
 }
 
-/// T013: Test extend_add by factoring a matrix with multiple supernodes.
+/// Test extend_add by factoring a matrix with multiple supernodes.
 /// If the assembly tree has children, extend-add must work correctly.
 #[test]
 fn test_extend_add_correctness() {
@@ -262,7 +262,7 @@ fn test_extend_add_correctness() {
     );
 }
 
-/// T014: Test assembly with children (multi-supernode matrix).
+/// Test assembly with children (multi-supernode matrix).
 #[test]
 fn test_assembly_with_children() {
     // Band matrix: wider bandwidth forces multi-supernode structure
@@ -293,10 +293,10 @@ fn test_assembly_with_children() {
 }
 
 // ===========================================================================
-// US2: Delayed pivot tests (T016-T019)
+// Delayed pivot tests
 // ===========================================================================
 
-/// T016: Test extract_contribution - factor a small frontal matrix and check
+/// Test extract_contribution - factor a small frontal matrix and check
 /// that the contribution block has correct dimensions.
 #[test]
 fn test_extract_contribution_structure() {
@@ -336,7 +336,7 @@ fn test_extract_contribution_structure() {
     );
 }
 
-/// T017: Test extract_front_factors - verify L11, D11, L21 shapes.
+/// Test extract_front_factors - verify L11, D11, L21 shapes.
 #[test]
 fn test_extract_front_factors_shapes() {
     // Positive definite tridiagonal
@@ -375,7 +375,7 @@ fn test_extract_front_factors_shapes() {
     }
 }
 
-/// T018: Test delayed pivot propagation - construct a 2x2 indefinite matrix
+/// Test delayed pivot propagation - construct a 2x2 indefinite matrix
 /// where delays may occur and verify reconstruction.
 #[test]
 fn test_delayed_pivot_propagation() {
@@ -405,7 +405,7 @@ fn test_delayed_pivot_propagation() {
     );
 }
 
-/// T019: Test factorization with strongly indefinite matrix.
+/// Test factorization with strongly indefinite matrix.
 #[test]
 fn test_strongly_indefinite() {
     // Matrix with both positive and negative pivots
@@ -438,12 +438,12 @@ fn test_strongly_indefinite() {
 }
 
 // ===========================================================================
-// US1: End-to-end factorization tests (T021-T026)
+// End-to-end factorization tests
 // ===========================================================================
 
-/// T021: Test single-supernode-matches-dense.
+/// Test single-supernode-matches-dense.
 /// For a small dense matrix that becomes a single front, verify multifrontal
-/// result matches Phase 5's dense APTP exactly.
+/// result matches the dense APTP kernel exactly.
 #[test]
 fn test_single_supernode_matches_dense() {
     // Fully dense small matrix → single supernode
@@ -475,7 +475,7 @@ fn test_single_supernode_matches_dense() {
     );
 }
 
-/// T022: Test simplicial path.
+/// Test simplicial path.
 /// Use a small sparse diagonal matrix where faer may produce simplicial analysis.
 #[test]
 fn test_simplicial_path() {
@@ -501,7 +501,7 @@ fn test_simplicial_path() {
     assert_eq!(numeric.stats().total_delayed, 0);
 }
 
-/// T023: Test hand-constructed matrices via the test registry.
+/// Test hand-constructed matrices via the test registry.
 /// Factors each hand-constructed matrix and verifies reconstruction error.
 #[test]
 fn test_hand_constructed_matrices() {
@@ -528,7 +528,7 @@ fn test_hand_constructed_matrices() {
     }
 }
 
-/// T024: Test factorization statistics.
+/// Test factorization statistics.
 /// For a small matrix with known structure, verify stats fields.
 #[test]
 fn test_factorization_statistics() {
@@ -549,7 +549,7 @@ fn test_factorization_statistics() {
     assert!(stats.max_front_size > 0, "max_front_size should be > 0");
 }
 
-/// T025: Test dimension mismatch error.
+/// Test dimension mismatch error.
 #[test]
 fn test_dimension_mismatch_error() {
     let entries_3x3: Vec<(usize, usize, f64)> = (0..3).map(|i| (i, i, 1.0)).collect();
@@ -573,7 +573,7 @@ fn test_dimension_mismatch_error() {
     );
 }
 
-/// T026: Test inertia validation.
+/// Test inertia validation.
 /// For matrices with known sign distributions, verify inertia.
 #[test]
 fn test_inertia_validation() {
@@ -599,10 +599,10 @@ fn test_inertia_validation() {
 }
 
 // ===========================================================================
-// US4: Schur complement validation tests (T030-T031)
+// Schur complement validation tests
 // ===========================================================================
 
-/// T030: Test dense equivalence.
+/// Test dense equivalence.
 /// For small matrices, multifrontal should produce reconstruction errors
 /// comparable to dense APTP.
 #[test]
@@ -699,7 +699,7 @@ fn test_dense_equivalence() {
     );
 }
 
-/// T031: Test multi-level contribution flow.
+/// Test multi-level contribution flow.
 /// Factor a matrix with a deep assembly tree and verify correctness.
 #[test]
 fn test_multi_level_contribution_flow() {
@@ -873,7 +873,7 @@ fn test_medium_indefinite() {
 }
 
 // ===========================================================================
-// T028: SuiteSparse CI subset tests
+// SuiteSparse CI subset tests
 // ===========================================================================
 
 /// Factor CI-subset SuiteSparse matrices (n < 2000) and verify reconstruction error.
@@ -1156,7 +1156,7 @@ fn test_cascading_delayed_pivots() {
 }
 
 // ===========================================================================
-// T029: Full SuiteSparse test (ignored, requires full collection)
+// Full SuiteSparse test (ignored, requires full collection)
 // ===========================================================================
 
 /// Factor SuiteSparse matrices one at a time and verify reconstruction error.

@@ -316,7 +316,7 @@ impl AptpSymbolic {
     /// `prefactorize_symbolic_cholesky` to obtain the etree parent pointers and
     /// column counts.
     ///
-    /// # Optimization notes (Phase 10 review)
+    /// # Optimization notes
     ///
     /// The triplet round-trip (CSC → triplets → SparseColMat → internal CSC) allocates
     /// the permuted structure data ~3 times. When the permutation is identity, we could
@@ -369,7 +369,7 @@ impl AptpSymbolic {
     /// predicted nonzero count.
     ///
     /// The 10% fraction is a conservative starting point; it will be validated
-    /// empirically when numeric factorization exists (Phase 5-6).
+    /// empirically during numeric factorization.
     ///
     /// Reference: Hogg et al. (2016), Section 2.4 — delayed pivot propagation
     /// and workspace estimation.
@@ -570,9 +570,9 @@ impl AptpSymbolic {
     /// # Panics
     ///
     /// Panics if `s >= n_supernodes()` for a supernodal factorization.
-    // Optimization note (Phase 6 review): The binary search per call is O(log ns).
-    // If Phase 6 traverses the assembly tree for all supernodes, consider precomputing
-    // a parent array in `analyze()` for O(1) per lookup.
+    // Optimization note: The binary search per call is O(log ns).
+    // If multifrontal factorization traverses the assembly tree for all supernodes,
+    // consider precomputing a parent array in `analyze()` for O(1) per lookup.
     pub fn supernode_parent(&self, s: usize) -> Option<usize> {
         match self.inner.raw() {
             SymbolicCholeskyRaw::Supernodal(sn) => {
@@ -686,7 +686,7 @@ mod tests {
         SparseColMat::try_new_from_triplets(4, 4, &triplets).unwrap()
     }
 
-    // ---- US1 Tests: Symbolic Analysis with Default Ordering ----
+    // ---- Symbolic Analysis with Default Ordering ----
 
     #[test]
     fn test_analyze_1x1_matrix() {
@@ -787,7 +787,7 @@ mod tests {
         assert_eq!(stats.n_supernodes.is_some(), stats.is_supernodal);
     }
 
-    // ---- US2 Tests: Custom Ordering Support ----
+    // ---- Custom Ordering Support ----
 
     #[test]
     fn test_analyze_custom_identity_ordering() {
@@ -854,7 +854,7 @@ mod tests {
         );
     }
 
-    // ---- US3 Tests: Supernodal Structure Access ----
+    // ---- Supernodal Structure Access ----
 
     #[test]
     fn test_n_supernodes_simplicial() {
@@ -982,7 +982,7 @@ mod tests {
         }
     }
 
-    // ---- US4 Tests: APTP Pivot Buffer Estimation ----
+    // ---- APTP Pivot Buffer Estimation ----
 
     #[test]
     fn test_pivot_buffer_nonnegative() {

@@ -726,7 +726,7 @@ mod tests {
         SparseColMat::try_new_from_triplets(n, n, &triplets).unwrap()
     }
 
-    // ---- T008: metis_ordering unit tests ----
+    // ---- metis_ordering unit tests ----
 
     #[test]
     fn test_metis_ordering_tridiagonal_5() {
@@ -807,7 +807,7 @@ mod tests {
         }
     }
 
-    // ---- T005: extract_adjacency tests ----
+    // ---- extract_adjacency tests ----
 
     #[test]
     fn test_adjacency_tridiagonal_3x3() {
@@ -975,7 +975,7 @@ mod tests {
         }
     }
 
-    // ---- T003: split_matching_cycles unit tests ----
+    // ---- split_matching_cycles unit tests ----
 
     #[test]
     fn test_split_all_singletons() {
@@ -1094,7 +1094,7 @@ mod tests {
         assert_eq!(decomp.partner[0], -1);
     }
 
-    // ---- T005: build_condensed_adjacency unit tests ----
+    // ---- build_condensed_adjacency unit tests ----
 
     /// Helper: create a symmetric matrix from upper-triangular entries.
     fn make_upper_tri(n: usize, entries: &[(usize, usize, f64)]) -> SparseColMat<usize, f64> {
@@ -1197,7 +1197,7 @@ mod tests {
         assert!(adjncy[n1_start..n1_end].contains(&0));
     }
 
-    // ---- T007: expand_ordering unit tests ----
+    // ---- expand_ordering unit tests ----
 
     #[test]
     fn test_expand_ordering_with_pairs() {
