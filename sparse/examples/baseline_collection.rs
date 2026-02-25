@@ -143,7 +143,7 @@ fn main() {
         }
         let b = Col::from_fn(n, |i| b_vec[i]);
 
-        // Phase 1: Ordering (analyze includes ordering)
+        // Ordering + symbolic analysis (combined in analyze_with_matrix)
         let t_total = Instant::now();
         let t_ord = Instant::now();
         let opts = AnalyzeOptions::default();
@@ -156,10 +156,10 @@ fn main() {
         };
         let ordering_ms = t_ord.elapsed().as_secs_f64() * 1000.0;
 
-        // Phase 2: Symbolic (already done in analyze_with_matrix, so record ~0)
+        // Symbolic analysis is part of analyze_with_matrix, so record ~0 separately.
         let symbolic_ms = 0.0;
 
-        // Phase 3: Factor
+        // Numeric factorization
         let t_fac = Instant::now();
         let factor_opts = FactorOptions::default();
         match solver.factor(a, &factor_opts) {
@@ -171,7 +171,7 @@ fn main() {
         }
         let factor_ms = t_fac.elapsed().as_secs_f64() * 1000.0;
 
-        // Phase 4: Solve
+        // Solve
         let t_slv = Instant::now();
         let scratch = solver.solve_scratch(1);
         let mut mem = faer::dyn_stack::MemBuffer::new(scratch);

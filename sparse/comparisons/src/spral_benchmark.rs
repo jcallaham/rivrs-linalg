@@ -9,7 +9,7 @@
 //!
 //! Build SPRAL library and driver binaries:
 //! ```sh
-//! tools/build_spral.sh
+//! comparisons/drivers/build_spral.sh
 //! ```
 //!
 //! # Usage
@@ -678,7 +678,9 @@ fn main() {
             "Error: SPRAL benchmark driver not found at {}",
             cli.spral_binary
         );
-        eprintln!("Run tools/build_spral.sh to build SPRAL and compile driver binaries.");
+        eprintln!(
+            "Run comparisons/drivers/build_spral.sh to build SPRAL and compile driver binaries."
+        );
         std::process::exit(1);
     }
 

@@ -21,10 +21,10 @@
 !   SOLUTION section with solution vector
 !   BACKWARD_ERROR with computed backward error
 !
-! Compile (after running tools/build_spral.sh):
+! Compile (after running comparisons/drivers/build_spral.sh):
 !   METIS_LIB=$(find /workspace/rivrs-linalg/sparse/target -name "libmetis.a" | head -1)
 !   gfortran -O2 -I /tmp/spral_ssids -o /tmp/spral_full_solve \
-!     tools/spral_full_solve.f90 -L/tmp/spral_ssids -lspral \
+!     comparisons/drivers/spral_full_solve.f90 -L/tmp/spral_ssids -lspral \
 !     $METIS_LIB -lopenblas -lstdc++ -lm
 
 program spral_full_solve_driver

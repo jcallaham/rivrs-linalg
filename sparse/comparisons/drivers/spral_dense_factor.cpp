@@ -26,8 +26,8 @@
 //   num_2x2: <count>
 //   num_delayed: <count>
 //
-// Build (after running tools/build_spral.sh):
-//   See tools/build_spral_dense_factor.sh
+// Build (after running comparisons/drivers/build_spral.sh):
+//   See comparisons/drivers/build_spral_dense_factor.sh
 //
 // Usage:
 //   ./spral_dense_factor < /tmp/frontal_matrix.txt

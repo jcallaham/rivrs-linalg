@@ -5,9 +5,9 @@
 //! and per workload class (IntraNode, TreeLevel, Mixed).
 //!
 //! Usage:
-//!   cargo run --example parallel_scaling --features diagnostic --release -- --ci-only
-//!   cargo run --example parallel_scaling --features diagnostic --release -- --ci-only --threads 1,2,4
-//!   cargo run --example parallel_scaling --features diagnostic --release
+//!   cargo run --example parallel_scaling --release -- --ci-only
+//!   cargo run --example parallel_scaling --release -- --ci-only --threads 1,2,4
+//!   cargo run --example parallel_scaling --release
 
 use std::time::Instant;
 
