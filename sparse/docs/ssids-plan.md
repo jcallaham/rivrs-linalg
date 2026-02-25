@@ -2957,7 +2957,6 @@ SPRAL that deterministic tests missed.
 - Generate random symmetric matrices (varying size 5-500, density, definiteness)
 - Verify backward error < tolerance for all solvable systems
 - Verify no panics on singular or near-singular matrices
-- Test both orderings (AMD for small, MatchOrderMetis for large)
 
 **Fuzzing / adversarial inputs:**
 - Malformed inputs (invalid sparsity patterns, non-symmetric matrices)

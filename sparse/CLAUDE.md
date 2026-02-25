@@ -409,10 +409,8 @@ unit tests of the symbolic analysis and factorization kernel on small matrices.
 - Phase 9.2: Release preparation (docs, examples, crates.io)
 
 ## Recent Changes
+- 026-robustness-hardening: Added proptest 1.4 (dev-dependency for property-based testing)
 - 025-small-leaf-fastpath: Added Rust 1.87+ (edition 2024) + faer 0.22 (dense LA, CSC), rayon 1.x (parallelism), serde/serde_json (diagnostic export)
 - 024-direct-gemm-contrib: Added Rust 1.87+ (edition 2024) + faer 0.22 (dense LA, CSC, `tri_matmul`, `matmul`), rayon 1.x (parallel tree traversal), serde/serde_json (diagnostic export)
-- 024-direct-gemm-contrib: Added Rust 1.87+ (edition 2024) + faer 0.22 (dense LA, CSC), rayon 1.x (parallel tree traversal), serde/serde_json (diagnostic export)
 
 ## Active Technologies
-- Rust 1.87+ (edition 2024) + faer 0.22 (dense LA, CSC), rayon 1.x (parallelism), serde/serde_json (diagnostic export) (025-small-leaf-fastpath)
-- N/A (in-memory numerical computation) (025-small-leaf-fastpath)
