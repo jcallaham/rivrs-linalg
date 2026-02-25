@@ -578,7 +578,14 @@ fn print_comparison_row(rec: &ComparisonRecord) {
     let (rivrs_fac, rivrs_be, sl_st, sl_nd) = rec
         .rivrs
         .as_ref()
-        .map(|r| (r.factor_s, r.backward_error, r.small_leaf_subtrees, r.small_leaf_nodes))
+        .map(|r| {
+            (
+                r.factor_s,
+                r.backward_error,
+                r.small_leaf_subtrees,
+                r.small_leaf_nodes,
+            )
+        })
         .unwrap_or((f64::NAN, f64::NAN, 0, 0));
     let ratio = if spral_fac > 0.0 {
         rivrs_fac / spral_fac

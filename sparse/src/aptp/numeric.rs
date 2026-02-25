@@ -40,6 +40,8 @@ use faer::{Mat, MatMut, Par};
 use super::diagonal::{MixedDiagonal, PivotEntry};
 use super::factor::{
     AptpFactorResult, AptpOptions, aptp_factor_in_place, compute_contribution_gemm,
+    compute_contribution_gemm_rect, extract_contribution_rect, extract_front_factors_rect,
+    tpp_factor_rect,
 };
 use super::pivot::{Block2x2, PivotType};
 use super::symbolic::AptpSymbolic;
@@ -85,6 +87,10 @@ pub(crate) struct FactorizationWorkspace {
     /// final GEMM writes here → buffer moved into ContributionBlock → parent's
     /// extend-add recycles buffer back.
     contrib_buffer: Mat<f64>,
+    /// Pre-allocated L·D product workspace for `compute_contribution_gemm`.
+    /// Sized nfs × ne (grows on demand). Eliminates per-supernode allocation
+    /// in the hot loop.
+    ld_workspace: Mat<f64>,
 }
 
 impl Default for FactorizationWorkspace {
@@ -108,6 +114,7 @@ impl FactorizationWorkspace {
                 delayed_cols_buf: Vec::new(),
                 global_to_local: vec![NOT_IN_FRONT; n],
                 contrib_buffer: Mat::zeros(0, 0),
+                ld_workspace: Mat::new(),
             };
         }
         Self {
@@ -118,6 +125,7 @@ impl FactorizationWorkspace {
             // Lazily allocated on first use in factor_single_supernode.
             // Recycled via extend_add buffer return, so typically allocates once.
             contrib_buffer: Mat::new(),
+            ld_workspace: Mat::new(),
         }
     }
 
@@ -129,6 +137,7 @@ impl FactorizationWorkspace {
             delayed_cols_buf: Vec::new(),
             global_to_local: Vec::new(),
             contrib_buffer: Mat::new(),
+            ld_workspace: Mat::new(),
         }
     }
 
@@ -541,20 +550,20 @@ pub(crate) struct ContributionBlock {
 #[derive(Debug)]
 pub struct FrontFactors {
     /// Unit lower triangular factor (ne × ne).
-    l11: Mat<f64>,
+    pub(crate) l11: Mat<f64>,
     /// Block diagonal with 1x1 and 2x2 pivots (ne entries).
-    d11: MixedDiagonal,
+    pub(crate) d11: MixedDiagonal,
     /// Subdiagonal factor block (r × ne).
-    l21: Mat<f64>,
+    pub(crate) l21: Mat<f64>,
     /// APTP local pivot permutation (length k). Maps factored position to
     /// original front-local column.
-    local_perm: Vec<usize>,
+    pub(crate) local_perm: Vec<usize>,
     /// Number of columns successfully eliminated (ne ≤ k).
-    num_eliminated: usize,
+    pub(crate) num_eliminated: usize,
     /// Global permuted column indices for the eliminated columns (length ne).
-    col_indices: Vec<usize>,
+    pub(crate) col_indices: Vec<usize>,
     /// Global permuted row indices for L21 rows (length r).
-    row_indices: Vec<usize>,
+    pub(crate) row_indices: Vec<usize>,
 }
 
 impl FrontFactors {
@@ -1161,6 +1170,7 @@ impl AptpNumeric {
                 let nfs = m - k;
                 let mut cb = Mat::zeros(m, m);
                 if nfs > 0 {
+                    let mut ld_ws = Mat::zeros(m, ne.max(1));
                     compute_contribution_gemm(
                         &frontal_data,
                         k,
@@ -1168,6 +1178,7 @@ impl AptpNumeric {
                         m,
                         &result.d,
                         &mut cb,
+                        &mut ld_ws,
                         Par::Seq,
                     );
                 }
@@ -1412,6 +1423,7 @@ fn factor_single_supernode(
             m,
             &result.d,
             &mut workspace.contrib_buffer,
+            &mut workspace.ld_workspace,
             effective_par,
         );
     }
@@ -1505,6 +1517,402 @@ fn factor_single_supernode(
     })
 }
 
+/// Factor a small-leaf subtree using SPRAL-style rectangular L storage.
+///
+/// Replaces the general `factor_single_supernode` path for classified small-leaf
+/// subtrees with a streamlined per-node loop that:
+/// 1. Uses rectangular m×k L storage instead of square m×m frontal matrix
+/// 2. Factors via `tpp_factor_rect` (rectangular TPP kernel)
+/// 3. Computes contribution GEMM from rectangular storage
+/// 4. Reuses a single small workspace across all nodes in the subtree
+///
+/// # Arguments
+///
+/// - `subtree`: Small-leaf subtree descriptor (nodes in postorder).
+/// - `supernodes`: All supernode descriptors.
+/// - `children`: Children map.
+/// - `matrix`: Original sparse matrix.
+/// - `perm_fwd`/`perm_inv`: Forward/inverse permutations.
+/// - `options`: APTP options.
+/// - `scaling`: Optional MC64 scaling factors.
+/// - `n`: Matrix dimension.
+/// - `contributions`: Global contribution storage (read children, write results).
+/// - `assembly_maps`: Precomputed scatter maps.
+///
+/// # Returns
+///
+/// Vec of (node_id, FrontFactors, PerSupernodeStats) for each node in the subtree.
+///
+/// # SPRAL Equivalent
+///
+/// `SmallLeafNumericSubtree::factor()` in `SmallLeafNumericSubtree.hxx:187-446` (BSD-3).
+#[allow(clippy::too_many_arguments)]
+fn factor_small_leaf_subtree(
+    subtree: &SmallLeafSubtree,
+    supernodes: &[SupernodeInfo],
+    children: &[Vec<usize>],
+    matrix: &SparseColMat<usize, f64>,
+    perm_fwd: &[usize],
+    perm_inv: &[usize],
+    options: &AptpOptions,
+    scaling: Option<&[f64]>,
+    n: usize,
+    contributions: &mut [Option<ContributionBlock>],
+    assembly_maps: &AssemblyMaps,
+) -> Result<Vec<(usize, FrontFactors, PerSupernodeStats)>, SparseError> {
+    let max_front = subtree.max_front_size;
+    let mut results = Vec::with_capacity(subtree.nodes.len());
+
+    // Shared workspace for the subtree:
+    // - l_storage: rectangular m×k buffer, reused per node (max_front × max_front covers all)
+    // - global_to_local: length n, reused per node
+    // - contrib_buffer: for contribution GEMM output, recycled
+    // - ld_workspace: for L·D product in contribution GEMM
+    // - frontal_row_indices: reusable buffer for building front structure
+    // - delayed_cols_buf: reusable buffer for collecting child delays
+    let mut l_storage = Mat::<f64>::zeros(max_front, max_front);
+    let mut global_to_local = vec![NOT_IN_FRONT; n];
+    let mut contrib_buffer = Mat::<f64>::new();
+    let mut ld_workspace = Mat::<f64>::new();
+    let mut frontal_row_indices = Vec::<usize>::with_capacity(max_front);
+    let mut delayed_cols_buf = Vec::<usize>::new();
+
+    let symbolic_matrix = matrix.symbolic();
+    let col_ptrs = symbolic_matrix.col_ptr();
+    let row_indices_csc = symbolic_matrix.row_idx();
+    let values = matrix.val();
+
+    for &node_id in &subtree.nodes {
+        let sn = &supernodes[node_id];
+
+        // 1. Collect delayed columns from children
+        delayed_cols_buf.clear();
+        for &c in &children[node_id] {
+            if let Some(ref cb) = contributions[c] {
+                delayed_cols_buf.extend_from_slice(&cb.row_indices[..cb.num_delayed]);
+            }
+        }
+
+        // 2. Compute frontal matrix structure
+        let sn_ncols: usize = sn.owned_ranges.iter().map(|r| r.len()).sum();
+        let k = sn_ncols + delayed_cols_buf.len(); // num_fully_summed
+
+        frontal_row_indices.clear();
+        frontal_row_indices.reserve(k + sn.pattern.len());
+        for range in &sn.owned_ranges {
+            frontal_row_indices.extend(range.clone());
+        }
+        frontal_row_indices.extend_from_slice(&delayed_cols_buf);
+        frontal_row_indices.extend_from_slice(&sn.pattern);
+        let m = frontal_row_indices.len();
+
+        // 3. Ensure l_storage capacity and zero rectangular m×k region
+        #[cfg(feature = "diagnostic")]
+        let zero_start = std::time::Instant::now();
+
+        if m > l_storage.nrows() || k > l_storage.ncols() {
+            l_storage = Mat::zeros(m, k.max(l_storage.ncols()));
+        }
+        // Zero only the m×k rectangle (smaller than m×m for NFS nodes)
+        for j in 0..k {
+            l_storage.col_as_slice_mut(j)[0..m].fill(0.0);
+        }
+
+        #[cfg(feature = "diagnostic")]
+        let zero_time = zero_start.elapsed();
+
+        // 4. Build global-to-local mapping
+        #[cfg(feature = "diagnostic")]
+        let g2l_start = std::time::Instant::now();
+
+        for (i, &global) in frontal_row_indices.iter().enumerate() {
+            global_to_local[global] = i;
+        }
+
+        #[cfg(feature = "diagnostic")]
+        let g2l_time = g2l_start.elapsed();
+
+        // 5. Split assembly: scatter into l_storage (FS columns) and contrib_buffer (NFS×NFS)
+        #[cfg(feature = "diagnostic")]
+        let assembly_start = std::time::Instant::now();
+        #[cfg(feature = "diagnostic")]
+        let scatter_start = std::time::Instant::now();
+
+        let ndelay_in = delayed_cols_buf.len();
+        let total_owned = sn_ncols;
+        let nfs = m - k;
+
+        // Pre-allocate and zero contrib_buffer if there will be NFS rows.
+        // This allows both original matrix scatter and child extend-add to
+        // deposit NFS×NFS entries directly, avoiding a re-scatter pass.
+        let has_nfs = nfs > 0 && sn.parent.is_some();
+        if has_nfs {
+            if contrib_buffer.nrows() < nfs || contrib_buffer.ncols() < nfs {
+                contrib_buffer = Mat::zeros(
+                    nfs.max(contrib_buffer.nrows()),
+                    nfs.max(contrib_buffer.ncols()),
+                );
+            }
+            for j in 0..nfs {
+                contrib_buffer.col_as_slice_mut(j)[0..nfs].fill(0.0);
+            }
+        }
+
+        // 5a. Scatter original CSC entries — FS columns → l_storage, NFS×NFS → contrib_buffer
+        if ndelay_in == 0 {
+            let amap_start = assembly_maps.amap_offsets[node_id];
+            let amap_end = assembly_maps.amap_offsets[node_id + 1];
+            let amap = &assembly_maps.amap_entries[amap_start * 4..amap_end * 4];
+
+            if let Some(sc) = scaling {
+                for entry in amap.chunks_exact(4) {
+                    let src_idx = entry[0] as usize;
+                    let dest_linear = entry[1] as usize;
+                    let scale_row = entry[2] as usize;
+                    let scale_col = entry[3] as usize;
+                    let val = values[src_idx] * sc[scale_row] * sc[scale_col];
+                    let amap_col = dest_linear / m;
+                    let amap_row = dest_linear % m;
+                    if amap_col < k {
+                        l_storage[(amap_row, amap_col)] += val;
+                    } else if has_nfs && amap_row >= k {
+                        // NFS×NFS entry → contrib_buffer
+                        contrib_buffer[(amap_row - k, amap_col - k)] += val;
+                    }
+                    // FS×NFS cross-terms (amap_col >= k, amap_row < k) are handled
+                    // by the symmetric counterpart where amap_col < k.
+                }
+            } else {
+                for entry in amap.chunks_exact(4) {
+                    let src_idx = entry[0] as usize;
+                    let dest_linear = entry[1] as usize;
+                    let amap_col = dest_linear / m;
+                    let amap_row = dest_linear % m;
+                    if amap_col < k {
+                        l_storage[(amap_row, amap_col)] += values[src_idx];
+                    } else if has_nfs && amap_row >= k {
+                        contrib_buffer[(amap_row - k, amap_col - k)] += values[src_idx];
+                    }
+                }
+            }
+        } else {
+            // Fallback: delayed columns shift positions, use per-entry g2l scatter
+            for range in &sn.owned_ranges {
+                for pj in range.clone() {
+                    let orig_col = perm_fwd[pj];
+                    let local_col = global_to_local[pj];
+
+                    let start = col_ptrs[orig_col];
+                    let end = col_ptrs[orig_col + 1];
+                    for idx in start..end {
+                        let orig_row = row_indices_csc[idx];
+                        if orig_row < orig_col {
+                            let perm_row = perm_inv[orig_row];
+                            let local_peer = global_to_local[perm_row];
+                            if local_peer != NOT_IN_FRONT && local_peer < total_owned {
+                                continue;
+                            }
+                        }
+                        let global_row = perm_inv[orig_row];
+                        let local_row = global_to_local[global_row];
+                        if local_row == NOT_IN_FRONT {
+                            continue;
+                        }
+                        if local_row >= total_owned && local_row < k {
+                            continue;
+                        }
+                        let mut val = values[idx];
+                        if let Some(s) = scaling {
+                            val *= s[perm_inv[orig_row]] * s[perm_inv[orig_col]];
+                        }
+                        let (r, c) = if local_row >= local_col {
+                            (local_row, local_col)
+                        } else {
+                            (local_col, local_row)
+                        };
+                        if c < k {
+                            l_storage[(r, c)] += val;
+                        } else if has_nfs && r >= k {
+                            contrib_buffer[(r - k, c - k)] += val;
+                        }
+                    }
+                }
+            }
+        }
+
+        #[cfg(feature = "diagnostic")]
+        let scatter_time = scatter_start.elapsed();
+
+        // 5b. Extend-add child contributions
+        //     FS columns → l_storage, NFS×NFS → contrib_buffer
+        #[cfg(feature = "diagnostic")]
+        let extend_add_start = std::time::Instant::now();
+
+        for &c in &children[node_id] {
+            if let Some(cb) = contributions[c].take() {
+                let cb_size = cb.row_indices.len();
+                for i in 0..cb_size {
+                    let gi = cb.row_indices[i];
+                    let li = global_to_local[gi];
+                    debug_assert!(li != NOT_IN_FRONT, "child row {} not in parent", gi);
+                    for j in 0..=i {
+                        let gj = cb.row_indices[j];
+                        let lj = global_to_local[gj];
+                        debug_assert!(lj != NOT_IN_FRONT, "child col {} not in parent", gj);
+                        let val = cb.data[(i, j)];
+                        if val != 0.0 {
+                            let (li, lj) = if li >= lj { (li, lj) } else { (lj, li) };
+                            if lj < k {
+                                // FS column → l_storage
+                                l_storage[(li, lj)] += val;
+                            } else if has_nfs {
+                                // NFS×NFS → contrib_buffer
+                                contrib_buffer[(li - k, lj - k)] += val;
+                            }
+                        }
+                    }
+                }
+                // Only recycle buffer if we're NOT using contrib_buffer for NFS assembly
+                if !has_nfs && cb.data.nrows() >= contrib_buffer.nrows() {
+                    contrib_buffer = cb.data;
+                }
+            }
+        }
+
+        #[cfg(feature = "diagnostic")]
+        let extend_add_time = extend_add_start.elapsed();
+        #[cfg(feature = "diagnostic")]
+        let assembly_time = assembly_start.elapsed();
+
+        // 6. Factor using rectangular TPP kernel
+        #[cfg(feature = "diagnostic")]
+        let kernel_start = std::time::Instant::now();
+
+        let result = tpp_factor_rect(l_storage.as_mut().submatrix_mut(0, 0, m, k), k, options)?;
+        let ne = result.num_eliminated;
+
+        #[cfg(feature = "diagnostic")]
+        let kernel_time = kernel_start.elapsed();
+
+        // 7. Build contribution block
+        #[cfg(feature = "diagnostic")]
+        let mut contrib_gemm_time = std::time::Duration::ZERO;
+        #[cfg(feature = "diagnostic")]
+        let mut extract_contrib_time = std::time::Duration::ZERO;
+        let contribution = if sn.parent.is_some() && ne < m {
+            // Ensure contrib_buffer is large enough for extract_contribution_rect
+            // which may need to assemble delayed + NFS into a single buffer
+            if contrib_buffer.nrows() < m || contrib_buffer.ncols() < m {
+                // Grow if delayed columns expanded the need
+                let new_size = m.max(contrib_buffer.nrows());
+                let mut new_buf = Mat::zeros(new_size, new_size);
+                // Preserve NFS×NFS data already assembled
+                if nfs > 0 {
+                    for j in 0..nfs {
+                        let col_len = nfs - j;
+                        let src = &contrib_buffer.col_as_slice(j)[j..j + col_len];
+                        new_buf.col_as_slice_mut(j)[j..j + col_len].copy_from_slice(src);
+                    }
+                }
+                contrib_buffer = new_buf;
+            }
+
+            // Apply contribution GEMM: updates NFS×NFS with -L21_NFS * D * L21_NFS^T
+            #[cfg(feature = "diagnostic")]
+            let gemm_start = std::time::Instant::now();
+
+            if nfs > 0 && ne > 0 {
+                compute_contribution_gemm_rect(
+                    &l_storage,
+                    k,
+                    ne,
+                    m,
+                    &result.d,
+                    &mut contrib_buffer,
+                    &mut ld_workspace,
+                    Par::Seq,
+                );
+            }
+
+            #[cfg(feature = "diagnostic")]
+            {
+                contrib_gemm_time = gemm_start.elapsed();
+            }
+
+            #[cfg(feature = "diagnostic")]
+            let extract_contrib_start = std::time::Instant::now();
+
+            let cb = extract_contribution_rect(
+                &l_storage,
+                m,
+                k,
+                &frontal_row_indices,
+                &result,
+                std::mem::replace(&mut contrib_buffer, Mat::new()),
+            );
+
+            #[cfg(feature = "diagnostic")]
+            {
+                extract_contrib_time = extract_contrib_start.elapsed();
+            }
+
+            Some(cb)
+        } else {
+            None
+        };
+
+        // 8. Extract FrontFactors from rectangular L storage
+        #[cfg(feature = "diagnostic")]
+        let extract_factors_start = std::time::Instant::now();
+
+        let ff = extract_front_factors_rect(&l_storage, m, k, &frontal_row_indices, &result);
+
+        #[cfg(feature = "diagnostic")]
+        let extract_factors_time = extract_factors_start.elapsed();
+
+        let stats = PerSupernodeStats {
+            snode_id: node_id,
+            front_size: m,
+            num_fully_summed: k,
+            num_eliminated: ne,
+            num_delayed: k - ne,
+            num_1x1: result.stats.num_1x1,
+            num_2x2: result.stats.num_2x2,
+            max_l_entry: result.stats.max_l_entry,
+            #[cfg(feature = "diagnostic")]
+            assembly_time,
+            #[cfg(feature = "diagnostic")]
+            kernel_time,
+            #[cfg(feature = "diagnostic")]
+            extraction_time: extract_factors_time + extract_contrib_time,
+            #[cfg(feature = "diagnostic")]
+            zero_time,
+            #[cfg(feature = "diagnostic")]
+            g2l_time,
+            #[cfg(feature = "diagnostic")]
+            scatter_time,
+            #[cfg(feature = "diagnostic")]
+            extend_add_time,
+            #[cfg(feature = "diagnostic")]
+            extract_factors_time,
+            #[cfg(feature = "diagnostic")]
+            extract_contrib_time,
+            #[cfg(feature = "diagnostic")]
+            contrib_gemm_time,
+        };
+
+        // 9. Reset g2l
+        for &global in &frontal_row_indices[..m] {
+            global_to_local[global] = NOT_IN_FRONT;
+        }
+
+        contributions[node_id] = contribution;
+        results.push((node_id, ff, stats));
+    }
+
+    Ok(results)
+}
+
 /// Iterative level-set factorization of the assembly tree.
 ///
 /// Processes supernodes bottom-up: first all leaves (in parallel if enabled),
@@ -1547,36 +1955,26 @@ fn factor_tree_levelset(
     let mut all_results: Vec<(usize, FrontFactors, PerSupernodeStats)> =
         Vec::with_capacity(n_supernodes);
 
-    // --- Small-leaf subtree pre-pass ---
+    // --- Small-leaf subtree pre-pass (SPRAL-style rectangular fast path) ---
     // Factor all classified small-leaf subtrees before the main level-set loop.
-    // Each subtree uses a lightweight workspace (bounded by threshold²) and
-    // processes its nodes sequentially in postorder. The root's contribution
-    // enters the global contributions vector for the parent's extend-add.
+    // Each subtree uses a rectangular m×k L storage kernel instead of the general
+    // m×m frontal matrix, eliminating the large square allocation, frontal zeroing,
+    // and extract_front_factors copy for every node.
     for subtree in small_leaf_subtrees {
-        let mut sl_workspace = FactorizationWorkspace::new(subtree.max_front_size, n);
-
-        for &node_id in &subtree.nodes {
-            let child_contribs: Vec<Option<ContributionBlock>> = children[node_id]
-                .iter()
-                .map(|&c| contributions[c].take())
-                .collect();
-
-            let result = factor_single_supernode(
-                node_id,
-                &supernodes[node_id],
-                child_contribs,
-                matrix,
-                perm_fwd,
-                perm_inv,
-                options,
-                scaling,
-                &mut sl_workspace,
-                assembly_maps,
-            )?;
-
-            contributions[node_id] = result.contribution;
-            all_results.push((node_id, result.ff, result.stats));
-        }
+        let subtree_results = factor_small_leaf_subtree(
+            subtree,
+            supernodes,
+            children,
+            matrix,
+            perm_fwd,
+            perm_inv,
+            options,
+            scaling,
+            n,
+            &mut contributions,
+            assembly_maps,
+        )?;
+        all_results.extend(subtree_results);
 
         // Decrement remaining_children for the subtree root's parent
         if let Some(parent) = subtree.parent_of_root {
@@ -2502,7 +2900,17 @@ mod tests {
             let nfs = m - k;
             let mut contrib_buf = Mat::zeros(m, m);
             if nfs > 0 {
-                compute_contribution_gemm(&data, k, ne, m, &result.d, &mut contrib_buf, Par::Seq);
+                let mut ld_ws = Mat::new();
+                compute_contribution_gemm(
+                    &data,
+                    k,
+                    ne,
+                    m,
+                    &result.d,
+                    &mut contrib_buf,
+                    &mut ld_ws,
+                    Par::Seq,
+                );
             }
             let cb = extract_contribution(&data, m, k, &row_indices, &result, contrib_buf);
 
