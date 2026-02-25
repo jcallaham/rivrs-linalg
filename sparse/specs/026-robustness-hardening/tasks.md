@@ -105,11 +105,11 @@
 
 ### Implementation for User Story 4
 
-- [ ] T029 [US4] Create `tests/adversarial.rs` with edge-case tests through `SparseLDLT` API — test cases: (1) 0×0 empty matrix → clean error, (2) 1×1 nonzero diagonal → correct solve, (3) 1×1 zero diagonal → error or zero-inertia factorization, (4) pure diagonal matrix → trivial correct factorization, (5) arrowhead matrix → correct factorization, (6) matrix requiring all 2×2 pivots (no stable 1×1 pivots) → correct factorization with all 2×2 pivots, (7) matrix with exact numerical cancellation during elimination → correct factorization or clean error.
-- [ ] T030 [US4] Add extreme value tests in `tests/adversarial.rs` — test cases: (1) near-overflow entries (1e308) → error or correct, (2) near-underflow entries (1e-308) → error or correct, (3) matrix with NaN entries → clean error, (4) matrix with Inf entries → clean error. Each must not panic.
-- [ ] T031 [US4] Add structural validity tests in `tests/adversarial.rs` — test cases: (1) non-symmetric sparsity pattern → clean error, (2) matrix with disconnected components → correct factorization, (3) matrix at power-of-2 boundaries (32, 64, 128, 256, 512) → correct factorization, (4) matrix where MC64 matching fails to find a perfect matching → clean error or fallback to unscaled ordering. Each must not panic.
-- [ ] T032 [US4] Run adversarial tests, identify panics, and fix: add defensive guards in `src/aptp/solver.rs` (e.g., 0×0 check in `analyze_with_matrix`, NaN/Inf scan in `factor`) and `src/error.rs` (new error variants if needed). Each fix should be minimal — only guard the specific panic path.
-- [ ] T033 [US4] Re-run adversarial tests after fixes: all tests pass (correct results or clean errors, zero panics). Verify no regressions: `cargo test` (all non-ignored pass).
+- [X] T029 [US4] Create `tests/adversarial.rs` with edge-case tests through `SparseLDLT` API — test cases: (1) 0×0 empty matrix → clean error, (2) 1×1 nonzero diagonal → correct solve, (3) 1×1 zero diagonal → error or zero-inertia factorization, (4) pure diagonal matrix → trivial correct factorization, (5) arrowhead matrix → correct factorization, (6) matrix requiring all 2×2 pivots (no stable 1×1 pivots) → correct factorization with all 2×2 pivots, (7) matrix with exact numerical cancellation during elimination → correct factorization or clean error.
+- [X] T030 [US4] Add extreme value tests in `tests/adversarial.rs` — test cases: (1) near-overflow entries (1e308) → error or correct, (2) near-underflow entries (1e-308) → error or correct, (3) matrix with NaN entries → clean error, (4) matrix with Inf entries → clean error. Each must not panic.
+- [X] T031 [US4] Add structural validity tests in `tests/adversarial.rs` — test cases: (1) non-symmetric sparsity pattern → clean error, (2) matrix with disconnected components → correct factorization, (3) matrix at power-of-2 boundaries (32, 64, 128, 256, 512) → correct factorization, (4) matrix where MC64 matching fails to find a perfect matching → clean error or fallback to unscaled ordering. Each must not panic.
+- [X] T032 [US4] Run adversarial tests, identify panics, and fix: add defensive guards in `src/aptp/solver.rs` (e.g., 0×0 check in `analyze_with_matrix`, NaN/Inf scan in `factor`) and `src/error.rs` (new error variants if needed). Each fix should be minimal — only guard the specific panic path.
+- [X] T033 [US4] Re-run adversarial tests after fixes: all tests pass (correct results or clean errors, zero panics). Verify no regressions: `cargo test` (all non-ignored pass).
 
 **Checkpoint**: All adversarial inputs handled gracefully. US4 independently verifiable.
 
@@ -119,11 +119,11 @@
 
 **Purpose**: Final validation, documentation, cleanup
 
-- [ ] T034 Run full validation suite: `cargo test` (non-ignored), `cargo test -- --ignored --test-threads=1` (SuiteSparse + torture), `cargo clippy --all-targets`, `cargo clippy --all-targets --features diagnostic`
-- [ ] T035 [P] Update `docs/ssids-log.md` with Phase 9.2 entry: what was built, test counts before/after pruning, torture test results, property test results, adversarial findings and fixes
-- [ ] T036 [P] Update `docs/ssids-plan.md` Phase 9.2 section with STATUS: COMPLETE and results summary
-- [ ] T037 [P] Update `CLAUDE.md` Current Implementation Status with Phase 9.2 completion summary
-- [ ] T038 Verify success criteria: SC-001 (audit 100% coverage), SC-002 (torture 500+ zero panics), SC-003 (proptest 1000+ no violations), SC-004 (adversarial zero panics), SC-005 (SuiteSparse 65/65 pass), SC-006 (test suite leaner)
+- [X] T034 Run full validation suite: `cargo test` (non-ignored), `cargo test -- --ignored --test-threads=1` (SuiteSparse + torture), `cargo clippy --all-targets`, `cargo clippy --all-targets --features diagnostic`
+- [X] T035 [P] Update `docs/ssids-log.md` with Phase 9.2 entry: what was built, test counts before/after pruning, torture test results, property test results, adversarial findings and fixes
+- [X] T036 [P] Update `docs/ssids-plan.md` Phase 9.2 section with STATUS: COMPLETE and results summary
+- [X] T037 [P] Update `CLAUDE.md` Current Implementation Status with Phase 9.2 completion summary
+- [X] T038 Verify success criteria: SC-001 (audit 100% coverage), SC-002 (torture 500+ zero panics), SC-003 (proptest 1000+ no violations), SC-004 (adversarial zero panics), SC-005 (SuiteSparse 65/65 pass), SC-006 (test suite leaner)
 
 ---
 

@@ -15,7 +15,7 @@ This feature adds four categories of testing to the rivrs-sparse SSIDS solver:
 ## Prerequisites
 
 - Rust 1.87+ (edition 2024)
-- Working `cargo test` on current codebase (524 tests pass)
+- Working `cargo test` on current codebase (524 tests: 510 pass, 14 ignored)
 - SPRAL source available at `/opt/references/spral/` (for audit)
 
 ## New Dependencies

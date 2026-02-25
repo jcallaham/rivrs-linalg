@@ -67,7 +67,6 @@ src/aptp/
 src/error.rs                # POSSIBLY MODIFIED: new error variants if needed for adversarial inputs
 
 tests/
-├── torture.rs              # NEW: integration-level torture test entry points (#[ignore])
 ├── property.rs             # NEW: end-to-end property tests via SparseLDLT
 └── adversarial.rs          # NEW: edge case and malformed input tests
 

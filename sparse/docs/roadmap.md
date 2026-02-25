@@ -1,8 +1,8 @@
-# Sparse Module Restructuring Design
+# Sparse Module Roadmap & Design
 
 **Date**: 2026-02-25
-**Status**: Design document (not yet implemented)
-**Context**: The `sparse` crate currently contains a single solver (SSIDS-style multifrontal LDL^T with APTP pivoting). This document analyzes what's general-purpose vs algorithm-specific, proposes a restructuring to make room for additional solvers, and identifies high-value gaps in the Rust sparse LA ecosystem.
+**Status**: Living design document
+**Context**: The `sparse` crate currently contains a single solver (SSIDS-style multifrontal LDL^T with APTP pivoting). This document analyzes what's general-purpose vs algorithm-specific, proposes a restructuring to make room for additional solvers, identifies high-value gaps in the Rust sparse LA ecosystem, and assesses the effort required for future work.
 
 ---
 
@@ -338,3 +338,177 @@ The pattern: **distributed memory is compelling primarily when a single problem 
 ### Verdict
 
 The solver is production-ready. Performance is at parity with SPRAL, the API is clean and composable, memory is well-managed, and code quality is high. The missing features (multi-RHS, iterative refinement, condition estimation) are enhancements for post-1.0, not prerequisites. The most impactful pre-release work would be documentation polish and the multi-RHS solve variant.
+
+---
+
+## 10. Difficulty Assessment: Roadmap Items
+
+The SSIDS multifrontal solver (Phases 0-9) was by far the hardest piece. The remaining roadmap items are well-trodden algorithms with mature literature and clear pseudocode.
+
+### Item-by-item assessment
+
+**Krylov solvers (CG, GMRES, BiCGStab)** — Straightforward
+
+CG is ~50 lines of core math. GMRES with Arnoldi is ~200. The literature is very mature (Saad, *Iterative Methods for Sparse Linear Systems*; Greenbaum, *Iterative Methods for Solving Linear Systems*; the Templates book). The main design work is:
+- A `LinearOperator` trait (matvec interface)
+- Preconditioner trait
+- Convergence monitoring, restarts for GMRES(m)
+- Flexible preconditioning (left/right/variable)
+
+Infrastructure needed: sparse matvec (faer has `sparse_dense_matmul`), inner products and norms (faer), our direct solver as a preconditioner. Mostly composition, not invention.
+
+**Incomplete factorizations (ILU, ICC)** — Medium
+
+ILU(0) is simple: run LU but drop fill outside the original sparsity pattern. ILUT (threshold-based dropping) is more involved but well-documented. One real stumbling block: ILU can break down on indefinite or highly unsymmetric systems (zero pivots, instability). Modified ILU (MILU) and pivot perturbation strategies help but need care. Still dramatically simpler than full multifrontal factorization.
+
+**LOBPCG / Lanczos** — Moderate
+
+LOBPCG is in Knyazev (2001), ~200-300 lines of core algorithm. Needs sparse matvec + preconditioner + dense eigensolve for small projected problems (faer has this) + orthogonalization (faer has this). Tricky parts are numerical: stability of the three-term recurrence, locking converged eigenvectors, near-linear-dependence. Known problems with known solutions. Lanczos (symmetric) is simpler still.
+
+**Unsymmetric multifrontal LU** — Substantial but infrastructure-heavy
+
+~35% rewrite (LU kernel, factor storage, symbolic analysis) but the infrastructure wins are real — ordering, assembly maps, tree traversal, parallelism, workspace reuse, profiling all transfer. Estimated ~40% of the calendar time the symmetric solver took, most of it in the dense kernel and testing.
+
+**Re-exporting faer** — Near-free
+
+faer's sparse LU and QR could be wrapped with our ordering infrastructure (METIS, MC64) to provide better-than-faer-default solvers with minimal new code. The value-add is the preprocessing pipeline, not reimplementing factorization.
+
+### Relative effort summary
+
+| Item | Effort | Key risk |
+|------|--------|----------|
+| Multifrontal LDL^T (DONE) | 10x | Novel algorithm, subtle correctness traps |
+| Unsymmetric multifrontal LU | 4x | Dense kernel rewrite, but framework reuse |
+| Block-sparse storage (BCSR) | 2x | Lots of infrastructure, no algorithmic risk |
+| ILU/ICC preconditioners | 1.5x | ILU breakdown on hard systems |
+| Krylov solvers | 1x | Well-documented, mostly composition |
+| Eigensolvers (Lanczos/LOBPCG) | 1.5x | Numerical stability in edge cases |
+| faer wrapper with METIS+MC64 | 0.3x | API design only |
+
+---
+
+## 11. Case Study: AMR Euler Solver (Cart3D-style)
+
+To ground the roadmap in a concrete application, consider building an AMR-based compressible Euler solver similar to NASA's Cart3D. What sparse LA would it need?
+
+### Explicit time stepping (Cart3D's primary approach)
+
+Essentially **no sparse linear algebra at all**. Runge-Kutta with local time stepping is point-wise flux evaluation and array updates. The "solver" is embarrassingly parallel array operations. This is why Cart3D is fast — it avoids linear solves entirely for the flow solve, using adjoint-based methods only for mesh adaptation.
+
+### Implicit / Newton-Krylov (for steady-state acceleration or stiff problems)
+
+At each pseudo-time step, solve `J * δu = -R(u)` where J is the flux Jacobian:
+
+| Component | Why | Source |
+|-----------|-----|--------|
+| Sparse matvec | GMRES inner loop | faer `sparse_dense_matmul` |
+| GMRES or BiCGStab | Outer Krylov solver | Build (straightforward) |
+| ILU(0) preconditioner | Convergence acceleration | Build (moderate) |
+| Block-sparse storage | 5x5 blocks per cell (ρ, ρu, ρv, ρw, E) | Build (see Section 12) |
+
+What it does NOT need:
+- Direct solver for the global system (too expensive for 3D CFD)
+- Symmetric solver (Euler Jacobian is unsymmetric)
+- Eigenvalue solver (unless doing stability analysis or POD)
+
+### Where our direct solver helps
+
+As a **coarse-grid solver in a multigrid preconditioner**. AMR gives a natural grid hierarchy — the coarsest level is small enough for a direct solve, and that direct solve is the most expensive part of the multigrid V-cycle. This is exactly the "solver as component" story from Section 8.
+
+### Adjoint solve for mesh adaptation
+
+Cart3D uses adjoint-based error estimation: solve `J^T * λ = -∂f/∂u`. The solver needs to support both `J*x` and `J^T*x`. Natural for GMRES (transpose the operator). The ILU preconditioner also needs transpose mode — applying L and U factors in reverse order, which is free if both are stored.
+
+### The real bottleneck: block-sparse storage
+
+For CFD with 5 conserved variables per cell, the Jacobian has 5x5 dense blocks at each nonzero position. Scalar CSC/CSR treats these as 25 separate entries with 25 index lookups. Block-sparse CSR stores blocks contiguously, giving 3-5x faster SpMV. This is the most important missing infrastructure piece for this class of application — more so than any solver algorithm. See Section 12 for the full format analysis.
+
+### Summary
+
+The sparse LA needs for a Cart3D-like solver are modest: GMRES + ILU + block-sparse matvec. The hard part of that project is entirely in the AMR mesh management and flux discretization. Our direct solver contributes as a coarse-grid component inside multigrid.
+
+---
+
+## 12. Sparse Matrix Storage Formats
+
+### CSC vs CSR: not just convention
+
+The analogy to Fortran column-major vs C row-major is useful but the efficiency implications are **more significant** for sparse than dense, because sparse access patterns are inherently irregular and indirect.
+
+**CSC (Compressed Sparse Column)**: each column stores its row indices and values contiguously.
+
+Natural for:
+- Column-by-column elimination (Cholesky, LDL^T, LU left-looking)
+- Scatter-based SpMV: for each column j, scatter `a[:,j] * x[j]` into y
+- MATLAB, CHOLMOD, UMFPACK, SPRAL, SuperLU — the direct solver ecosystem
+
+**CSR (Compressed Sparse Row)**: each row stores its column indices and values contiguously.
+
+Natural for:
+- Row-by-row operations (ILU, Gauss-Seidel, right-looking)
+- Dot-product SpMV: for each row i, compute `y[i] = dot(a[i,:], x)`
+- PETSc, Trilinos, Eigen — the iterative solver ecosystem
+
+**SpMV performance difference**: CSR dot-product SpMV is generally faster because each row produces exactly one output element (sequential writes to y, good spatial locality). CSC scatter SpMV writes to random positions in y (poor write locality). This is a real performance difference — typically 1.3-2x on modern hardware — not just convention.
+
+**The heritage split**: CSC dominates in direct solver libraries (Fortran tradition: MATLAB, CHOLMOD, UMFPACK, SPRAL). CSR dominates in iterative solver frameworks (C/C++ tradition: PETSc, Trilinos). But it's not purely cultural — the underlying algorithms genuinely favor one or the other.
+
+### Other important formats
+
+**COO (Coordinate / Triplet)**: `(row, col, value)` triples.
+- Good for: matrix assembly (FEM naturally produces triplets), format conversion, I/O (MatrixMarket is COO)
+- Bad for: any computation (no structure to exploit)
+- Role: input/construction format, always convert before solving. faer's `SparseColMat::try_new_from_triplets` does this.
+
+**BCSR / BCSC (Block Compressed Sparse Row/Column)**: stores dense r x c blocks at each nonzero position.
+- Good for: FEM with multiple DOFs per node (structural: 3-6, CFD: 4-5, electromagnetics: edge elements)
+- Why it matters: small dense matmul per block vectorizes well (SIMD), r x c fewer indirect memory accesses, r x c fewer index comparisons. Typically 3-5x faster SpMV for natural block sizes.
+- Used by: PETSc (BAIJ format), many FEM codes
+- Neither faer nor rivrs-sparse has this currently; it would be the most impactful format addition for PDE applications.
+
+**DIA (Diagonal)**: stores diagonals explicitly as dense arrays with offset indices.
+- Good for: banded matrices from structured grids (FD stencils). Extremely efficient SpMV — just offset array access, fully vectorizable.
+- Bad for: unstructured problems (wastes memory on empty diagonals)
+- Role: niche but perfect for its niche. 1D/2D structured-grid PDE solvers can be dramatically faster with DIA.
+
+**ELL (ELLPACK)**: fixed number of nonzeros per row, stored as dense 2D array (nrows x max_nnz_per_row).
+- Good for: GPU computation (uniform memory access, no warp divergence), structured grids with fixed stencil width
+- Bad for: highly variable row lengths (wastes memory on padding)
+- Role: GPU-oriented format. Variants like Sliced ELLPACK (Sell-C-σ) improve on padding waste by sorting and slicing rows into chunks.
+
+**HYB (Hybrid ELL+COO)**: ELL for the regular part of the matrix, COO for overflow rows. NVIDIA's compromise format for heterogeneous sparsity patterns.
+
+### What matters for scientific computing
+
+In practice, three formats cover ~95% of needs:
+
+1. **CSR** — lingua franca for iterative solvers. SpMV is the dominant operation, and CSR SpMV is simple, fast, and cache-friendly for output.
+2. **CSC** — standard for direct solvers. Column elimination is the natural algorithm for Cholesky/LDL^T/LU.
+3. **BCSR** — essential for multi-DOF-per-node FEM/CFD. Converts indirect addressing into small dense BLAS, giving 3-5x SpMV improvement on block-structured problems.
+
+COO/Triplet is the universal assembly/interchange format. DIA and ELL are niche optimizations for structured grids and GPUs respectively.
+
+### Recommendation for rivrs-sparse
+
+**CSC as primary internal format** (status quo). Reasons:
+1. Our direct solver is column-oriented, matching SPRAL/CHOLMOD/UMFPACK tradition
+2. faer uses CSC as its primary format — transparent composition
+3. CSC <-> CSR conversion is a transpose, O(nnz) — cheap enough to do at boundaries
+
+**When adding iterative solvers**, two options:
+- Convert to CSR at construction time for SpMV (the dominant iterative operation) — slight API friction but better SpMV performance
+- Use CSC scatter SpMV — avoids format proliferation at the cost of ~1.5x slower SpMV
+
+Recommendation: **provide CSR conversion and let the iterative solver use CSR internally**. faer already has `.to_row_major()`. The format choice should be an internal implementation detail hidden behind a `LinearOperator` trait, not a user-facing decision.
+
+**Block-sparse (BCSR)** should be a separate, opt-in type when needed for PDE applications. It's not a replacement for scalar CSR/CSC — it's an optimization for block-structured problems. Implementing it means: block-aware storage, block SpMV, block ILU, and block triangular solve. Significant infrastructure but no algorithmic novelty.
+
+### Format choice principle
+
+Format should follow algorithm, not the other way around:
+- Direct solvers use CSC (column elimination)
+- Iterative solvers use CSR (row-oriented SpMV)
+- Block-structured PDE applications use BCSR (dense blocks at stencil entries)
+- Assembly always uses COO/Triplet, then converts
+
+Users should not need to think about storage format. The solver accepts a matrix (in whatever format is natural for the user), converts internally if needed, and returns results. Format choice is an implementation detail behind the API.
