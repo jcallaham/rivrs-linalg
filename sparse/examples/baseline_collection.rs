@@ -57,6 +57,8 @@ struct FactorizationRecord {
     total_contrib_gemm_us: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     total_extraction_us: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    total_g2l_reset_us: Option<f64>,
 }
 
 /// Per-matrix performance baseline.
@@ -204,6 +206,8 @@ fn main() {
             total_contrib_gemm_us: Some(stats.total_contrib_gemm_time.as_secs_f64() * 1_000_000.0),
             #[cfg(feature = "diagnostic")]
             total_extraction_us: Some(stats.total_extraction_time.as_secs_f64() * 1_000_000.0),
+            #[cfg(feature = "diagnostic")]
+            total_g2l_reset_us: Some(stats.total_g2l_reset_time.as_secs_f64() * 1_000_000.0),
             #[cfg(not(feature = "diagnostic"))]
             total_assembly_us: None,
             #[cfg(not(feature = "diagnostic"))]
@@ -212,6 +216,8 @@ fn main() {
             total_contrib_gemm_us: None,
             #[cfg(not(feature = "diagnostic"))]
             total_extraction_us: None,
+            #[cfg(not(feature = "diagnostic"))]
+            total_g2l_reset_us: None,
         };
 
         let sn_records: Vec<SupernodeRecord> = per_sn

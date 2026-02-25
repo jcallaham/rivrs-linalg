@@ -8,7 +8,7 @@ This directory contains sparse linear algebra solver implementations for rivrs-l
 
 **Parent Project**: rivrs-linalg - Numerical Linear Algebra for Rivrs
 **Domain**: Sparse direct solvers (SSIDS, LDL^T factorization, APTP pivoting)
-**Current Status**: Phase 9.1f complete — SPRAL-style rectangular fast path for small-leaf subtrees. Uses rectangular m×k L storage with `tpp_factor_rect()` kernel and split assembly. Simplicial matrices improved from 2.2-2.8× to 1.4-1.9× SPRAL. 65/65 SuiteSparse matrices pass, 498 tests pass. Configurable via `FactorOptions::small_leaf_threshold` (default 256, 0 = disabled).
+**Current Status**: Phase 9.1g complete — column-oriented extend-add scatter + sub-phase instrumentation. Rewrote `extend_add_mapped` and `extend_add` to column-oriented iteration (à la SPRAL `asm_col`): contiguous source reads via `col_as_slice`, 4× unrolled inner loop, `ea_scatter_one` helper. c-71: 2.16×→1.49× SPRAL, c-big: 2.30×→1.37×, dTLB misses 608M→31M (20× reduction), 41/65 beat SPRAL. Added `g2l_reset_time` diagnostic instrumentation — revealed zeroing (8.8%) as biggest remaining non-compute overhead; per-node storage addressable budget ~9% (diminishing returns). 65/65 SuiteSparse pass.
 
 ### Development docs
 
@@ -402,11 +402,10 @@ unit tests of the symbolic analysis and factorization kernel on small matrices.
 - Phase 9.1b: Workspace reuse — Two-tier pre-allocated workspace (FactorizationWorkspace in numeric.rs, AptpKernelWorkspace in factor.rs). FrontalMatrix changed from owned to borrowed types. Thread-local workspace via Cell for parallel path. CI subset: median 1.16× factor speedup, 24% RSS reduction, bit-exact backward errors.
 - Phase 9.1c: Assembly & extraction optimization — Precomputed scatter maps (AssemblyMaps), bulk column-slice copies, fill(0.0) zeroing, sub-phase timing instrumentation. c-71: 4.06×→2.48× SPRAL. Sub-phase profiling identified contribution block allocation as dominant bottleneck (extract_contrib 40.1% + extend-add 33.3% of factor time). perf stat: 644B dTLB misses, 3.1s/32% sys time from mmap churn.
 - Phase 9.1e: Direct GEMM into contribution buffer — Deferred NFS×NFS Schur complement to single post-loop GEMM into pre-allocated buffer. Extraction copy eliminated (40.1%→0.0%). c-71: 2.53×→2.16× SPRAL, c-big: 4.11×→2.30×, median: 0.98× (33/65 beat SPRAL). Remaining bottleneck: extend-add scatter (49.6%) from shared-workspace architecture.
-- Phase 9.1f: Small leaf subtree fast path — SPRAL-style rectangular fast path: `tpp_factor_rect()` rectangular TPP kernel (m×k), split assembly (FS→L storage, NFS×NFS→contrib_buffer), `factor_small_leaf_subtree()` with full diagnostic instrumentation. `ld_workspace` on `FactorizationWorkspace` eliminates per-supernode W allocation. Simplicial: bloweybq 2.17→1.45×, dixmaanl 2.76→1.74×, linverse 2.57→1.70×. 12 tests, 65/65 SuiteSparse pass. Files: `src/aptp/factor.rs` (rect kernel ~720 LOC), `src/aptp/numeric.rs` (fast-path loop, workspace).
+- Phase 9.1f: Small leaf subtree fast path — Classify leaf subtrees where all fronts < 256, factor via pre-pass with dedicated small workspace (≤512KB). `classify_small_leaf_subtrees()` + pre-pass in `factor_tree_levelset()`. `FactorOptions::small_leaf_threshold` (default 256, 0 = disabled). 12 new tests. Files: `src/aptp/numeric.rs` (classification, pre-pass), `src/aptp/solver.rs` (threshold config), `src/aptp/factor.rs` (AptpOptions field).
+- Phase 9.1g: Column-oriented extend-add scatter — Rewrote `extend_add_mapped` and `extend_add` to column-oriented iteration (à la SPRAL `asm_col`). Contiguous source reads via `col_as_slice`, 4× unrolled inner loop, `ea_scatter_one` helper. Added `g2l_reset_time` diagnostic. c-71: 2.16×→1.49× SPRAL, c-big: 2.30×→1.37×, dTLB 608M→31M. Instrumentation showed zeroing (8.8%) as biggest remaining non-compute overhead; per-node storage total addressable budget ~9%. 2 new tests + g2l_reset instrumentation. Files: `src/aptp/numeric.rs`, `examples/profile_matrix.rs`, `examples/baseline_collection.rs`.
 
 **Next:**
-- Phase 9.1g: Per-node factor storage feasibility investigation
-- Phase 9.1g: Per-node factor storage feasibility investigation (extend-add + zeroing overhead)
 - Phase 9.2: Release preparation (docs, examples, crates.io)
 
 ## Recent Changes

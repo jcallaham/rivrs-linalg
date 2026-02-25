@@ -1,5 +1,86 @@
 # SSIDS Development Log
 
+## Phase 9.1g: Column-Oriented Extend-Add Scatter
+
+**Status**: Complete
+**Branch**: `extend-add-expt`
+**Date**: 2026-02-25
+
+### What Was Built
+
+Rewrote `extend_add_mapped` and `extend_add` to use column-oriented iteration
+(à la SPRAL `asm_col` in `assemble.hxx:27-38`), replacing row-by-row processing.
+Added `g2l_reset_time` diagnostic instrumentation to decompose previously
+unaccounted factor time.
+
+**Key change**: For each child column `j`, read the contiguous lower-triangle
+slice `child_col[j..cb_size]` and scatter into the parent using precomputed row
+mappings. Source reads are sequential in column-major layout. Inner loop is 4×
+unrolled for instruction-level parallelism. Extracted `ea_scatter_one` helper
+(#[inline(always)]) for the lower-triangle swap logic.
+
+**`extend_add_mapped`** (fast path, zero-delay children):
+- Column-outer loop with `col_as_slice` for contiguous source reads
+- 4× unrolled inner loop calling `ea_scatter_one`
+- Retains `li >= lj` swap logic — investigation confirmed `ea_row_map` is NOT
+  always monotonic (post-amalgamation parents with non-contiguous `owned_ranges`
+  produce non-monotonic child→parent mappings)
+
+**`extend_add`** (fallback, delayed columns):
+- Column-outer loop with `col_as_slice` + `zip` over `row_indices`
+- Retains zero-check and swap logic (delayed columns break monotonicity)
+
+### SPRAL Reference
+
+- `assemble.hxx:27-38` — `asm_col` column-oriented scatter with 4× unrolling (BSD-3)
+
+### Performance Results
+
+**Key matrices (workstation, single-threaded):**
+
+| Matrix | 9.1e | 9.1g | Improvement |
+|--------|------|------|-------------|
+| c-71 | 2.16× SPRAL | **1.49×** | 31% faster |
+| c-big | 2.30× SPRAL | **1.37×** | 40% faster |
+| Matrices ≤ 1.0× SPRAL | 33/65 | **41/65** | +8 matrices |
+
+**dTLB misses (c-71, perf stat):** 608M → **31M** (20× reduction)
+
+**Sub-phase profiling (c-71, diagnostic build):**
+
+| Sub-phase | 9.1e | 9.1g | Notes |
+|-----------|------|------|-------|
+| ContribGEMM | 37.1% | **54.6%** (1999ms) | Now dominant (same absolute, higher %) |
+| Extend-add | 49.6% | **27.8%** (1018ms) | Column-oriented reads, 4× unrolling |
+| Zeroing | 7.4% | **8.8%** (322ms) | Same absolute, higher % |
+| Kernel | 4.2% | 5.3% (193ms) | |
+| ExtractFactr | — | 0.5% (19ms) | |
+| G2L reset | — | 0.0% (1.2ms) | New instrumentation — negligible |
+| Other | — | 2.5% (92ms) | Per-node alloc/dispatch overhead |
+
+### Per-Node Storage Assessment
+
+The `g2l_reset_time` instrumentation was added to investigate the "Unaccounted"
+12.9% of factor time. Results:
+
+- **G2L reset**: 1.2ms — completely negligible
+- **Zeroing**: 322ms (8.8%) — biggest non-compute overhead, eliminated by per-node storage
+- **ExtractFactrs**: 19ms (0.5%) — eliminated by per-node storage
+- **Other**: 92ms (2.5%) — per-node FrontFactors allocation, buffer recycling, dispatch
+
+Total addressable by per-node storage: ~340ms (~9%). This would move c-71 from
+1.49× to ~1.35× SPRAL — worthwhile but diminishing returns for significant
+architectural complexity. ContribGEMM at 54.6% is the irreducible compute floor.
+
+**Decision**: Per-node storage deferred. The column-oriented scatter captured the
+high-ROI optimization. Remaining gap is primarily compute-bound (GEMM), not
+architecture-bound.
+
+### Tests Added
+
+- `test_extend_add_mapped_10x10_vs_reference`: 10×10 contribution with monotonic map, compared element-by-element against naive reference
+- `test_extend_add_mapped_non_monotonic`: 4×4 contribution with non-monotonic map (simulating post-amalgamation parent), verified against naive reference
+
 ## Phase 9.1f: Small Leaf Subtree Fast Path
 
 **Status**: Complete
