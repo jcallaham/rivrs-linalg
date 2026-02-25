@@ -1607,6 +1607,9 @@ fn factor_small_leaf_subtree(
         let m = frontal_row_indices.len();
 
         // 3. Ensure l_storage capacity and zero rectangular m×k region
+        #[cfg(feature = "diagnostic")]
+        let zero_start = std::time::Instant::now();
+
         if m > l_storage.nrows() || k > l_storage.ncols() {
             l_storage = Mat::zeros(m, k.max(l_storage.ncols()));
         }
@@ -1615,12 +1618,26 @@ fn factor_small_leaf_subtree(
             l_storage.col_as_slice_mut(j)[0..m].fill(0.0);
         }
 
+        #[cfg(feature = "diagnostic")]
+        let zero_time = zero_start.elapsed();
+
         // 4. Build global-to-local mapping
+        #[cfg(feature = "diagnostic")]
+        let g2l_start = std::time::Instant::now();
+
         for (i, &global) in frontal_row_indices.iter().enumerate() {
             global_to_local[global] = i;
         }
 
+        #[cfg(feature = "diagnostic")]
+        let g2l_time = g2l_start.elapsed();
+
         // 5. Split assembly: scatter into l_storage (FS columns) and contrib_buffer (NFS×NFS)
+        #[cfg(feature = "diagnostic")]
+        let assembly_start = std::time::Instant::now();
+        #[cfg(feature = "diagnostic")]
+        let scatter_start = std::time::Instant::now();
+
         let ndelay_in = delayed_cols_buf.len();
         let total_owned = sn_ncols;
         let nfs = m - k;
@@ -1723,8 +1740,14 @@ fn factor_small_leaf_subtree(
             }
         }
 
+        #[cfg(feature = "diagnostic")]
+        let scatter_time = scatter_start.elapsed();
+
         // 5b. Extend-add child contributions
         //     FS columns → l_storage, NFS×NFS → contrib_buffer
+        #[cfg(feature = "diagnostic")]
+        let extend_add_start = std::time::Instant::now();
+
         for &c in &children[node_id] {
             if let Some(cb) = contributions[c].take() {
                 let cb_size = cb.row_indices.len();
@@ -1756,11 +1779,26 @@ fn factor_small_leaf_subtree(
             }
         }
 
+        #[cfg(feature = "diagnostic")]
+        let extend_add_time = extend_add_start.elapsed();
+        #[cfg(feature = "diagnostic")]
+        let assembly_time = assembly_start.elapsed();
+
         // 6. Factor using rectangular TPP kernel
+        #[cfg(feature = "diagnostic")]
+        let kernel_start = std::time::Instant::now();
+
         let result = tpp_factor_rect(l_storage.as_mut().submatrix_mut(0, 0, m, k), k, options)?;
         let ne = result.num_eliminated;
 
+        #[cfg(feature = "diagnostic")]
+        let kernel_time = kernel_start.elapsed();
+
         // 7. Build contribution block
+        #[cfg(feature = "diagnostic")]
+        let mut contrib_gemm_time = std::time::Duration::ZERO;
+        #[cfg(feature = "diagnostic")]
+        let mut extract_contrib_time = std::time::Duration::ZERO;
         let contribution = if sn.parent.is_some() && ne < m {
             // Ensure contrib_buffer is large enough for extract_contribution_rect
             // which may need to assemble delayed + NFS into a single buffer
@@ -1780,6 +1818,9 @@ fn factor_small_leaf_subtree(
             }
 
             // Apply contribution GEMM: updates NFS×NFS with -L21_NFS * D * L21_NFS^T
+            #[cfg(feature = "diagnostic")]
+            let gemm_start = std::time::Instant::now();
+
             if nfs > 0 && ne > 0 {
                 compute_contribution_gemm_rect(
                     &l_storage,
@@ -1793,20 +1834,41 @@ fn factor_small_leaf_subtree(
                 );
             }
 
-            Some(extract_contribution_rect(
+            #[cfg(feature = "diagnostic")]
+            {
+                contrib_gemm_time = gemm_start.elapsed();
+            }
+
+            #[cfg(feature = "diagnostic")]
+            let extract_contrib_start = std::time::Instant::now();
+
+            let cb = extract_contribution_rect(
                 &l_storage,
                 m,
                 k,
                 &frontal_row_indices,
                 &result,
                 std::mem::replace(&mut contrib_buffer, Mat::new()),
-            ))
+            );
+
+            #[cfg(feature = "diagnostic")]
+            {
+                extract_contrib_time = extract_contrib_start.elapsed();
+            }
+
+            Some(cb)
         } else {
             None
         };
 
         // 8. Extract FrontFactors from rectangular L storage
+        #[cfg(feature = "diagnostic")]
+        let extract_factors_start = std::time::Instant::now();
+
         let ff = extract_front_factors_rect(&l_storage, m, k, &frontal_row_indices, &result);
+
+        #[cfg(feature = "diagnostic")]
+        let extract_factors_time = extract_factors_start.elapsed();
 
         let stats = PerSupernodeStats {
             snode_id: node_id,
@@ -1818,25 +1880,25 @@ fn factor_small_leaf_subtree(
             num_2x2: result.stats.num_2x2,
             max_l_entry: result.stats.max_l_entry,
             #[cfg(feature = "diagnostic")]
-            assembly_time: std::time::Duration::ZERO,
+            assembly_time,
             #[cfg(feature = "diagnostic")]
-            kernel_time: std::time::Duration::ZERO,
+            kernel_time,
             #[cfg(feature = "diagnostic")]
-            extraction_time: std::time::Duration::ZERO,
+            extraction_time: extract_factors_time + extract_contrib_time,
             #[cfg(feature = "diagnostic")]
-            zero_time: std::time::Duration::ZERO,
+            zero_time,
             #[cfg(feature = "diagnostic")]
-            g2l_time: std::time::Duration::ZERO,
+            g2l_time,
             #[cfg(feature = "diagnostic")]
-            scatter_time: std::time::Duration::ZERO,
+            scatter_time,
             #[cfg(feature = "diagnostic")]
-            extend_add_time: std::time::Duration::ZERO,
+            extend_add_time,
             #[cfg(feature = "diagnostic")]
-            extract_factors_time: std::time::Duration::ZERO,
+            extract_factors_time,
             #[cfg(feature = "diagnostic")]
-            extract_contrib_time: std::time::Duration::ZERO,
+            extract_contrib_time,
             #[cfg(feature = "diagnostic")]
-            contrib_gemm_time: std::time::Duration::ZERO,
+            contrib_gemm_time,
         };
 
         // 9. Reset g2l
