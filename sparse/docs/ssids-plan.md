@@ -2866,126 +2866,44 @@ Results (workstation, sequential):
   overhead across tens of thousands of tiny nodes). Further improvement requires
   contiguous subtree L buffer (9.1g scope).
 
-*9.1g: Per-node factor storage feasibility investigation*
+*9.1g: Column-oriented extend-add scatter + per-node storage investigation* — **COMPLETE** (branch `extend-add-expt`)
 
-**Motivation** (from post-9.1e bottleneck analysis):
+Rewrote `extend_add_mapped` and `extend_add` to column-oriented iteration
+(à la SPRAL `asm_col`): contiguous source reads via `col_as_slice`, 4× unrolled
+inner loop, `ea_scatter_one` helper. Added `g2l_reset_time` diagnostic to
+decompose previously unaccounted factor time.
 
-After eliminating the extraction copy (9.1e), the remaining gap vs SPRAL on
-c-71/c-big is dominated by extend-add scatter (49.6%) and workspace zeroing
-(7.4%). Both are consequences of the shared-workspace architecture: a single
-`FactorizationWorkspace` is reused across all supernodes, requiring zeroing
-before each use and element-by-element scatter from child contributions.
+Results:
+- c-71: 2.16×→1.49× SPRAL (31% faster), c-big: 2.30×→1.37× (40% faster)
+- dTLB misses: 608M→31M (20× reduction, confirming cache-friendly access pattern)
+- 41/65 matrices beat SPRAL (was 33/65 after 9.1e)
+- Extend-add: 49.6%→27.8% of factor time; ContribGEMM now dominant at 54.6%
 
-SPRAL uses a fundamentally different architecture: per-node factor storage
-where each node owns its `lcol` (from AppendAlloc) and `contrib` (from
-BuddyAllocator). This eliminates:
-- **Zeroing**: no shared workspace to zero (7.4% on c-71)
-- **Extract factors**: `lcol` IS the permanent factor storage — our
-  `extract_front_factors` copies L11, D11, L21 into owned `FrontFactors`
-  (0.3% on c-71, but adds cache pollution)
-- **Extract contribution**: already eliminated by 9.1e
-- **Extend-add overhead**: SPRAL's `assemble_post` scatters into `node.contrib`
-  with column-oriented 4× unrolled inner loops. Our extend-add uses precomputed
-  maps but still does element-by-element scatter into the shared workspace.
+Per-node storage investigation (via g2l_reset instrumentation):
+- G2L reset: 1.2ms — negligible
+- Zeroing: 322ms (8.8%) — biggest non-compute overhead
+- Other (alloc/dispatch): 92ms (2.5%)
+- Total addressable: ~340ms (~9%), would move c-71 from 1.49× to ~1.35×
+- **Decision**: Deferred. Diminishing returns vs architectural complexity.
+  ContribGEMM (54.6%) is the irreducible compute floor.
 
-The key question is whether per-node storage is feasible within our Rust/faer
-architecture without `unsafe` code, and whether the complexity is justified by
-the expected improvement. This phase is a **feasibility investigation**, not a
-commitment to implement.
+Original 9.1g scope (per-node storage feasibility) is addressed by the
+instrumentation findings. The column-oriented scatter (scope item 4) delivered
+the high-ROI optimization. Remaining scope items (arena allocators, ownership
+model changes, buddy allocator) are not justified given the 9% addressable
+budget. See `docs/ssids-log.md` Phase 9.1g entry for full profiling breakdown.
 
-**Scope — research and design only:**
-
-1. **Architecture analysis**: How does SPRAL's AppendAlloc + BuddyAllocator
-   design translate to safe Rust? Options include:
-   - Arena allocator (bumpalo or custom) for per-node `lcol` storage
-   - Buddy allocator for transient `contrib` buffers
-   - Pool-based approach (simpler, but 9.1d showed pool alone doesn't help)
-   - Hybrid: keep shared workspace for assembly/factor, but use per-node
-     storage for permanent factors (eliminates extract_factors copy)
-
-2. **FrontalMatrix ownership model**: Currently `FrontalMatrix` borrows from
-   `FactorizationWorkspace`. Per-node storage would require either:
-   - Owned `FrontalMatrix` with per-node allocation (reverting 9.1b's borrowed
-     design for this specific case)
-   - Factoring into the workspace but then "detaching" the factor storage
-     (tricky lifetime management)
-
-3. **Impact on parallel path**: The current `Cell<FactorizationWorkspace>` +
-   buffer recycling pattern works well. Per-node storage would change the
-   memory ownership model — contributions owned by nodes rather than recycled
-   through workspaces. Need to ensure rayon compatibility.
-
-4. **Extend-add optimization (independent of storage model)**: Even without
-   per-node storage, the extend-add scatter could be improved:
-   - Column-oriented scatter (process one column at a time for better cache
-     locality, matching SPRAL's `asm_col`)
-   - SIMD-friendly scatter patterns (gather/scatter instructions)
-   - Batched extend-add (accumulate multiple children before scattering)
-
-5. **Cost-benefit analysis**: Profile the expected improvement on c-71/c-big
-   vs the implementation complexity. The zeroing cost (7.4%) is a guaranteed
-   win. The extend-add improvement depends on whether the bottleneck is
-   overhead (index mapping) or raw data movement (cache misses on large
-   scatter), which determines whether per-node storage or scatter optimization
-   is the right approach.
-
-6. **Allocator-level memory management**: Profiling of H2O (max_front=9258,
-   53 supernodes) revealed that glibc malloc fragmentation prevents page
-   return to OS after factorization — peak RSS 5.9 GB drops to only 4.5 GB
-   on solver drop without `malloc_trim(0)`. With `malloc_trim`, RSS drops
-   to 367 MB (correct). This creates OOM risk when refactoring or running
-   multiple factorizations. Options to investigate:
-   - **jemalloc** (via `tikv-jemallocator` crate): better page return
-     heuristics, transparent drop-in replacement, widely used in Rust
-     (Firefox, tikv, many CLI tools). May improve peak memory behavior
-     without code changes.
-   - **Arena allocation for front_factors**: allocate all per-supernode L, D
-     storage from a contiguous buffer (bumpalo or custom). Eliminates
-     fragmentation from interleaved small allocations. Matches SPRAL's
-     AppendAlloc pattern. Would also improve cache locality during solve.
-   - **malloc_trim at strategic points**: lightweight workaround (already
-     used in parallel_scaling). Could be called after factor() in the
-     solver API, but glibc-specific and doesn't fix the root cause.
-   - Immediate mitigation: `self.numeric = None` before refactoring
-     (already implemented) halves peak by avoiding old+new coexistence.
-
-**SPRAL references:**
-- `AppendAlloc.hxx:18-82` — bump allocator (calloc, AVX-aligned, never freed
-  during factorization, bulk freed on completion)
-- `BuddyAllocator.hxx:18-148` — 16-level buddy system for transient
-  contributions (alloc/free as nodes complete)
-- `NumericNode.hxx:14-48` — per-node `lcol` and `contrib` pointers
-- `NumericSubtree.hxx:75-81` — per-thread workspace initialization
-- `factor_cpu.cxx:73-168` — factor_subtree showing assembly/factor/contrib
-  lifecycle with per-node storage
+**SPRAL references consulted:**
 - `assemble.hxx:27-38` — `asm_col` column-oriented scatter with 4× unrolling
-
-**Reference Markdown files:**
-- `/workspace/rivrs-linalg/references/ssids/duff2020.md` — Two-tier allocator
-  design: AppendAlloc + BuddyAllocator (Duff, Hogg & Lopez 2020, §5)
-- `/workspace/rivrs-linalg/references/ssids/hogg2016.md` — APTP factorization
-  architecture (Hogg & Scott 2016)
-- `docs/phase9/phase-9.1d-contrib-architecture-review.md` — SPRAL architecture
-  comparison from 9.1d investigation
-
-**Deliverable**: Architecture document with feasibility assessment, recommended
-approach, estimated effort, and expected performance impact. Implementation
-decision made after review.
-
-Expected impact: If feasible, 1.3-1.5× speedup on c-71/c-big (eliminating
-zeroing + improving extend-add), potentially bringing c-71 within 1.5× of SPRAL.
-Limited impact on bulk FEM matrices (already at parity). May introduce small
-regressions on simplicial matrices if per-node allocation overhead exceeds
-shared-workspace reuse benefit — needs careful benchmarking.
 
 **Phase 9.1 Success Criteria:**
 - [X] c-71 and c-big within 10× of SPRAL factor time (was 25-30×, now 4× after 9.1a+b)
 - [X] c-71 and c-big within 2.5× of SPRAL factor time (was 4×, now 2.16×/2.30× after 9.1e)
-- [ ] c-71 and c-big within 2× of SPRAL factor time (c-71 2.16× is close — target of 9.1g)
-- [~] Simplicial matrices (bloweybq, dixmaanl, etc.) within 1.5× of SPRAL (was 2-3×, now 1.45-1.90× after 9.1f — bloweybq meets target, others close but remaining gap is structural)
+- [X] c-71 and c-big within 2× of SPRAL factor time (c-71 1.49×, c-big 1.37× after 9.1g)
+- [~] Simplicial matrices (bloweybq, dixmaanl, etc.) within 1.5× of SPRAL (bloweybq 1.50×, dixmaanl 1.76×, mario001 1.83× — structural gap from per-node overhead on thousands of tiny supernodes)
 - [X] Full SuiteSparse suite median factor time ratio ≤ 1.0× vs SPRAL (0.98× after 9.1e)
-- [ ] No regressions on any matrix in the benchmark suite (simplicial matrices have small regressions from 9.1e overhead — sub-40ms absolute, noise-dominated)
-- [X] Per-supernode profiling analysis documented (assembly/extraction/kernel breakdown for key matrices) — Phase 9.1c sub-phase timing
+- [ ] No regressions on any matrix in the benchmark suite (simplicial matrices have small regressions from per-node overhead — sub-40ms absolute, noise-dominated)
+- [X] Per-supernode profiling analysis documented (assembly/extraction/kernel breakdown for key matrices) — Phase 9.1c sub-phase timing + 9.1g g2l_reset instrumentation
 - [X] Allocation analysis complete: remaining hotspots identified and either addressed or documented as post-release — Phase 9.1c perf stat analysis
 
 **Phase 9.1 Exit Criteria:**
