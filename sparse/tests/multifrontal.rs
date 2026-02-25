@@ -74,13 +74,13 @@ fn multifrontal_reconstruction_error(
         let mut col = 0;
         while col < ne {
             let gc = ff.col_indices()[col];
-            match ff.d11().get_pivot_type(col) {
+            match ff.d11().pivot_type(col) {
                 PivotType::OneByOne => {
-                    d_diag[gc] = ff.d11().get_1x1(col);
+                    d_diag[gc] = ff.d11().diagonal_1x1(col);
                     col += 1;
                 }
                 PivotType::TwoByTwo { .. } => {
-                    let block = ff.d11().get_2x2(col);
+                    let block = ff.d11().diagonal_2x2(col);
                     let gc2 = ff.col_indices()[col + 1];
                     d_diag[gc] = block.a;
                     d_diag[gc2] = block.c;
@@ -103,9 +103,9 @@ fn multifrontal_reconstruction_error(
         let ne = ff.num_eliminated();
         let mut col = 0;
         while col < ne {
-            match ff.d11().get_pivot_type(col) {
+            match ff.d11().pivot_type(col) {
                 PivotType::TwoByTwo { partner } if partner > col => {
-                    let block = ff.d11().get_2x2(col);
+                    let block = ff.d11().diagonal_2x2(col);
                     let gc1 = ff.col_indices()[col];
                     let gc2 = ff.col_indices()[col + 1];
                     d_dense[(gc1, gc2)] = block.b;
@@ -641,12 +641,12 @@ fn test_dense_equivalence() {
     let l_dense = &dense_result.l;
     let mut d_mat = Mat::<f64>::zeros(n, n);
     for i in 0..n {
-        match dense_result.d.get_pivot_type(i) {
+        match dense_result.d.pivot_type(i) {
             PivotType::OneByOne => {
-                d_mat[(i, i)] = dense_result.d.get_1x1(i);
+                d_mat[(i, i)] = dense_result.d.diagonal_1x1(i);
             }
             PivotType::TwoByTwo { partner } if partner > i => {
-                let block = dense_result.d.get_2x2(i);
+                let block = dense_result.d.diagonal_2x2(i);
                 d_mat[(i, i)] = block.a;
                 d_mat[(i, i + 1)] = block.b;
                 d_mat[(i + 1, i)] = block.b;

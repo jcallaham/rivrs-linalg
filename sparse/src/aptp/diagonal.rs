@@ -39,7 +39,7 @@ pub enum PivotEntry {
 ///   0.0 at 1x1 and delayed columns
 ///
 /// [`Block2x2`] serves as the API type for input ([`set_2x2`](Self::set_2x2))
-/// and output ([`get_2x2`](Self::get_2x2)) but is not the storage format.
+/// and output ([`diagonal_2x2`](Self::diagonal_2x2)) but is not the storage format.
 ///
 /// # References
 ///
@@ -134,10 +134,10 @@ impl MixedDiagonal {
     /// # Panics (debug only)
     ///
     /// `col >= n`
-    pub fn get_pivot_type(&self, col: usize) -> PivotType {
+    pub fn pivot_type(&self, col: usize) -> PivotType {
         debug_assert!(
             col < self.n,
-            "get_pivot_type: col {} out of bounds (n = {})",
+            "pivot_type: col {} out of bounds (n = {})",
             col,
             self.n
         );
@@ -149,10 +149,10 @@ impl MixedDiagonal {
     /// # Panics (debug only)
     ///
     /// Column is not [`PivotType::OneByOne`].
-    pub fn get_1x1(&self, col: usize) -> f64 {
+    pub fn diagonal_1x1(&self, col: usize) -> f64 {
         debug_assert!(
             self.pivot_map[col] == PivotType::OneByOne,
-            "get_1x1: col {} is not OneByOne ({:?})",
+            "diagonal_1x1: col {} is not OneByOne ({:?})",
             col,
             self.pivot_map[col]
         );
@@ -166,10 +166,10 @@ impl MixedDiagonal {
     /// # Panics (debug only)
     ///
     /// Column is not the owner (lower-indexed) of a [`PivotType::TwoByTwo`] block.
-    pub fn get_2x2(&self, first_col: usize) -> Block2x2 {
+    pub fn diagonal_2x2(&self, first_col: usize) -> Block2x2 {
         debug_assert!(
             matches!(self.pivot_map[first_col], PivotType::TwoByTwo { partner } if partner > first_col),
-            "get_2x2: col {} is not a 2x2 block owner ({:?})",
+            "diagonal_2x2: col {} is not a 2x2 block owner ({:?})",
             first_col,
             self.pivot_map[first_col]
         );
@@ -522,7 +522,7 @@ mod tests {
         let diag = MixedDiagonal::new(5);
         assert_eq!(diag.dimension(), 5);
         for col in 0..5 {
-            assert_eq!(diag.get_pivot_type(col), PivotType::Delayed);
+            assert_eq!(diag.pivot_type(col), PivotType::Delayed);
         }
         assert_eq!(diag.num_delayed(), 5);
         assert_eq!(diag.num_1x1(), 0);
@@ -535,13 +535,13 @@ mod tests {
         diag.set_1x1(0, 3.5);
         diag.set_1x1(2, -1.0);
 
-        assert_eq!(diag.get_pivot_type(0), PivotType::OneByOne);
-        assert_eq!(diag.get_pivot_type(1), PivotType::Delayed);
-        assert_eq!(diag.get_pivot_type(2), PivotType::OneByOne);
-        assert_eq!(diag.get_pivot_type(3), PivotType::Delayed);
+        assert_eq!(diag.pivot_type(0), PivotType::OneByOne);
+        assert_eq!(diag.pivot_type(1), PivotType::Delayed);
+        assert_eq!(diag.pivot_type(2), PivotType::OneByOne);
+        assert_eq!(diag.pivot_type(3), PivotType::Delayed);
 
-        assert_eq!(diag.get_1x1(0), 3.5);
-        assert_eq!(diag.get_1x1(2), -1.0);
+        assert_eq!(diag.diagonal_1x1(0), 3.5);
+        assert_eq!(diag.diagonal_1x1(2), -1.0);
 
         assert_eq!(diag.num_1x1(), 2);
         assert_eq!(diag.num_delayed(), 2);
@@ -558,9 +558,9 @@ mod tests {
         };
         diag.set_2x2(block);
 
-        assert_eq!(diag.get_pivot_type(2), PivotType::TwoByTwo { partner: 3 });
-        assert_eq!(diag.get_pivot_type(3), PivotType::TwoByTwo { partner: 2 });
-        assert_eq!(diag.get_2x2(2), block);
+        assert_eq!(diag.pivot_type(2), PivotType::TwoByTwo { partner: 3 });
+        assert_eq!(diag.pivot_type(3), PivotType::TwoByTwo { partner: 2 });
+        assert_eq!(diag.diagonal_2x2(2), block);
         assert_eq!(diag.num_2x2_pairs(), 1);
         assert_eq!(diag.num_delayed(), 4);
     }
@@ -713,8 +713,8 @@ mod tests {
     fn dimension_1_single_1x1() {
         let mut diag = MixedDiagonal::new(1);
         diag.set_1x1(0, 5.0);
-        assert_eq!(diag.get_pivot_type(0), PivotType::OneByOne);
-        assert_eq!(diag.get_1x1(0), 5.0);
+        assert_eq!(diag.pivot_type(0), PivotType::OneByOne);
+        assert_eq!(diag.diagonal_1x1(0), 5.0);
         assert_eq!(diag.num_1x1(), 1);
         assert_eq!(diag.num_delayed(), 0);
     }
@@ -939,13 +939,13 @@ mod tests {
         // Reconstruct D*x
         let mut dx = vec![0.0; n];
         for i in 0..n {
-            match diag.get_pivot_type(i) {
+            match diag.pivot_type(i) {
                 PivotType::OneByOne => {
-                    dx[i] = diag.get_1x1(i) * x[i];
+                    dx[i] = diag.diagonal_1x1(i) * x[i];
                 }
                 PivotType::TwoByTwo { partner } => {
                     if i < partner {
-                        let block = diag.get_2x2(i);
+                        let block = diag.diagonal_2x2(i);
                         dx[i] = block.a * x[i] + block.b * x[partner];
                         dx[partner] = block.b * x[i] + block.c * x[partner];
                     }

@@ -580,7 +580,7 @@ fn extract_l(a: MatRef<'_, f64>, d: &MixedDiagonal, num_eliminated: usize) -> Ma
 
     let mut col = 0;
     while col < num_eliminated {
-        match d.get_pivot_type(col) {
+        match d.pivot_type(col) {
             PivotType::OneByOne => {
                 for i in (col + 1)..n {
                     l[(i, col)] = a[(i, col)];
@@ -1179,7 +1179,7 @@ fn adjust_for_2x2_boundary(effective_nelim: usize, d: &MixedDiagonal) -> usize {
         return 0;
     }
     let last = effective_nelim - 1;
-    match d.get_pivot_type(last) {
+    match d.pivot_type(last) {
         PivotType::TwoByTwo { partner } if partner > last => {
             // Last accepted is the first column of a 2×2 whose partner is beyond nelim
             effective_nelim - 1
@@ -1363,9 +1363,9 @@ fn apply_and_check(
     // For 2×2 pivot at columns (j, j+1): solve the 2×2 system
     let mut col = 0;
     while col < block_nelim {
-        match d.get_pivot_type(col) {
+        match d.pivot_type(col) {
             PivotType::OneByOne => {
-                let d_val = d.get_1x1(col);
+                let d_val = d.diagonal_1x1(col);
                 let inv_d = 1.0 / d_val;
                 for i in 0..panel_rows {
                     a[(panel_start + i, col_start + col)] *= inv_d;
@@ -1373,7 +1373,7 @@ fn apply_and_check(
                 col += 1;
             }
             PivotType::TwoByTwo { partner } if partner > col => {
-                let block = d.get_2x2(col);
+                let block = d.diagonal_2x2(col);
                 let det = block.a * block.c - block.b * block.b;
                 let inv_det = 1.0 / det;
                 for i in 0..panel_rows {
@@ -1397,7 +1397,7 @@ fn apply_and_check(
 
     let mut scan_col = 0;
     while scan_col < block_nelim {
-        let pivot_width = match d.get_pivot_type(scan_col) {
+        let pivot_width = match d.pivot_type(scan_col) {
             PivotType::TwoByTwo { partner } if partner > scan_col => 2,
             _ => 1,
         };
@@ -1467,16 +1467,16 @@ fn update_trailing(
     let mut w = ld_buf.as_mut().submatrix_mut(0, 0, trailing_size, nelim);
     let mut col = 0;
     while col < nelim {
-        match d.get_pivot_type(col) {
+        match d.pivot_type(col) {
             PivotType::OneByOne => {
-                let d_val = d.get_1x1(col);
+                let d_val = d.diagonal_1x1(col);
                 for i in 0..trailing_size {
                     w[(i, col)] = a[(trailing_start + i, col_start + col)] * d_val;
                 }
                 col += 1;
             }
             PivotType::TwoByTwo { partner } if partner > col => {
-                let block = d.get_2x2(col);
+                let block = d.diagonal_2x2(col);
                 for i in 0..trailing_size {
                     let l1 = a[(trailing_start + i, col_start + col)];
                     let l2 = a[(trailing_start + i, col_start + col + 1)];
@@ -1561,16 +1561,16 @@ fn compute_ld_into(l: MatRef<'_, f64>, d: &MixedDiagonal, nelim: usize, mut dst:
     let nrows = l.nrows();
     let mut col = 0;
     while col < nelim {
-        match d.get_pivot_type(col) {
+        match d.pivot_type(col) {
             PivotType::OneByOne => {
-                let d_val = d.get_1x1(col);
+                let d_val = d.diagonal_1x1(col);
                 for i in 0..nrows {
                     dst[(i, col)] = l[(i, col)] * d_val;
                 }
                 col += 1;
             }
             PivotType::TwoByTwo { partner } if partner > col => {
-                let block = d.get_2x2(col);
+                let block = d.diagonal_2x2(col);
                 for i in 0..nrows {
                     let l1 = l[(i, col)];
                     let l2 = l[(i, col + 1)];
@@ -1934,7 +1934,7 @@ fn factor_inner(
         {
             let mut bc = 0;
             while bc < block_nelim {
-                match block_d.get_pivot_type(bc) {
+                match block_d.pivot_type(bc) {
                     PivotType::TwoByTwo { partner } if partner > bc => {
                         a[(k + bc + 1, k + bc)] = 0.0;
                         bc += 2;
@@ -2040,7 +2040,7 @@ fn factor_inner(
         let mut passed_2x2 = 0;
         let mut sc = 0;
         while sc < nelim {
-            match block_d.get_pivot_type(sc) {
+            match block_d.pivot_type(sc) {
                 PivotType::OneByOne => {
                     passed_1x1 += 1;
                     sc += 1;
@@ -3073,7 +3073,7 @@ pub(crate) fn extract_front_factors_rect(
         let mut col = 0;
         while col < ne {
             l[(col, col)] = 1.0;
-            match result.d.get_pivot_type(col) {
+            match result.d.pivot_type(col) {
                 PivotType::OneByOne => {
                     let n_entries = ne - (col + 1);
                     if n_entries > 0 {
@@ -3110,13 +3110,13 @@ pub(crate) fn extract_front_factors_rect(
     let mut d11 = MixedDiagonal::new(ne);
     let mut col = 0;
     while col < ne {
-        match result.d.get_pivot_type(col) {
+        match result.d.pivot_type(col) {
             PivotType::OneByOne => {
-                d11.set_1x1(col, result.d.get_1x1(col));
+                d11.set_1x1(col, result.d.diagonal_1x1(col));
                 col += 1;
             }
             PivotType::TwoByTwo { partner: _ } => {
-                let block = result.d.get_2x2(col);
+                let block = result.d.diagonal_2x2(col);
                 d11.set_2x2(Block2x2 {
                     first_col: col,
                     a: block.a,
@@ -3242,13 +3242,13 @@ mod tests {
         let nd = d.dimension();
         let mut col = 0;
         while col < nd {
-            match d.get_pivot_type(col) {
+            match d.pivot_type(col) {
                 PivotType::OneByOne => {
-                    d_mat[(col, col)] = d.get_1x1(col);
+                    d_mat[(col, col)] = d.diagonal_1x1(col);
                     col += 1;
                 }
                 PivotType::TwoByTwo { partner } if partner > col => {
-                    let block = d.get_2x2(col);
+                    let block = d.diagonal_2x2(col);
                     d_mat[(col, col)] = block.a;
                     d_mat[(col, col + 1)] = block.b;
                     d_mat[(col + 1, col)] = block.b;
@@ -3379,7 +3379,7 @@ mod tests {
 
         // D should be [1, 1, 1]
         for i in 0..3 {
-            assert!((result.d.get_1x1(i) - 1.0).abs() < 1e-14);
+            assert!((result.d.diagonal_1x1(i) - 1.0).abs() < 1e-14);
         }
 
         // No off-diagonal L entries
@@ -3398,19 +3398,19 @@ mod tests {
 
         // First pivot should be 5.0 (col 1), then 3.0 (col 2), then 2.0 (col 0)
         assert!(
-            (result.d.get_1x1(0) - 5.0).abs() < 1e-14,
+            (result.d.diagonal_1x1(0) - 5.0).abs() < 1e-14,
             "first pivot should be 5.0, got {}",
-            result.d.get_1x1(0)
+            result.d.diagonal_1x1(0)
         );
         assert!(
-            (result.d.get_1x1(1) - 3.0).abs() < 1e-14,
+            (result.d.diagonal_1x1(1) - 3.0).abs() < 1e-14,
             "second pivot should be 3.0, got {}",
-            result.d.get_1x1(1)
+            result.d.diagonal_1x1(1)
         );
         assert!(
-            (result.d.get_1x1(2) - 2.0).abs() < 1e-14,
+            (result.d.diagonal_1x1(2) - 2.0).abs() < 1e-14,
             "third pivot should be 2.0, got {}",
-            result.d.get_1x1(2)
+            result.d.diagonal_1x1(2)
         );
     }
 
@@ -4740,7 +4740,7 @@ mod tests {
 
         // D should be [1, 1, 1, 1]
         for i in 0..4 {
-            assert!((d.get_1x1(i) - 1.0).abs() < 1e-14);
+            assert!((d.diagonal_1x1(i) - 1.0).abs() < 1e-14);
         }
 
         // Identity permutation
@@ -5480,7 +5480,7 @@ mod tests {
         }
         let mut col = 0;
         while col < q {
-            match d.get_pivot_type(col) {
+            match d.pivot_type(col) {
                 PivotType::OneByOne => {
                     for i in (col + 1)..m {
                         l_full[(i, col)] = factored[(i, col)];
@@ -5505,13 +5505,13 @@ mod tests {
         let mut d_mat = Mat::zeros(q, q);
         col = 0;
         while col < q {
-            match d.get_pivot_type(col) {
+            match d.pivot_type(col) {
                 PivotType::OneByOne => {
-                    d_mat[(col, col)] = d.get_1x1(col);
+                    d_mat[(col, col)] = d.diagonal_1x1(col);
                     col += 1;
                 }
                 PivotType::TwoByTwo { partner } if partner > col => {
-                    let block = d.get_2x2(col);
+                    let block = d.diagonal_2x2(col);
                     d_mat[(col, col)] = block.a;
                     d_mat[(col, col + 1)] = block.b;
                     d_mat[(col + 1, col)] = block.b;
@@ -6286,7 +6286,7 @@ mod tests {
         let mut col = 0;
         while col < ne {
             l[(col, col)] = 1.0;
-            match result.d.get_pivot_type(col) {
+            match result.d.pivot_type(col) {
                 PivotType::OneByOne => {
                     for r in (col + 1)..ne {
                         l[(r, col)] = factored_rect[(r, col)];
@@ -6311,13 +6311,13 @@ mod tests {
         let mut d_mat = Mat::zeros(ne, ne);
         col = 0;
         while col < ne {
-            match result.d.get_pivot_type(col) {
+            match result.d.pivot_type(col) {
                 PivotType::OneByOne => {
-                    d_mat[(col, col)] = result.d.get_1x1(col);
+                    d_mat[(col, col)] = result.d.diagonal_1x1(col);
                     col += 1;
                 }
                 PivotType::TwoByTwo { partner } if partner > col => {
-                    let block = result.d.get_2x2(col);
+                    let block = result.d.diagonal_2x2(col);
                     d_mat[(col, col)] = block.a;
                     d_mat[(col, col + 1)] = block.b;
                     d_mat[(col + 1, col)] = block.b;
@@ -6551,10 +6551,10 @@ mod tests {
         let ne = result_rect.num_eliminated;
         let mut col = 0;
         while col < ne {
-            match result_rect.d.get_pivot_type(col) {
+            match result_rect.d.pivot_type(col) {
                 PivotType::OneByOne => {
-                    let d_r = result_rect.d.get_1x1(col);
-                    let d_s = d_sq.get_1x1(col);
+                    let d_r = result_rect.d.diagonal_1x1(col);
+                    let d_s = d_sq.diagonal_1x1(col);
                     assert!(
                         (d_r - d_s).abs() < 1e-15,
                         "D mismatch at col {col}: rect={d_r} sq={d_s}"
@@ -6562,8 +6562,8 @@ mod tests {
                     col += 1;
                 }
                 PivotType::TwoByTwo { partner } if partner > col => {
-                    let br = result_rect.d.get_2x2(col);
-                    let bs = d_sq.get_2x2(col);
+                    let br = result_rect.d.diagonal_2x2(col);
+                    let bs = d_sq.diagonal_2x2(col);
                     assert!((br.a - bs.a).abs() < 1e-15, "D.a mismatch at col {col}");
                     assert!((br.b - bs.b).abs() < 1e-15, "D.b mismatch at col {col}");
                     assert!((br.c - bs.c).abs() < 1e-15, "D.c mismatch at col {col}");

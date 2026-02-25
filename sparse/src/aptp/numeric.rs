@@ -2559,7 +2559,7 @@ pub(crate) fn extract_front_factors(
         let mut col = 0;
         while col < ne {
             l[(col, col)] = 1.0; // unit diagonal
-            match result.d.get_pivot_type(col) {
+            match result.d.pivot_type(col) {
                 PivotType::OneByOne => {
                     // L entries: rows (col+1)..ne — contiguous in both source and dest
                     let n_entries = ne - (col + 1);
@@ -2601,13 +2601,13 @@ pub(crate) fn extract_front_factors(
     let mut d11 = MixedDiagonal::new(ne);
     let mut col = 0;
     while col < ne {
-        match result.d.get_pivot_type(col) {
+        match result.d.pivot_type(col) {
             PivotType::OneByOne => {
-                d11.set_1x1(col, result.d.get_1x1(col));
+                d11.set_1x1(col, result.d.diagonal_1x1(col));
                 col += 1;
             }
             PivotType::TwoByTwo { partner: _ } => {
-                let block = result.d.get_2x2(col);
+                let block = result.d.diagonal_2x2(col);
                 d11.set_2x2(Block2x2 {
                     first_col: col,
                     a: block.a,
@@ -3052,16 +3052,16 @@ mod tests {
         let mut ld = Mat::zeros(ne, ne);
         let mut col = 0;
         while col < ne {
-            match ff.d11.get_pivot_type(col) {
+            match ff.d11.pivot_type(col) {
                 PivotType::OneByOne => {
-                    let d = ff.d11.get_1x1(col);
+                    let d = ff.d11.diagonal_1x1(col);
                     for i in 0..ne {
                         ld[(i, col)] = ff.l11[(i, col)] * d;
                     }
                     col += 1;
                 }
                 PivotType::TwoByTwo { .. } => {
-                    let block = ff.d11.get_2x2(col);
+                    let block = ff.d11.diagonal_2x2(col);
                     for i in 0..ne {
                         let l0 = ff.l11[(i, col)];
                         let l1 = ff.l11[(i, col + 1)];
@@ -3195,16 +3195,16 @@ mod tests {
         // LD = L * D (handling 1x1 and 2x2)
         let mut col = 0;
         while col < ne {
-            match ff.d11.get_pivot_type(col) {
+            match ff.d11.pivot_type(col) {
                 PivotType::OneByOne => {
-                    let d = ff.d11.get_1x1(col);
+                    let d = ff.d11.diagonal_1x1(col);
                     for i in 0..full_l_rows {
                         ld[(i, col)] = full_l[(i, col)] * d;
                     }
                     col += 1;
                 }
                 PivotType::TwoByTwo { .. } => {
-                    let block = ff.d11.get_2x2(col);
+                    let block = ff.d11.diagonal_2x2(col);
                     for i in 0..full_l_rows {
                         let l0 = full_l[(i, col)];
                         let l1 = full_l[(i, col + 1)];
