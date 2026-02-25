@@ -16,7 +16,9 @@ use super::perturbations::{generate_dense_symmetric_indefinite, generate_dense_s
 /// positive definite matrices with sizes in the given range.
 ///
 /// Shrinks toward smaller matrix sizes.
-pub fn arb_symmetric_pd(size_range: std::ops::RangeInclusive<usize>) -> impl Strategy<Value = Mat<f64>> {
+pub fn arb_symmetric_pd(
+    size_range: std::ops::RangeInclusive<usize>,
+) -> impl Strategy<Value = Mat<f64>> {
     size_range.prop_flat_map(|n| {
         any::<u64>().prop_map(move |seed| {
             use rand::SeedableRng;
@@ -143,7 +145,11 @@ mod tests {
                         j
                     );
                 }
-                assert!(value[(i, i)] > 0.0, "diagonal entry {} should be positive", i);
+                assert!(
+                    value[(i, i)] > 0.0,
+                    "diagonal entry {} should be positive",
+                    i
+                );
             }
         }
     }

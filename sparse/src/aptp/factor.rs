@@ -6946,11 +6946,7 @@ mod tests {
                 if m >= options.inner_block_size && options.inner_block_size >= 2 {
                     let max_start = m - options.inner_block_size;
                     let block_row = Rng::gen_range(&mut rng, 0..=max_start);
-                    perturbations::make_dblk_singular(
-                        &mut a,
-                        block_row,
-                        options.inner_block_size,
-                    );
+                    perturbations::make_dblk_singular(&mut a, block_row, options.inner_block_size);
                 }
                 is_singular = true;
             }
@@ -6976,7 +6972,11 @@ mod tests {
                     if total != num_fully_summed {
                         failures.push(format!(
                             "instance {}: elim({}) + delayed({}) = {} != nfs({})",
-                            instance, fr.num_eliminated, fr.delayed_cols.len(), total, num_fully_summed
+                            instance,
+                            fr.num_eliminated,
+                            fr.delayed_cols.len(),
+                            total,
+                            num_fully_summed
                         ));
                         continue;
                     }
@@ -6984,7 +6984,10 @@ mod tests {
                     if m == n && !is_singular && fr.num_eliminated == num_fully_summed {
                         let l = extract_l(a.as_ref(), &fr.d, fr.num_eliminated);
                         let err = dense_reconstruction_error(
-                            &original, &l, &fr.d, &fr.perm[..fr.num_eliminated],
+                            &original,
+                            &l,
+                            &fr.d,
+                            &fr.perm[..fr.num_eliminated],
                         );
                         if err > config.backward_error_threshold {
                             failures.push(format!(
@@ -7000,7 +7003,10 @@ mod tests {
         assert!(
             failures.is_empty(),
             "APP torture (m={}, n={}) had {} failures:\n{}",
-            m, n, failures.len(), failures.join("\n")
+            m,
+            n,
+            failures.len(),
+            failures.join("\n")
         );
     }
 
@@ -7059,7 +7065,11 @@ mod tests {
                     if total != num_fully_summed {
                         failures.push(format!(
                             "instance {}: elim({}) + delayed({}) = {} != nfs({})",
-                            instance, fr.num_eliminated, fr.delayed_cols.len(), total, num_fully_summed
+                            instance,
+                            fr.num_eliminated,
+                            fr.delayed_cols.len(),
+                            total,
+                            num_fully_summed
                         ));
                         continue;
                     }
@@ -7067,7 +7077,10 @@ mod tests {
                     if m == n && !is_singular && fr.num_eliminated == num_fully_summed {
                         let l = extract_l(a.as_ref(), &fr.d, fr.num_eliminated);
                         let err = dense_reconstruction_error(
-                            &original, &l, &fr.d, &fr.perm[..fr.num_eliminated],
+                            &original,
+                            &l,
+                            &fr.d,
+                            &fr.perm[..fr.num_eliminated],
                         );
                         if err > config.backward_error_threshold {
                             failures.push(format!(
@@ -7099,7 +7112,10 @@ mod tests {
         assert!(
             failures.is_empty(),
             "TPP torture (m={}, n={}) had {} failures:\n{}",
-            m, n, failures.len(), failures.join("\n")
+            m,
+            n,
+            failures.len(),
+            failures.join("\n")
         );
     }
 
@@ -7210,8 +7226,8 @@ mod tests {
     // Phase 9.2: Property-Based Tests (US3) — Kernel Level
     // =====================================================================
 
-    use proptest::prelude::*;
     use crate::testing::strategies;
+    use proptest::prelude::*;
 
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(256))]
@@ -7241,13 +7257,14 @@ mod tests {
             let options = AptpOptions::default();
             let result = aptp_factor(a.as_ref(), &options);
             if let Ok(ref f) = result {
-                if f.delayed_cols.is_empty() {
-                    let inertia = f.d.compute_inertia();
-                    prop_assert_eq!(
-                        inertia.dimension(), n,
-                        "inertia sum {} != n={}", inertia.dimension(), n
-                    );
-                }
+                let inertia = f.d.compute_inertia();
+                let num_eliminated = n - f.delayed_cols.len();
+                // Inertia covers exactly the eliminated columns
+                prop_assert_eq!(
+                    inertia.dimension(), num_eliminated,
+                    "inertia sum {} != num_eliminated={} (n={}, delayed={})",
+                    inertia.dimension(), num_eliminated, n, f.delayed_cols.len()
+                );
             }
         }
 

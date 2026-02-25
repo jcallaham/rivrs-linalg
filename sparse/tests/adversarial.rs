@@ -22,11 +22,7 @@ fn adversarial_1x1_nonzero_diagonal() {
     match result {
         Ok(ref x) => {
             let be = sparse_backward_error(&a, x, &rhs);
-            assert!(
-                be < 1e-14,
-                "1x1 backward error too high: {:.2e}",
-                be
-            );
+            assert!(be < 1e-14, "1x1 backward error too high: {:.2e}", be);
         }
         Err(e) => {
             // Some orderings may not handle 1x1 — that's acceptable
@@ -68,11 +64,7 @@ fn adversarial_pure_diagonal() {
     match result {
         Ok(ref x) => {
             let be = sparse_backward_error(&a, x, &rhs);
-            assert!(
-                be < 1e-14,
-                "diagonal backward error too high: {:.2e}",
-                be
-            );
+            assert!(be < 1e-14, "diagonal backward error too high: {:.2e}", be);
         }
         Err(e) => panic!("pure diagonal should succeed: {}", e),
     }
@@ -100,11 +92,7 @@ fn adversarial_arrowhead_matrix() {
     match result {
         Ok(ref x) => {
             let be = sparse_backward_error(&a, x, &rhs);
-            assert!(
-                be < 5e-11,
-                "arrowhead backward error too high: {:.2e}",
-                be
-            );
+            assert!(be < 5e-11, "arrowhead backward error too high: {:.2e}", be);
         }
         Err(e) => panic!("arrowhead should succeed: {}", e),
     }
@@ -170,7 +158,8 @@ fn adversarial_power_of_2_boundary_sizes() {
                 assert!(
                     be < 5e-11,
                     "power-of-2 n={} backward error too high: {:.2e}",
-                    n, be
+                    n,
+                    be
                 );
             }
             Err(e) => panic!("power-of-2 n={} should succeed: {}", n, e),
@@ -291,12 +280,23 @@ fn adversarial_nan_entries() {
     let a = SparseColMat::try_new_from_triplets(n, n, &triplets).unwrap();
     let rhs = Col::from_fn(n, |_| 1.0);
     let options = SolverOptions::default();
-    // Must not panic — should return clean error
+    // Must not panic — should return clean error or NaN-contaminated result
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         SparseLDLT::solve_full(&a, &rhs, &options)
     }));
     assert!(result.is_ok(), "NaN matrix panicked");
-    // Ideally returns an error, but not-panic is the primary requirement
+    // If the solver returns Ok, the solution should contain NaN (not finite garbage).
+    // If it returns Err, that's the ideal behavior.
+    if let Ok(Ok(ref x)) = result {
+        let has_nan = (0..n).any(|i| x[i].is_nan());
+        let has_finite_nonsense = (0..n).all(|i| x[i].is_finite());
+        // NaN propagation or clean error are both acceptable.
+        // Finite solutions from NaN input would indicate a bug (NaN silently ignored).
+        assert!(
+            has_nan || !has_finite_nonsense,
+            "NaN matrix produced finite solution — NaN may have been silently dropped"
+        );
+    }
 }
 
 #[test]
@@ -313,11 +313,24 @@ fn adversarial_inf_entries() {
     let a = SparseColMat::try_new_from_triplets(n, n, &triplets).unwrap();
     let rhs = Col::from_fn(n, |_| 1.0);
     let options = SolverOptions::default();
-    // Must not panic — should return clean error
+    // Must not panic — should return clean error or non-finite result
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         SparseLDLT::solve_full(&a, &rhs, &options)
     }));
     assert!(result.is_ok(), "Inf matrix panicked");
+    // If solver returns Ok, solution should reflect the Inf input (not finite garbage).
+    if let Ok(Ok(ref x)) = result {
+        let all_finite = (0..n).all(|i| x[i].is_finite());
+        if all_finite {
+            // If finite, backward error must be valid (solver somehow handled Inf gracefully)
+            let be = sparse_backward_error(&a, x, &rhs);
+            assert!(
+                !be.is_finite() || be < 5e-11,
+                "Inf matrix produced finite solution with bad backward error: {:.2e}",
+                be
+            );
+        }
+    }
 }
 
 // ==========================================================================
