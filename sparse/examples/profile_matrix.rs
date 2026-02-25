@@ -257,8 +257,21 @@ fn main() {
             exc_ms,
             exc_ms / factor_ms * 100.0
         );
-        let sub_accounted =
-            zero_ms + g2l_ms + scatter_ms + ea_ms + cg_ms + exf_ms + exc_ms + kern_ms;
+        let g2l_reset_ms = stats.total_g2l_reset_time.as_secs_f64() * 1000.0;
+        eprintln!(
+            "  G2L reset:    {:>10.2} ms  ({:>5.1}%)",
+            g2l_reset_ms,
+            g2l_reset_ms / factor_ms * 100.0
+        );
+        let sub_accounted = zero_ms
+            + g2l_ms
+            + scatter_ms
+            + ea_ms
+            + cg_ms
+            + exf_ms
+            + exc_ms
+            + kern_ms
+            + g2l_reset_ms;
         eprintln!(
             "  Other:        {:>10.2} ms  ({:>5.1}%)",
             factor_ms - sub_accounted,

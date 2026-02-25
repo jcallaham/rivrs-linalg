@@ -657,6 +657,9 @@ pub struct PerSupernodeStats {
     /// Wall-clock time for the deferred contribution GEMM.
     #[cfg(feature = "diagnostic")]
     pub contrib_gemm_time: std::time::Duration,
+    /// Wall-clock time for resetting the global-to-local mapping after factoring.
+    #[cfg(feature = "diagnostic")]
+    pub g2l_reset_time: std::time::Duration,
 }
 
 /// Aggregate statistics from multifrontal factorization.
@@ -714,6 +717,9 @@ pub struct FactorizationStats {
     /// Sum of deferred contribution GEMM times across all supernodes.
     #[cfg(feature = "diagnostic")]
     pub total_contrib_gemm_time: std::time::Duration,
+    /// Sum of g2l reset times across all supernodes.
+    #[cfg(feature = "diagnostic")]
+    pub total_g2l_reset_time: std::time::Duration,
     /// Number of small-leaf subtrees identified by classification.
     pub small_leaf_subtrees: usize,
     /// Number of supernodes processed via the small-leaf fast path.
@@ -958,6 +964,8 @@ impl AptpNumeric {
             total_extract_contrib_time: std::time::Duration::ZERO,
             #[cfg(feature = "diagnostic")]
             total_contrib_gemm_time: std::time::Duration::ZERO,
+            #[cfg(feature = "diagnostic")]
+            total_g2l_reset_time: std::time::Duration::ZERO,
             small_leaf_subtrees: small_leaf_subtrees.len(),
             small_leaf_nodes: small_leaf_subtrees.iter().map(|s| s.nodes.len()).sum(),
         };
@@ -980,6 +988,7 @@ impl AptpNumeric {
                 stats.total_extract_factors_time += sn_stat.extract_factors_time;
                 stats.total_extract_contrib_time += sn_stat.extract_contrib_time;
                 stats.total_contrib_gemm_time += sn_stat.contrib_gemm_time;
+                stats.total_g2l_reset_time += sn_stat.g2l_reset_time;
             }
         }
 
@@ -1503,12 +1512,26 @@ fn factor_single_supernode(
         extract_contrib_time,
         #[cfg(feature = "diagnostic")]
         contrib_gemm_time,
+        #[cfg(feature = "diagnostic")]
+        g2l_reset_time: std::time::Duration::ZERO, // filled below after reset
     };
 
     // Reset global_to_local entries for reuse (O(m), not O(n))
+    #[cfg(feature = "diagnostic")]
+    let g2l_reset_start = std::time::Instant::now();
+
     for &global in &workspace.frontal_row_indices[..m] {
         workspace.global_to_local[global] = NOT_IN_FRONT;
     }
+
+    #[cfg(feature = "diagnostic")]
+    let g2l_reset_time = g2l_reset_start.elapsed();
+    #[cfg(feature = "diagnostic")]
+    let stats = {
+        let mut s = stats;
+        s.g2l_reset_time = g2l_reset_time;
+        s
+    };
 
     Ok(SupernodeResult {
         ff,
@@ -1899,12 +1922,24 @@ fn factor_small_leaf_subtree(
             extract_contrib_time,
             #[cfg(feature = "diagnostic")]
             contrib_gemm_time,
+            #[cfg(feature = "diagnostic")]
+            g2l_reset_time: std::time::Duration::ZERO, // filled below
         };
 
         // 9. Reset g2l
+        #[cfg(feature = "diagnostic")]
+        let g2l_reset_start = std::time::Instant::now();
+
         for &global in &frontal_row_indices[..m] {
             global_to_local[global] = NOT_IN_FRONT;
         }
+
+        #[cfg(feature = "diagnostic")]
+        let stats = {
+            let mut s = stats;
+            s.g2l_reset_time = g2l_reset_start.elapsed();
+            s
+        };
 
         contributions[node_id] = contribution;
         results.push((node_id, ff, stats));
