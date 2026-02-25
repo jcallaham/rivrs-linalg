@@ -17,10 +17,10 @@
 
 **Purpose**: Add proptest dependency, create new module files, establish test infrastructure foundation
 
-- [ ] T001 Add `proptest = "1.4"` to `[dev-dependencies]` in `Cargo.toml`
-- [ ] T002 [P] Create `src/testing/perturbations.rs` with module skeleton (empty functions, imports, `#[cfg(feature = "test-util")]` gate) and register in `src/testing/mod.rs`
-- [ ] T003 [P] Create `src/testing/strategies.rs` with module skeleton (proptest imports, empty strategy functions) and register in `src/testing/mod.rs`
-- [ ] T004 Verify `cargo test` passes with new empty modules and proptest dependency (no regressions)
+- [X] T001 Add `proptest = "1.4"` to `[dev-dependencies]` in `Cargo.toml`
+- [X] T002 [P] Create `src/testing/perturbations.rs` with module skeleton (empty functions, imports, `#[cfg(feature = "test-util")]` gate) and register in `src/testing/mod.rs`
+- [X] T003 [P] Create `src/testing/strategies.rs` with module skeleton (proptest imports, empty strategy functions) and register in `src/testing/mod.rs`
+- [X] T004 Verify `cargo test` passes with new empty modules and proptest dependency (no regressions)
 
 ---
 
@@ -30,10 +30,10 @@
 
 **CRITICAL**: Perturbation helpers must be complete before torture tests (US2) can be written
 
-- [ ] T005 Implement `cause_delays(matrix: &mut Mat<f64>, rng: &mut impl Rng)` in `src/testing/perturbations.rs` — multiply n/8 random rows by 1000, n/8 random entries by 1000, first oversized row past first block when n > block_size. Include unit tests verifying symmetry preservation and that at least n/8 rows are scaled.
-- [ ] T006 Implement `make_singular(matrix: &mut Mat<f64>, col1: usize, col2: usize)` in `src/testing/perturbations.rs` — copy col1 scaled to col2, symmetrize. Include unit tests verifying rank deficiency (eigenvalue near zero) and symmetry preservation.
-- [ ] T007 Implement `make_dblk_singular(matrix: &mut Mat<f64>, block_row: usize, block_size: usize)` in `src/testing/perturbations.rs` — delegates to `make_singular` on first and last columns of specified diagonal block. Include unit tests verifying the targeted block becomes singular.
-- [ ] T008 Verify `cargo test` passes — all new perturbation helper unit tests green, existing tests unaffected
+- [X] T005 Implement `cause_delays(matrix: &mut Mat<f64>, rng: &mut impl Rng)` in `src/testing/perturbations.rs` — multiply n/8 random rows by 1000, n/8 random entries by 1000, first oversized row past first block when n > block_size. Include unit tests verifying symmetry preservation and that at least n/8 rows are scaled.
+- [X] T006 Implement `make_singular(matrix: &mut Mat<f64>, col1: usize, col2: usize)` in `src/testing/perturbations.rs` — copy col1 scaled to col2, symmetrize. Include unit tests verifying rank deficiency (eigenvalue near zero) and symmetry preservation.
+- [X] T007 Implement `make_dblk_singular(matrix: &mut Mat<f64>, block_row: usize, block_size: usize)` in `src/testing/perturbations.rs` — delegates to `make_singular` on first and last columns of specified diagonal block. Include unit tests verifying the targeted block becomes singular.
+- [X] T008 Verify `cargo test` passes — all new perturbation helper unit tests green, existing tests unaffected
 
 **Checkpoint**: Perturbation helpers ready — US1 audit and US2 torture tests can now proceed
 
@@ -70,8 +70,7 @@
 - [ ] T016 [US2] Implement `TortureTestConfig` struct in `src/testing/perturbations.rs` — fields: `num_instances`, `delay_probability` (0.70), `singular_probability` (0.20), `dblk_singular_probability` (0.10), `matrix_sizes`, `backward_error_threshold` (5e-11), `seed`. Include `Default` impl with SPRAL-matching values.
 - [ ] T017 [US2] Implement APP torture test helper `ldlt_app_torture_test(config: &TortureTestConfig)` in `src/aptp/factor.rs` `#[cfg(test)]` module — generate random symmetric indefinite matrix, apply probabilistic perturbation (70/20/10 split), call `aptp_factor_in_place` with `num_fully_summed >= inner_block_size` (complete pivoting path), check backward error < threshold for non-singular, check inertia n_zero > 0 for singular, check q1+q2 = m. Loop for `num_instances` with reproducible seeded RNG.
 - [ ] T018 [US2] Implement TPP torture test helper `ldlt_tpp_torture_test(config: &TortureTestConfig)` in `src/aptp/factor.rs` `#[cfg(test)]` module — same as T017 but call with `num_fully_summed < inner_block_size` (TPP path), perturbation mix: 70% delays + 20% singular (no dblk_singular for TPP, matching SPRAL). Additionally check L growth bound: max |L_ij| ≤ 1/threshold.
-- [ ] T019 [US2] Add `#[test] #[ignore]` torture test entry points in `src/aptp/factor.rs` — at minimum: `test_app_torture_128x128` (500 instances, (128,128)), `test_app_torture_128x48` (500 instances, (128,48) rectangular), `test_tpp_torture_100x100` (500 instances, (100,100)), `test_tpp_torture_100x50` (500 instances, (100,50) rectangular). Each with fixed seed for reproducibility.
-- [ ] T020 [US2] Add integration-level torture test entry points in `tests/torture.rs` — re-export the kernel torture helpers as `#[test] #[ignore]` functions with additional matrix sizes: (32,32), (64,64), (256,256) for APP; (8,4), (33,21) for TPP. Total: 500+ instances per configuration.
+- [ ] T019 [US2] Add `#[test] #[ignore]` torture test entry points in `src/aptp/factor.rs` — APP sizes: (32,32), (64,64), (128,128), (128,48), (256,256); TPP sizes: (8,4), (33,21), (100,100), (100,50). 500 instances per configuration. Each with fixed seed for reproducibility. All kernel-level torture tests stay in `src/aptp/factor.rs` (not `tests/`) because they call `pub(crate)` functions (`aptp_factor_in_place`, `tpp_factor_as_primary`).
 - [ ] T021 [US2] Run torture tests: `cargo test -- --ignored torture --test-threads=1`. Fix any failures (panics, backward error violations, inertia inconsistencies). Document any solver fixes required.
 - [ ] T022 [US2] Verify no regressions: `cargo test` (non-ignored tests pass), `cargo clippy --all-targets`.
 
@@ -106,9 +105,9 @@
 
 ### Implementation for User Story 4
 
-- [ ] T029 [US4] Create `tests/adversarial.rs` with edge-case tests through `SparseLDLT` API — test cases: (1) 0×0 empty matrix → clean error, (2) 1×1 nonzero diagonal → correct solve, (3) 1×1 zero diagonal → error or zero-inertia factorization, (4) pure diagonal matrix → trivial correct factorization, (5) arrowhead matrix → correct factorization.
+- [ ] T029 [US4] Create `tests/adversarial.rs` with edge-case tests through `SparseLDLT` API — test cases: (1) 0×0 empty matrix → clean error, (2) 1×1 nonzero diagonal → correct solve, (3) 1×1 zero diagonal → error or zero-inertia factorization, (4) pure diagonal matrix → trivial correct factorization, (5) arrowhead matrix → correct factorization, (6) matrix requiring all 2×2 pivots (no stable 1×1 pivots) → correct factorization with all 2×2 pivots, (7) matrix with exact numerical cancellation during elimination → correct factorization or clean error.
 - [ ] T030 [US4] Add extreme value tests in `tests/adversarial.rs` — test cases: (1) near-overflow entries (1e308) → error or correct, (2) near-underflow entries (1e-308) → error or correct, (3) matrix with NaN entries → clean error, (4) matrix with Inf entries → clean error. Each must not panic.
-- [ ] T031 [US4] Add structural validity tests in `tests/adversarial.rs` — test cases: (1) non-symmetric sparsity pattern → clean error, (2) matrix with disconnected components → correct factorization, (3) matrix at power-of-2 boundaries (32, 64, 128, 256, 512) → correct factorization. Each must not panic.
+- [ ] T031 [US4] Add structural validity tests in `tests/adversarial.rs` — test cases: (1) non-symmetric sparsity pattern → clean error, (2) matrix with disconnected components → correct factorization, (3) matrix at power-of-2 boundaries (32, 64, 128, 256, 512) → correct factorization, (4) matrix where MC64 matching fails to find a perfect matching → clean error or fallback to unscaled ordering. Each must not panic.
 - [ ] T032 [US4] Run adversarial tests, identify panics, and fix: add defensive guards in `src/aptp/solver.rs` (e.g., 0×0 check in `analyze_with_matrix`, NaN/Inf scan in `factor`) and `src/error.rs` (new error variants if needed). Each fix should be minimal — only guard the specific panic path.
 - [ ] T033 [US4] Re-run adversarial tests after fixes: all tests pass (correct results or clean errors, zero panics). Verify no regressions: `cargo test` (all non-ignored pass).
 

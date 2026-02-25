@@ -26,6 +26,8 @@ pub mod cases;
 pub mod generators;
 pub mod harness;
 pub mod mc64_validation;
+pub mod perturbations;
+pub mod strategies;
 pub mod validator;
 
 pub use cases::{SolverTestCase, TestCaseFilter, TestMatrixProperties, load_test_cases};
@@ -36,5 +38,9 @@ pub use generators::{
 pub use harness::{MetricResult, MockSolver, SolverTest, TestResult};
 pub use mc64_validation::{
     ScalingViolationReport, classify_scaling_violations, verify_spral_scaling_properties,
+};
+pub use perturbations::{
+    TortureTestConfig, cause_delays, generate_dense_symmetric_indefinite,
+    generate_dense_symmetric_pd, make_dblk_singular, make_singular,
 };
 pub use validator::NumericalValidator;

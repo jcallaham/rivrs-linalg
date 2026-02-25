@@ -17,11 +17,12 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 metis-sys = "0.3"
 rayon = "1"
+proptest = { version = "1.4", optional = true }
 rand = { version = "0.8", optional = true }
 rand_distr = { version = "0.4", optional = true }
 
 [features]
-test-util = ["rand", "rand_distr"]
+test-util = ["rand", "rand_distr", "proptest"]
 diagnostic = []
 
 [dev-dependencies]
