@@ -1988,25 +1988,29 @@ pub(crate) fn extend_add(
     global_to_local: &[usize],
 ) -> Mat<f64> {
     let cb_size = child.row_indices.len();
-    for i in 0..cb_size {
-        let gi = child.row_indices[i];
-        let li = global_to_local[gi];
+    // Column-oriented iteration: for each child column j, scatter the
+    // lower-triangle entries (rows j..cb_size) into the parent. Source
+    // reads are contiguous in column-major layout. We keep the zero-check
+    // and symmetry swap since delayed columns can break monotonicity.
+    for j in 0..cb_size {
+        let gj = child.row_indices[j];
+        let lj = global_to_local[gj];
         debug_assert!(
-            li != NOT_IN_FRONT,
-            "extend_add: child row {} not in parent",
-            gi
+            lj != NOT_IN_FRONT,
+            "extend_add: child col {} not in parent",
+            gj
         );
-        for j in 0..=i {
-            // Lower triangle only
-            let gj = child.row_indices[j];
-            let lj = global_to_local[gj];
-            debug_assert!(
-                lj != NOT_IN_FRONT,
-                "extend_add: child col {} not in parent",
-                gj
-            );
-            let val = child.data[(i, j)];
+        let child_col = &child.data.col_as_slice(j)[j..cb_size];
+        let row_indices = &child.row_indices[j..cb_size];
+
+        for (&val, &gi) in child_col.iter().zip(row_indices) {
             if val != 0.0 {
+                let li = global_to_local[gi];
+                debug_assert!(
+                    li != NOT_IN_FRONT,
+                    "extend_add: child row {} not in parent",
+                    gi
+                );
                 // Map to parent: ensure lower triangle (li >= lj)
                 if li >= lj {
                     parent.data[(li, lj)] += val;
@@ -2026,6 +2030,14 @@ pub(crate) fn extend_add(
 /// rows correspond exactly to the child's symbolic pattern and the precomputed
 /// `ea_row_map` provides direct local index lookup without `global_to_local`.
 ///
+/// Uses column-oriented processing (à la SPRAL `asm_col`): for each child
+/// column `j`, scatters the lower-triangle entries `(j..cb_size, j)` into
+/// the parent. Source reads are contiguous in column-major layout.
+///
+/// # References
+///
+/// - SPRAL `assemble.hxx:27-38` — `asm_col` column-oriented scatter (BSD-3)
+///
 /// # Arguments
 ///
 /// - `parent`: Parent frontal matrix to accumulate into (lower triangle).
@@ -2044,24 +2056,46 @@ fn extend_add_mapped(
         ea_row_map.len(),
         cb_size
     );
-    for (i, &li_u32) in ea_row_map.iter().enumerate().take(cb_size) {
-        let li = li_u32 as usize;
-        for (j, &lj_u32) in ea_row_map.iter().enumerate().take(i + 1) {
-            // Lower triangle only
-            let lj = lj_u32 as usize;
-            let val = child.data[(i, j)];
-            if val != 0.0 {
-                // Map to parent: ensure lower triangle (li >= lj)
-                if li >= lj {
-                    parent.data[(li, lj)] += val;
-                } else {
-                    parent.data[(lj, li)] += val;
-                }
-            }
+
+    // Column-oriented scatter (à la SPRAL asm_col).
+    // For each child column j, scatter lower-triangle entries (rows j..cb_size)
+    // into the parent. Source reads via col_as_slice are contiguous in column-
+    // major layout; writes target a single parent column when li >= lj (common
+    // case), with a symmetry swap for the rare li < lj case.
+    for j in 0..cb_size {
+        let lj = ea_row_map[j] as usize;
+        let child_col = child.data.col_as_slice(j);
+        let row_map = &ea_row_map[j..cb_size];
+        let src = &child_col[j..cb_size];
+
+        // 4× unrolled inner loop for ILP
+        let n = cb_size - j;
+        let n4 = n / 4 * 4;
+        let mut k = 0;
+        while k < n4 {
+            ea_scatter_one(&mut parent.data, row_map[k] as usize, lj, src[k]);
+            ea_scatter_one(&mut parent.data, row_map[k + 1] as usize, lj, src[k + 1]);
+            ea_scatter_one(&mut parent.data, row_map[k + 2] as usize, lj, src[k + 2]);
+            ea_scatter_one(&mut parent.data, row_map[k + 3] as usize, lj, src[k + 3]);
+            k += 4;
+        }
+        while k < n {
+            ea_scatter_one(&mut parent.data, row_map[k] as usize, lj, src[k]);
+            k += 1;
         }
     }
     // Return the consumed data buffer for recycling into workspace.contrib_buffer
     child.data
+}
+
+/// Scatter a single extend-add value into the parent's lower triangle.
+#[inline(always)]
+fn ea_scatter_one(parent: &mut MatMut<'_, f64>, li: usize, lj: usize, val: f64) {
+    if li >= lj {
+        parent[(li, lj)] += val;
+    } else {
+        parent[(lj, li)] += val;
+    }
 }
 
 /// Extract per-supernode factors from a factored frontal matrix.
@@ -2961,7 +2995,7 @@ mod tests {
     /// Test that `extend_add_mapped` correctly scatters a child contribution
     /// into a parent frontal matrix using a precomputed u32 row mapping,
     /// handling the lower-triangle symmetry swap when child ordering differs
-    /// from parent ordering.
+    /// from parent ordering (non-monotonic map from amalgamated supernodes).
     #[test]
     fn test_extend_add_mapped_hand_constructed() {
         // Parent frontal: 5×5, initially zero (represents assembled parent).
@@ -3026,6 +3060,131 @@ mod tests {
         assert_eq!(p[(1, 1)], 0.0, "row 1 untouched");
         assert_eq!(p[(4, 0)], 0.0, "row 4 untouched");
         assert_eq!(p[(4, 4)], 0.0, "row 4 untouched");
+    }
+
+    /// Test column-oriented `extend_add_mapped` with a larger 10×10
+    /// contribution (monotonic map), comparing against a naive reference.
+    #[test]
+    fn test_extend_add_mapped_10x10_vs_reference() {
+        let cb_size = 10;
+        let parent_size = 15;
+
+        // Monotonically increasing map: child rows map to
+        // parent rows [1, 3, 4, 5, 7, 8, 10, 11, 12, 14].
+        let ea_row_map: Vec<u32> = vec![1, 3, 4, 5, 7, 8, 10, 11, 12, 14];
+
+        // Build a child contribution with known lower-triangle values.
+        // Use value = (i+1)*100 + (j+1) for easy identification.
+        let mut child_data = Mat::<f64>::zeros(cb_size, cb_size);
+        for j in 0..cb_size {
+            for i in j..cb_size {
+                child_data[(i, j)] = (i as f64 + 1.0) * 100.0 + (j as f64 + 1.0);
+            }
+        }
+
+        // Reference: naive element-by-element scatter with lower-triangle swap
+        let mut ref_parent = Mat::<f64>::zeros(parent_size, parent_size);
+        for j in 0..cb_size {
+            let lj = ea_row_map[j] as usize;
+            for i in j..cb_size {
+                let li = ea_row_map[i] as usize;
+                if li >= lj {
+                    ref_parent[(li, lj)] += child_data[(i, j)];
+                } else {
+                    ref_parent[(lj, li)] += child_data[(i, j)];
+                }
+            }
+        }
+
+        // Actual: column-oriented extend_add_mapped
+        let mut parent_data = Mat::<f64>::zeros(parent_size, parent_size);
+        let parent_row_indices: Vec<usize> = (0..parent_size).collect();
+        let mut parent = FrontalMatrix {
+            data: parent_data.as_mut(),
+            row_indices: &parent_row_indices,
+            num_fully_summed: 5,
+        };
+        let child = ContributionBlock {
+            data: child_data,
+            row_indices: (0..cb_size).collect(),
+            num_delayed: 0,
+        };
+        let _ = extend_add_mapped(&mut parent, child, &ea_row_map);
+
+        // Compare every element
+        for j in 0..parent_size {
+            for i in 0..parent_size {
+                assert_eq!(
+                    parent.data[(i, j)],
+                    ref_parent[(i, j)],
+                    "mismatch at ({}, {})",
+                    i,
+                    j
+                );
+            }
+        }
+    }
+
+    /// Test column-oriented `extend_add_mapped` with a non-monotonic map
+    /// (simulating post-amalgamation parent with non-contiguous owned ranges).
+    #[test]
+    fn test_extend_add_mapped_non_monotonic() {
+        let cb_size = 4;
+        let parent_size = 8;
+
+        // Non-monotonic map: simulates child pattern rows mapping into a
+        // parent whose owned_ranges are interleaved with pattern rows.
+        let ea_row_map: Vec<u32> = vec![5, 2, 7, 1];
+
+        // Build child contribution with lower-triangle values
+        let mut child_data = Mat::<f64>::zeros(cb_size, cb_size);
+        for j in 0..cb_size {
+            for i in j..cb_size {
+                child_data[(i, j)] = (i * 10 + j + 1) as f64;
+            }
+        }
+
+        // Reference: naive scatter with swap
+        let mut ref_parent = Mat::<f64>::zeros(parent_size, parent_size);
+        for j in 0..cb_size {
+            let lj = ea_row_map[j] as usize;
+            for i in j..cb_size {
+                let li = ea_row_map[i] as usize;
+                if li >= lj {
+                    ref_parent[(li, lj)] += child_data[(i, j)];
+                } else {
+                    ref_parent[(lj, li)] += child_data[(i, j)];
+                }
+            }
+        }
+
+        // Actual
+        let mut parent_data = Mat::<f64>::zeros(parent_size, parent_size);
+        let parent_row_indices: Vec<usize> = (0..parent_size).collect();
+        let mut parent = FrontalMatrix {
+            data: parent_data.as_mut(),
+            row_indices: &parent_row_indices,
+            num_fully_summed: 4,
+        };
+        let child = ContributionBlock {
+            data: child_data,
+            row_indices: (0..cb_size).collect(),
+            num_delayed: 0,
+        };
+        let _ = extend_add_mapped(&mut parent, child, &ea_row_map);
+
+        // Compare every element
+        for j in 0..parent_size {
+            for i in 0..parent_size {
+                assert_eq!(
+                    parent.data[(i, j)],
+                    ref_parent[(i, j)],
+                    "mismatch at ({}, {})",
+                    i,
+                    j
+                );
+            }
+        }
     }
 
     /// Test that `extend_add_mapped` accumulates contributions from multiple

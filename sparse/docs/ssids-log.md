@@ -1,5 +1,48 @@
 # SSIDS Development Log
 
+## Phase 9.1g: Column-Oriented Extend-Add Scatter
+
+**Status**: Complete (pending workstation benchmarking)
+**Branch**: `025-small-leaf-fastpath`
+**Date**: 2026-02-25
+
+### What Was Built
+
+Rewrote `extend_add_mapped` and `extend_add` to use column-oriented iteration
+(à la SPRAL `asm_col` in `assemble.hxx:27-38`), replacing row-by-row processing.
+
+**Key change**: For each child column `j`, read the contiguous lower-triangle
+slice `child_col[j..cb_size]` and scatter into the parent using precomputed row
+mappings. Source reads are sequential in column-major layout. Inner loop is 4×
+unrolled for instruction-level parallelism. Extracted `ea_scatter_one` helper
+(#[inline(always)]) for the lower-triangle swap logic.
+
+**`extend_add_mapped`** (fast path, zero-delay children):
+- Column-outer loop with `col_as_slice` for contiguous source reads
+- 4× unrolled inner loop calling `ea_scatter_one`
+- Retains `li >= lj` swap logic — investigation confirmed `ea_row_map` is NOT
+  always monotonic (post-amalgamation parents with non-contiguous `owned_ranges`
+  produce non-monotonic child→parent mappings)
+
+**`extend_add`** (fallback, delayed columns):
+- Column-outer loop with `col_as_slice` + `zip` over `row_indices`
+- Retains zero-check and swap logic (delayed columns break monotonicity)
+
+### SPRAL Reference
+
+- `assemble.hxx:27-38` — `asm_col` column-oriented scatter with 4× unrolling (BSD-3)
+
+### Tests Added
+
+- `test_extend_add_mapped_10x10_vs_reference`: 10×10 contribution with monotonic map, compared element-by-element against naive reference
+- `test_extend_add_mapped_non_monotonic`: 4×4 contribution with non-monotonic map (simulating post-amalgamation parent), verified against naive reference
+
+### Workstation Validation Pending
+
+- Full 65-matrix SuiteSparse correctness: `cargo test -- --ignored --test-threads=1`
+- Baseline comparison: `cargo run --example baseline_collection --features diagnostic --release -- --ci-only`
+- Expected: bit-exact backward errors (accumulation order unchanged per parent position)
+
 ## Phase 9.1f: Small Leaf Subtree Fast Path
 
 **Status**: Complete (pending workstation benchmarking)
