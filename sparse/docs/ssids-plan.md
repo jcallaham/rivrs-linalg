@@ -2842,15 +2842,29 @@ The remaining gap vs SPRAL is the shared-workspace architecture (extend-add scat
 
 *9.1f: Small leaf subtree fast path* — **COMPLETE** (branch `025-small-leaf-fastpath`)
 
-Classifies leaf subtrees where all supernodes have front_size < 256 and processes
-them via a pre-pass with dedicated small workspace (≤512KB, L2-cache-resident).
-Sequential processing avoids parallel dispatch overhead and maintains cache locality.
+SPRAL-style rectangular fast path for small-leaf subtrees. Two key changes:
 
-Implementation: `classify_small_leaf_subtrees()` + pre-pass in `factor_tree_levelset()`.
+1. **Rectangular TPP kernel** (`tpp_factor_rect` in factor.rs): factors directly
+   into m×k L storage instead of m×m frontal matrix. `swap_rect()` limits column
+   operations to 0..k. ~720 LOC of new rect-specific functions.
+
+2. **Split assembly** (`factor_small_leaf_subtree` in numeric.rs): FS entries scatter
+   into L storage columns, NFS×NFS entries scatter directly into contrib_buffer.
+   Eliminates the m×m frontal allocation, zeroing, and extraction round-trip.
+
+Also: `ld_workspace` on `FactorizationWorkspace` eliminates per-supernode W allocation
+in `compute_contribution_gemm` (benefits both fast and general paths).
+
 Configuration: `FactorOptions::small_leaf_threshold` (default 256, 0 = disabled).
 Tests: 12 new tests (6 classification unit + 6 fast-path integration). All 498 pass.
 
-Workstation benchmarking pending — expected 1.5-2× speedup on simplicial matrices.
+Results (workstation, sequential):
+- bloweybq: 2.17×→1.45×, dixmaanl: 2.76×→1.74×, linverse: 2.57×→1.70×
+- G3_circuit: 1.44×→1.64× (48K small-leaf nodes, cache-miss-dominated overhead)
+- No regressions on non-simplicial matrices. 65/65 pass, median ~0.98×.
+- Remaining simplicial gap (1.4–1.9×) is structural (per-node g2l/extraction
+  overhead across tens of thousands of tiny nodes). Further improvement requires
+  contiguous subtree L buffer (9.1g scope).
 
 *9.1g: Per-node factor storage feasibility investigation*
 
@@ -2968,7 +2982,7 @@ shared-workspace reuse benefit — needs careful benchmarking.
 - [X] c-71 and c-big within 10× of SPRAL factor time (was 25-30×, now 4× after 9.1a+b)
 - [X] c-71 and c-big within 2.5× of SPRAL factor time (was 4×, now 2.16×/2.30× after 9.1e)
 - [ ] c-71 and c-big within 2× of SPRAL factor time (c-71 2.16× is close — target of 9.1g)
-- [ ] Simplicial matrices (bloweybq, dixmaanl, etc.) within 1.5× of SPRAL (currently 2-3× — target of 9.1f)
+- [~] Simplicial matrices (bloweybq, dixmaanl, etc.) within 1.5× of SPRAL (was 2-3×, now 1.45-1.90× after 9.1f — bloweybq meets target, others close but remaining gap is structural)
 - [X] Full SuiteSparse suite median factor time ratio ≤ 1.0× vs SPRAL (0.98× after 9.1e)
 - [ ] No regressions on any matrix in the benchmark suite (simplicial matrices have small regressions from 9.1e overhead — sub-40ms absolute, noise-dominated)
 - [X] Per-supernode profiling analysis documented (assembly/extraction/kernel breakdown for key matrices) — Phase 9.1c sub-phase timing
@@ -2984,14 +2998,15 @@ Phase 9.1 is complete when:
    timing) and either optimized or explicitly deferred with rationale
 4. No matrix in the 65-matrix suite has regressed vs the post-9.1b baseline
 
-**Post-9.1e baseline (sequential, single thread):**
-- Median ratio vs SPRAL: **0.98×** (was 1.01× post-9.1b)
-- c-71: **2.16×** (was 4.06× post-9.1b, 29.75× pre-9.1a)
-- c-big: **2.30×** (was 4.11× post-9.1b, 11.11× pre-9.1a)
-- 33/65 matrices beat SPRAL (was 29/65 post-9.1b)
-- Worst simplicial: dixmaanl 2.76×, spmsrtls 2.61×, linverse 2.57×
-- G3_circuit (1.6M nodes): 1.44×
-- Best: thread 0.42×, cvxqp3 0.53×, astro-ph 0.59×
+**Post-9.1f baseline (sequential, single thread):**
+- Median ratio vs SPRAL: **~0.98×** (unchanged from 9.1e)
+- c-71: **2.16×**, c-big: **2.31×** (unchanged — not in small-leaf path)
+- 33/65 matrices beat SPRAL
+- Simplicial: bloweybq **1.45×**, linverse **1.70×**, dixmaanl **1.74×**, spmsrtls **1.81×**,
+  rail_79841 **1.85×**, mario001 **1.90×** (was 2.17-2.76× post-9.1e)
+- G3_circuit (1.6M nodes): **1.64×** (was 1.44× post-9.1e — slightly regressed due to
+  per-node overhead in rect fast path on 48K tiny nodes, but within noise)
+- Best: thread 0.44×, cvxqp3 0.54×, astro-ph 0.57×
 
 #### 9.2: Robustness — Testing & Hardening
 

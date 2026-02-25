@@ -5,3 +5,12 @@ Can you review PR #22, looking for code quality, consistency with the plan outli
 %%
 
 Can you do a comprehensive review of the examples?  If we're coming up to release, which of these do we really need to keep, and which can be removed or condensed to a minimal set?  Then, let's also add a README.md file to this directory including an explanation of what each example does and how to run it.
+
+
+%%
+
+- Review codebase & structure
+- Remove dead code or anything hidden besides unnecessary cfg flags
+- Should anything be refactored, renamed, or deduplicated?
+- Remove references in comments to development processes (FR, US, task numbers, etc)
+- HACK, TODO, or FIXME comments

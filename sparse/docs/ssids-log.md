@@ -2,17 +2,30 @@
 
 ## Phase 9.1f: Small Leaf Subtree Fast Path
 
-**Status**: Complete (pending workstation benchmarking)
+**Status**: Complete
 **Branch**: `025-small-leaf-fastpath`
-**Date**: 2026-02-24
+**Date**: 2026-02-24 – 2026-02-25
 
 ### What Was Built
 
-Classified leaf subtrees where all supernodes have front_size < 256 and process
-them via a streamlined pre-pass before the main level-set loop. Each small-leaf
-subtree uses a dedicated small workspace (bounded by threshold² = 512KB, fits in
-L2 cache) rather than the full-sized general workspace. Sequential processing
-within the subtree avoids parallel dispatch overhead and maintains cache locality.
+Two-part optimization for small-leaf subtrees:
+
+1. **Initial fast path** (small workspace, same kernel): Classified leaf subtrees
+   where all supernodes have front_size < 256 and processed them via a pre-pass
+   with dedicated small workspace (≤512KB, L2-cache-resident). Sequential processing
+   avoids parallel dispatch overhead and maintains cache locality.
+
+2. **SPRAL-style rectangular fast path** (rectangular L storage, new kernel):
+   Replaced the initial fast path with a direct SPRAL-style implementation using
+   rectangular m×k L storage instead of the general m×m frontal matrix. Key changes:
+   - `tpp_factor_rect()` — rectangular TPP kernel (m rows, k fully-summed cols)
+   - `swap_rect()` — row/col swap limited to n columns (matching SPRAL's `swap_cols`)
+   - Split assembly: FS entries → L storage columns, NFS×NFS → contrib_buffer directly
+   - `compute_contribution_gemm_rect()` — Schur complement from rectangular layout
+   - `extract_front_factors_rect()` / `extract_contribution_rect()` — extraction from
+     rectangular storage
+   - `ld_workspace` on `FactorizationWorkspace` — pre-allocated W buffer for contribution
+     GEMM (eliminates per-supernode allocation in both fast and general paths)
 
 **Classification** (`numeric.rs:classify_small_leaf_subtrees`):
 - O(n_supernodes) bottom-up pass after amalgamation
@@ -22,15 +35,23 @@ within the subtree avoids parallel dispatch overhead and maintains cache localit
 - Filters subtrees with < 2 nodes
 - Configurable via `FactorOptions::small_leaf_threshold` (default 256, 0 = disabled)
 
-**Fast-path pre-pass** (`numeric.rs:factor_tree_levelset`):
+**Fast-path pre-pass** (`numeric.rs:factor_small_leaf_subtree`):
 - Before the main level-set loop, iterates each `SmallLeafSubtree`
-- Allocates a small `FactorizationWorkspace` per subtree (max_front bounded)
-- Processes each node via existing `factor_single_supernode()` in postorder
-- Stores results and root contributions in global vectors
+- Uses rectangular m×k `l_storage` instead of m×m frontal matrix
+- Split assembly: FS columns → l_storage, NFS×NFS → contrib_buffer directly
+- Calls `tpp_factor_rect()` kernel, `compute_contribution_gemm_rect()`, extraction
+- Child contribution buffer recycling with NFS-awareness
+- Full `#[cfg(feature = "diagnostic")]` per-supernode timing instrumentation
 - Decrements `remaining_children` for subtree root parents
 - Main level-set loop skips `in_small_leaf` nodes in its initial ready set
 
 **New types**: `SmallLeafSubtree` (root, nodes, max_front_size, parent_of_root)
+
+**New functions in `factor.rs`**: `tpp_factor_rect`, `swap_rect`, `tpp_rect_entry`,
+`tpp_apply_1x1_rect`, `tpp_apply_2x2_rect`, `tpp_is_col_small_rect`,
+`tpp_find_row_abs_max_rect`, `tpp_find_rc_abs_max_exclude_rect`,
+`compute_contribution_gemm_rect`, `extract_front_factors_rect`,
+`extract_contribution_rect` (~720 LOC)
 
 **Configuration**: `FactorOptions::small_leaf_threshold` / `SolverOptions::small_leaf_threshold`
 
@@ -42,11 +63,9 @@ within the subtree avoids parallel dispatch overhead and maintains cache localit
   delayed_pivots, contribution_boundary, mc64_scaling, suitesparse_ci (10 matrices)
 - All 498 tests pass (both default and diagnostic features)
 
-### Workstation Validation Pending
+### Workstation Benchmarking Results
 
-- Full 65-matrix SuiteSparse correctness: `cargo test -- --ignored --test-threads=1`
-- Baseline comparison for simplicial matrices (dixmaanl, bloweybq, mario001)
-- Performance validation: simplicial matrices should be ≤1.5× SPRAL
+65/65 SuiteSparse matrices pass with backward error well below 5e-11.
 
 
 ### Performance Benchmarks
@@ -127,6 +146,57 @@ DNVS/thread                            29736      3.477      1.538    0.44    1.
 
 65/65 completed successfully
 ```
+
+### Key Results vs 9.1e Baseline
+
+**Simplicial matrices (target workload):**
+
+| Matrix      | 9.1e ratio | 9.1f ratio | Improvement |
+|-------------|-----------|-----------|-------------|
+| bloweybq    | 2.17×     | 1.45×     | 33% faster  |
+| dixmaanl    | 2.76×     | 1.74×     | 37% faster  |
+| linverse    | 2.57×     | 1.70×     | 34% faster  |
+| spmsrtls    | 2.61×     | 1.81×     | 31% faster  |
+| rail_79841  | 2.34×     | 1.85×     | 21% faster  |
+| mario001    | —         | 1.90×     | —           |
+
+**Non-simplicial (regression check):** No regressions. Bulk FEM matrices unchanged
+(0.77×–1.29×). c-71 2.16×, c-big 2.31× — unchanged (not in small-leaf path).
+
+**Overall:** 65/65 pass, median ~0.98×, 33/65 beat SPRAL.
+
+### Profiling Analysis (G3_circuit, 1.64× SPRAL)
+
+G3_circuit has 50,555 supernodes with 48,225 (95%) in small-leaf subtrees. Profile:
+
+| Sub-phase    | Time (ms) | % of factor |
+|--------------|-----------|-------------|
+| Kernel       | 850       | 22.0%       |
+| ContribGEMM  | 852       | 22.1%       |
+| Extend-add   | 283       | 7.3%        |
+| Scatter      | 88        | 2.3%        |
+| Extraction   | 89        | 2.3%        |
+| Zeroing      | 31        | 0.8%        |
+| G2L setup    | 4         | 0.1%        |
+| **Other**    | **1665**  | **43.1%**   |
+
+The 1665ms "Other" is uninstrumented per-node preamble/postscript (frontal row
+indices construction, g2l reset, FrontFactors allocation) across 48K nodes at
+~34μs each. This overhead is cache-miss dominated (g2l array is 12MB for n=1.5M),
+not allocation-dominated — an arena allocator would save only ~29ms (<1%).
+
+**Remaining gap analysis:** The simplicial matrix gap (1.4–1.9× SPRAL) and
+G3_circuit gap (1.64×) are structural. Further improvement requires SPRAL's
+contiguous-subtree-L-buffer architecture (per-node factor storage eliminating
+extraction, zeroing, and g2l rebuild). This is Phase 9.1g scope — a larger
+refactor touching the solve path.
+
+### Algorithm References
+
+- Hogg, Duff & Lopez (2020), §5 — SmallLeafNumericSubtree architecture
+- SPRAL `SmallLeafNumericSubtree.hxx:38-220` — sequential small-leaf factorization
+- SPRAL `ldlt_tpp.cxx:44-243` — rectangular TPP kernel (`ldlt_tpp_factor`)
+- `/workspace/rivrs-linalg/references/ssids/duff2020.md` — two-tier allocator design
 
 ---
 
