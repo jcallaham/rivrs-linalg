@@ -244,13 +244,9 @@ pub(crate) struct AssemblyMaps {
     /// enumeration (all children of all supernodes in tree order).
     /// Length: total_children + 1.
     pub ea_offsets: Vec<usize>,
-    /// Maps each entry in `ea_offsets` to its child supernode index.
-    /// Length: total_children.
-    #[allow(dead_code)]
-    pub ea_child_snode: Vec<usize>,
     /// Per-supernode start offset into the children enumeration.
     /// `ea_snode_child_begin[s]..ea_snode_child_begin[s+1]` gives the range
-    /// in `ea_child_snode` / `ea_offsets` for supernode s's children.
+    /// in `ea_offsets` for supernode s's children.
     /// Length: num_supernodes + 1.
     pub ea_snode_child_begin: Vec<usize>,
 }
@@ -358,7 +354,6 @@ fn build_assembly_maps(
 
     let mut ea_map = Vec::new();
     let mut ea_offsets = vec![0usize];
-    let mut ea_child_snode = Vec::new();
     let mut ea_snode_child_begin = vec![0usize; n_supernodes + 1];
 
     for (s, sn) in supernodes.iter().enumerate() {
@@ -382,8 +377,6 @@ fn build_assembly_maps(
             // Without delays, the contribution block rows are exactly the pattern.
             // With delays, additional delayed rows appear — the precomputed map
             // won't cover those (fallback to g2l at factorization time).
-            ea_child_snode.push(c);
-
             for &child_row in &child_sn.pattern {
                 let parent_local = g2l[child_row];
                 debug_assert!(
@@ -402,7 +395,7 @@ fn build_assembly_maps(
             g2l[global] = NOT_IN_FRONT;
         }
 
-        ea_snode_child_begin[s + 1] = ea_child_snode.len();
+        ea_snode_child_begin[s + 1] = ea_offsets.len() - 1;
     }
 
     AssemblyMaps {
@@ -410,7 +403,6 @@ fn build_assembly_maps(
         amap_offsets,
         ea_map,
         ea_offsets,
-        ea_child_snode,
         ea_snode_child_begin,
     }
 }
