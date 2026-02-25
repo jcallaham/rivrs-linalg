@@ -1,5 +1,205 @@
 # SSIDS Development Log
 
+## Phase 9.1f: Small Leaf Subtree Fast Path
+
+**Status**: Complete
+**Branch**: `025-small-leaf-fastpath`
+**Date**: 2026-02-24 – 2026-02-25
+
+### What Was Built
+
+Two-part optimization for small-leaf subtrees:
+
+1. **Initial fast path** (small workspace, same kernel): Classified leaf subtrees
+   where all supernodes have front_size < 256 and processed them via a pre-pass
+   with dedicated small workspace (≤512KB, L2-cache-resident). Sequential processing
+   avoids parallel dispatch overhead and maintains cache locality.
+
+2. **SPRAL-style rectangular fast path** (rectangular L storage, new kernel):
+   Replaced the initial fast path with a direct SPRAL-style implementation using
+   rectangular m×k L storage instead of the general m×m frontal matrix. Key changes:
+   - `tpp_factor_rect()` — rectangular TPP kernel (m rows, k fully-summed cols)
+   - `swap_rect()` — row/col swap limited to n columns (matching SPRAL's `swap_cols`)
+   - Split assembly: FS entries → L storage columns, NFS×NFS → contrib_buffer directly
+   - `compute_contribution_gemm_rect()` — Schur complement from rectangular layout
+   - `extract_front_factors_rect()` / `extract_contribution_rect()` — extraction from
+     rectangular storage
+   - `ld_workspace` on `FactorizationWorkspace` — pre-allocated W buffer for contribution
+     GEMM (eliminates per-supernode allocation in both fast and general paths)
+
+**Classification** (`numeric.rs:classify_small_leaf_subtrees`):
+- O(n_supernodes) bottom-up pass after amalgamation
+- Marks `in_small_leaf: bool` on `SupernodeInfo`
+- Identifies subtree roots (in_small_leaf with non-in_small_leaf parent)
+- Collects descendants in postorder via iterative DFS
+- Filters subtrees with < 2 nodes
+- Configurable via `FactorOptions::small_leaf_threshold` (default 256, 0 = disabled)
+
+**Fast-path pre-pass** (`numeric.rs:factor_small_leaf_subtree`):
+- Before the main level-set loop, iterates each `SmallLeafSubtree`
+- Uses rectangular m×k `l_storage` instead of m×m frontal matrix
+- Split assembly: FS columns → l_storage, NFS×NFS → contrib_buffer directly
+- Calls `tpp_factor_rect()` kernel, `compute_contribution_gemm_rect()`, extraction
+- Child contribution buffer recycling with NFS-awareness
+- Full `#[cfg(feature = "diagnostic")]` per-supernode timing instrumentation
+- Decrements `remaining_children` for subtree root parents
+- Main level-set loop skips `in_small_leaf` nodes in its initial ready set
+
+**New types**: `SmallLeafSubtree` (root, nodes, max_front_size, parent_of_root)
+
+**New functions in `factor.rs`**: `tpp_factor_rect`, `swap_rect`, `tpp_rect_entry`,
+`tpp_apply_1x1_rect`, `tpp_apply_2x2_rect`, `tpp_is_col_small_rect`,
+`tpp_find_row_abs_max_rect`, `tpp_find_rc_abs_max_exclude_rect`,
+`compute_contribution_gemm_rect`, `extract_front_factors_rect`,
+`extract_contribution_rect` (~720 LOC)
+
+**Configuration**: `FactorOptions::small_leaf_threshold` / `SolverOptions::small_leaf_threshold`
+
+### Tests Added
+
+- 6 unit tests for classification: all_small, mixed_tree, single_node_excluded,
+  threshold_boundary, disabled, multiple_subtrees
+- 6 integration tests for fast-path factorization: small_chain, matches_general,
+  delayed_pivots, contribution_boundary, mc64_scaling, suitesparse_ci (10 matrices)
+- All 498 tests pass (both default and diagnostic features)
+
+### Workstation Benchmarking Results
+
+65/65 SuiteSparse matrices pass with backward error well below 5e-11.
+
+
+### Performance Benchmarks
+
+```bash
+cargo run --example spral_benchmark --release -- --threads 1 --rivrs
+```
+
+```
+=== Comparison: SPRAL vs rivrs (threads=1) ===
+Matrix                                     n  spral_fac  rivrs_fac   ratio   spral_be   rivrs_be  sl_st  sl_nd
+------------------------------------------------------------------------------------------------------------------
+BenElechi/BenElechi1                  245874      1.057      1.285    1.22    6.2e-19    5.9e-19    778   4762
+Koutsovasilis/F2                       71505      0.380      0.378    1.00    9.7e-19    9.4e-19    241   1065
+PARSEC/H2O                             67024     27.870     28.753    1.03    1.5e-18    1.3e-18      0      0
+PARSEC/Si10H16                         17077      2.112      1.811    0.86    4.5e-17    4.5e-17      0      0
+PARSEC/Si5H12                          19896      3.130      4.052    1.29    1.8e-17    2.6e-18      0      0
+PARSEC/SiNa                             5743      0.208      0.169    0.81    7.5e-18    4.2e-18      0      0
+Newman/astro-ph                        16706      0.698      0.395    0.57     8.9e-9    8.0e-18     53    229
+Boeing/bcsstk39                        46772      0.132      0.133    1.01    2.6e-18    2.3e-18    126   1172
+GHS_indef/bloweybq                     10001      0.002      0.003    1.45    1.6e-18    1.7e-18      1    293
+GHS_indef/copter2                      55476      0.460      0.392    0.85    1.2e-15    2.6e-16    207   1092
+Boeing/crystk02                        13965      0.086      0.077    0.90    1.9e-18    1.8e-18     62    184
+Boeing/crystk03                        24696      0.207      0.179    0.87    1.4e-18    1.4e-18     45    102
+GHS_indef/dawson5                      51537      0.119      0.116    0.97    3.8e-16    1.5e-16    103   1337
+GHS_indef/dixmaanl                     60000      0.014      0.024    1.74    3.0e-18    5.8e-18      1   1605
+Oberwolfach/filter3D                  106437      0.349      0.351    1.01    6.2e-19    6.2e-19    356   2491
+Oberwolfach/gas_sensor                 66917      0.560      0.501    0.89    8.0e-19    7.0e-19    335   1727
+GHS_indef/helm3d01                     32226      0.173      0.151    0.87    6.3e-16    3.6e-16    117    852
+GHS_indef/linverse                     11999      0.003      0.005    1.70    7.4e-18    6.9e-18      1    327
+INPRO/msdoor                          415863      0.933      1.111    1.19    6.7e-19    6.5e-19    680  10268
+ND/nd3k                                 9000      0.738      0.690    0.94    5.4e-18    2.8e-18      0      0
+Boeing/pwtk                           217918      0.932      0.947    1.02    4.4e-19    4.4e-19    727   4404
+Cunningham/qa8fk                       66127      0.560      0.555    0.99    8.1e-19    7.8e-19    326   1528
+Oberwolfach/rail_79841                 79841      0.037      0.069    1.85    5.9e-19    6.3e-19     12   2188
+GHS_indef/sparsine                     50000     31.772     28.987    0.91    8.4e-15    3.0e-15      0      0
+GHS_indef/spmsrtls                     29995      0.007      0.013    1.81    1.0e-17    2.0e-17      1    825
+Oberwolfach/t2dal                       4257      0.003      0.004    1.49    1.8e-18    2.1e-18      1    110
+Oberwolfach/t3dh                       79171      1.562      1.520    0.97    8.8e-19    7.4e-19    346   1298
+Cote/vibrobox                          12328      0.052      0.043    0.83    3.1e-18    2.7e-18     52    287
+TSOPF/TSOPF_FS_b162_c1                 10798      0.033      0.036    1.09    3.6e-17    5.4e-17     14    790
+TSOPF/TSOPF_FS_b39_c7                  28216      0.025      0.035    1.38    1.2e-16    1.6e-16      1   2123
+GHS_indef/aug3dcqp                     35543      0.068      0.072    1.06    8.4e-19    1.2e-18     36   1495
+GHS_indef/blockqp1                     60012      0.032      0.050    1.54    9.0e-14    9.3e-14      1  19991
+GHS_indef/bratu3d                      27792      0.174      0.152    0.87    7.3e-18    1.3e-18    101    750
+GHS_indef/c-71                         76638      2.385      5.140    2.16    8.3e-19    1.0e-18    243   2497
+Schenk_IBMNA/c-big                    345241      8.424     19.444    2.31    1.3e-17    5.1e-18    904  18712
+GHS_indef/cont-201                     80595      0.074      0.082    1.10    2.3e-18    1.9e-18     51   2248
+GHS_indef/cont-300                    180895      0.201      0.207    1.03    1.9e-18    1.1e-18    113   5039
+GHS_indef/cvxqp3                       17500      0.258      0.139    0.54    1.5e-13    2.0e-14     64    332
+GHS_indef/d_pretok                    182730      0.344      0.334    0.97    1.0e-18    9.3e-19    238   4779
+GHS_indef/mario001                     38434      0.016      0.031    1.90    1.8e-18    2.0e-18      1   1061
+GHS_indef/ncvxqp1                      12111      0.098      0.065    0.67    5.9e-16    1.5e-16     33    243
+GHS_indef/ncvxqp3                      75000      2.295      1.450    0.63    1.5e-13    3.3e-14    251   1442
+GHS_indef/ncvxqp5                      62500      0.888      0.563    0.63    1.2e-15    2.4e-16    219   1342
+GHS_indef/ncvxqp7                      87500      3.202      2.350    0.73    8.7e-14    4.9e-14    277   1651
+GHS_indef/stokes128                    49666      0.069      0.073    1.07    9.8e-19    2.2e-18     46   1452
+GHS_indef/turon_m                     189924      0.298      0.312    1.05    1.1e-18    2.7e-18    214   4970
+AMD/G3_circuit                       1585478      2.273      3.738    1.64    2.7e-19    3.0e-19   1582  48225
+Schenk_AFE/af_0_k101                  503625      2.109      2.173    1.03    3.5e-19    3.3e-19   1172  11569
+Schenk_AFE/af_shell7                  504855      1.889      1.999    1.06    3.2e-19    3.3e-19   1209  11639
+GHS_psdef/apache2                     715176      4.926      5.182    1.05    1.7e-19    2.0e-19   1736  20965
+GHS_psdef/bmwcra_1                    148770      1.675      1.590    0.95    6.4e-19    6.0e-19    368    962
+Oberwolfach/boneS01                   127224      1.151      1.091    0.95    6.9e-19    6.7e-19    451   3446
+Rothberg/cfd2                         123440      0.896      0.853    0.95    5.7e-19    5.5e-19    539   3359
+GHS_psdef/crankseg_1                   52804      0.913      0.839    0.92    1.7e-17    2.6e-17     56    145
+GHS_psdef/crankseg_2                   63838      1.274      1.170    0.92    3.6e-18    1.0e-17     58    143
+GHS_psdef/inline_1                    503712      4.070      4.527    1.11    6.1e-19    4.2e-19   2059   6888
+GHS_psdef/ldoor                       952203      2.655      3.429    1.29    4.4e-19    3.8e-19   1654  23174
+ND/nd12k                               36000     12.928     11.652    0.90    2.9e-18    1.6e-18      0      0
+ND/nd6k                                18000      3.039      2.759    0.91    3.9e-18    2.2e-18      0      0
+Um/offshore                           259789      2.335      2.174    0.93    9.0e-19    7.2e-19   1065   5591
+DNVS/ship_003                         121728      2.311      2.060    0.89    5.3e-19    5.3e-19    461   1584
+DNVS/shipsec1                         140874      1.079      1.067    0.99    7.7e-19    7.4e-19    679   3480
+DNVS/shipsec5                         179860      1.902      1.614    0.85    6.3e-19    5.9e-19    859   5009
+DNVS/shipsec8                         114919      1.302      1.000    0.77    9.3e-19    8.2e-19    496   2586
+DNVS/thread                            29736      3.477      1.538    0.44    1.7e-18    1.4e-18     21     78
+
+65/65 completed successfully
+```
+
+### Key Results vs 9.1e Baseline
+
+**Simplicial matrices (target workload):**
+
+| Matrix      | 9.1e ratio | 9.1f ratio | Improvement |
+|-------------|-----------|-----------|-------------|
+| bloweybq    | 2.17×     | 1.45×     | 33% faster  |
+| dixmaanl    | 2.76×     | 1.74×     | 37% faster  |
+| linverse    | 2.57×     | 1.70×     | 34% faster  |
+| spmsrtls    | 2.61×     | 1.81×     | 31% faster  |
+| rail_79841  | 2.34×     | 1.85×     | 21% faster  |
+| mario001    | —         | 1.90×     | —           |
+
+**Non-simplicial (regression check):** No regressions. Bulk FEM matrices unchanged
+(0.77×–1.29×). c-71 2.16×, c-big 2.31× — unchanged (not in small-leaf path).
+
+**Overall:** 65/65 pass, median ~0.98×, 33/65 beat SPRAL.
+
+### Profiling Analysis (G3_circuit, 1.64× SPRAL)
+
+G3_circuit has 50,555 supernodes with 48,225 (95%) in small-leaf subtrees. Profile:
+
+| Sub-phase    | Time (ms) | % of factor |
+|--------------|-----------|-------------|
+| Kernel       | 850       | 22.0%       |
+| ContribGEMM  | 852       | 22.1%       |
+| Extend-add   | 283       | 7.3%        |
+| Scatter      | 88        | 2.3%        |
+| Extraction   | 89        | 2.3%        |
+| Zeroing      | 31        | 0.8%        |
+| G2L setup    | 4         | 0.1%        |
+| **Other**    | **1665**  | **43.1%**   |
+
+The 1665ms "Other" is uninstrumented per-node preamble/postscript (frontal row
+indices construction, g2l reset, FrontFactors allocation) across 48K nodes at
+~34μs each. This overhead is cache-miss dominated (g2l array is 12MB for n=1.5M),
+not allocation-dominated — an arena allocator would save only ~29ms (<1%).
+
+**Remaining gap analysis:** The simplicial matrix gap (1.4–1.9× SPRAL) and
+G3_circuit gap (1.64×) are structural. Further improvement requires SPRAL's
+contiguous-subtree-L-buffer architecture (per-node factor storage eliminating
+extraction, zeroing, and g2l rebuild). This is Phase 9.1g scope — a larger
+refactor touching the solve path.
+
+### Algorithm References
+
+- Hogg, Duff & Lopez (2020), §5 — SmallLeafNumericSubtree architecture
+- SPRAL `SmallLeafNumericSubtree.hxx:38-220` — sequential small-leaf factorization
+- SPRAL `ldlt_tpp.cxx:44-243` — rectangular TPP kernel (`ldlt_tpp_factor`)
+- `/workspace/rivrs-linalg/references/ssids/duff2020.md` — two-tier allocator design
+
+---
+
 ## Phase 9.1e: Direct GEMM into Contribution Buffer
 
 **Status**: Complete

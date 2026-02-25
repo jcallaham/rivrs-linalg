@@ -1559,3 +1559,280 @@ fn test_nemin_1_bitwise_identical() {
         be_default
     );
 }
+
+// ---------------------------------------------------------------------------
+// Small-leaf fast-path tests (T015–T019)
+// ---------------------------------------------------------------------------
+
+/// T015: Small chain matrix with fast path active.
+#[test]
+fn test_fast_path_small_chain() {
+    // Arrow matrix: dense column structure produces small supernodes
+    let n = 20;
+    let mut entries = Vec::new();
+    for i in 0..n {
+        // Diagonal: alternating sign for indefiniteness
+        entries.push((i, i, if i % 2 == 0 { 4.0 } else { -3.0 }));
+    }
+    // Tridiagonal coupling
+    for i in 1..n {
+        entries.push((i, i - 1, 0.5));
+    }
+    let matrix = sparse_from_lower_triplets(n, &entries);
+
+    let x_vec: Vec<f64> = (0..n).map(|i| (i % 5) as f64 - 2.0).collect();
+    let b_vec = sparse_matvec(&matrix, &x_vec);
+    let b = Col::from_fn(n, |i| b_vec[i]);
+
+    // Factor with fast path enabled (default threshold=256)
+    let opts = SolverOptions {
+        ordering: OrderingStrategy::Metis,
+        ..SolverOptions::default()
+    };
+    let x = SparseLDLT::solve_full(&matrix, &b, &opts).expect("solve_full");
+    let be = sparse_backward_error(&matrix, &x, &b);
+    assert!(
+        be < 5e-11,
+        "fast path small chain: backward error {:.2e} >= 5e-11",
+        be
+    );
+}
+
+/// T016: Compare fast path vs disabled — both must be correct.
+#[test]
+fn test_fast_path_matches_general() {
+    let n = 30;
+    let mut entries = Vec::new();
+    for i in 0..n {
+        entries.push((i, i, if i % 2 == 0 { 5.0 } else { -4.0 }));
+    }
+    for i in 1..n {
+        entries.push((i, i - 1, 1.0));
+    }
+    // A few longer-range entries for structure
+    for i in 3..n {
+        entries.push((i, i - 3, 0.2));
+    }
+    let matrix = sparse_from_lower_triplets(n, &entries);
+
+    let x_vec: Vec<f64> = (0..n).map(|i| ((i % 7) as f64 - 3.0) / 3.0).collect();
+    let b_vec = sparse_matvec(&matrix, &x_vec);
+    let b = Col::from_fn(n, |i| b_vec[i]);
+
+    // With fast path (default threshold=256)
+    let opts_enabled = SolverOptions {
+        ordering: OrderingStrategy::Metis,
+        small_leaf_threshold: 256,
+        ..SolverOptions::default()
+    };
+    let x_enabled = SparseLDLT::solve_full(&matrix, &b, &opts_enabled).expect("solve (enabled)");
+    let be_enabled = sparse_backward_error(&matrix, &x_enabled, &b);
+
+    // Without fast path (threshold=0)
+    let opts_disabled = SolverOptions {
+        ordering: OrderingStrategy::Metis,
+        small_leaf_threshold: 0,
+        ..SolverOptions::default()
+    };
+    let x_disabled = SparseLDLT::solve_full(&matrix, &b, &opts_disabled).expect("solve (disabled)");
+    let be_disabled = sparse_backward_error(&matrix, &x_disabled, &b);
+
+    assert!(
+        be_enabled < 5e-11,
+        "fast path enabled: backward error {:.2e}",
+        be_enabled
+    );
+    assert!(
+        be_disabled < 5e-11,
+        "fast path disabled: backward error {:.2e}",
+        be_disabled
+    );
+}
+
+/// T017: Matrix that forces delayed pivots in a small-leaf subtree.
+#[test]
+fn test_fast_path_delayed_pivots() {
+    // Matrix with zero diagonal entries to force 2x2 pivots / delays
+    let n = 15;
+    let mut entries = Vec::new();
+    for i in 0..n {
+        // Some zero diagonals to force pivoting issues
+        let diag = if i % 3 == 0 {
+            0.0
+        } else {
+            3.0 * if i % 2 == 0 { 1.0 } else { -1.0 }
+        };
+        entries.push((i, i, diag));
+    }
+    // Off-diagonal structure
+    for i in 1..n {
+        entries.push((i, i - 1, 2.0));
+    }
+    for i in 2..n {
+        entries.push((i, i - 2, 0.3));
+    }
+    let matrix = sparse_from_lower_triplets(n, &entries);
+
+    let x_vec: Vec<f64> = (0..n).map(|i| i as f64 + 1.0).collect();
+    let b_vec = sparse_matvec(&matrix, &x_vec);
+    let b = Col::from_fn(n, |i| b_vec[i]);
+
+    let opts = SolverOptions {
+        ordering: OrderingStrategy::Metis,
+        small_leaf_threshold: 256,
+        ..SolverOptions::default()
+    };
+    let x = SparseLDLT::solve_full(&matrix, &b, &opts).expect("solve_full");
+    let be = sparse_backward_error(&matrix, &x, &b);
+    assert!(
+        be < 5e-11,
+        "fast path delayed pivots: backward error {:.2e} >= 5e-11",
+        be
+    );
+}
+
+/// T018: Mixed tree — small subtree contribution feeds into large supernode.
+#[test]
+fn test_fast_path_contribution_boundary() {
+    // Build a matrix with both small and large supernodes.
+    // Dense lower-right block creates a large supernode, sparse structure
+    // around it creates small ones.
+    let n = 50;
+    let mut entries = Vec::new();
+    // Dense block in rows/cols 40..50 (creates a large front)
+    for i in 40..n {
+        for j in 40..=i {
+            let val = if i == j { 10.0 } else { 0.5 };
+            entries.push((i, j, val));
+        }
+    }
+    // Sparse tridiagonal structure in rows/cols 0..40 (creates small supernodes)
+    for i in 0..40 {
+        entries.push((i, i, if i % 2 == 0 { 5.0 } else { -4.0 }));
+    }
+    for i in 1..40 {
+        entries.push((i, i - 1, 0.8));
+    }
+    // Connect the sparse part to the dense part
+    for i in 35..40 {
+        entries.push((40, i, 0.3));
+    }
+    let matrix = sparse_from_lower_triplets(n, &entries);
+
+    let x_vec: Vec<f64> = (0..n).map(|i| ((i % 7) as f64 - 3.0) / 3.0).collect();
+    let b_vec = sparse_matvec(&matrix, &x_vec);
+    let b = Col::from_fn(n, |i| b_vec[i]);
+
+    let opts = SolverOptions {
+        ordering: OrderingStrategy::Metis,
+        small_leaf_threshold: 256,
+        ..SolverOptions::default()
+    };
+    let x = SparseLDLT::solve_full(&matrix, &b, &opts).expect("solve_full");
+    let be = sparse_backward_error(&matrix, &x, &b);
+    assert!(
+        be < 5e-11,
+        "fast path contribution boundary: backward error {:.2e} >= 5e-11",
+        be
+    );
+}
+
+/// T018b: MC64 scaling with fast path — validate FR-009 (identical scaling in both paths).
+#[test]
+fn test_fast_path_mc64_scaling() {
+    use rivrs_sparse::io::registry;
+
+    // Use a hard-indefinite CI-subset matrix that requires MC64 scaling
+    let meta = registry::load_registry()
+        .expect("load registry")
+        .into_iter()
+        .find(|m| m.ci_subset && m.category == "hard-indefinite")
+        .expect("need at least one hard-indefinite CI matrix");
+
+    let test = registry::load_test_matrix(&meta.name)
+        .unwrap_or_else(|e| panic!("load '{}': {}", meta.name, e))
+        .unwrap_or_else(|| panic!("matrix '{}' not found", meta.name));
+
+    let a = &test.matrix;
+    let n = a.nrows();
+    let x_vec: Vec<f64> = (0..n).map(|i| ((i % 7) as f64 - 3.0) / 3.0).collect();
+    let b_vec = sparse_matvec(a, &x_vec);
+    let b = Col::from_fn(n, |i| b_vec[i]);
+
+    // With fast path + MC64
+    let opts_enabled = SolverOptions {
+        ordering: OrderingStrategy::MatchOrderMetis,
+        small_leaf_threshold: 256,
+        ..SolverOptions::default()
+    };
+    let x_enabled = SparseLDLT::solve_full(a, &b, &opts_enabled).expect("solve (enabled)");
+    let be_enabled = sparse_backward_error(a, &x_enabled, &b);
+
+    // Without fast path + MC64
+    let opts_disabled = SolverOptions {
+        ordering: OrderingStrategy::MatchOrderMetis,
+        small_leaf_threshold: 0,
+        ..SolverOptions::default()
+    };
+    let x_disabled = SparseLDLT::solve_full(a, &b, &opts_disabled).expect("solve (disabled)");
+    let be_disabled = sparse_backward_error(a, &x_disabled, &b);
+
+    assert!(
+        be_enabled < 5e-11,
+        "'{}' fast path+MC64: backward error {:.2e}",
+        meta.name,
+        be_enabled
+    );
+    assert!(
+        be_disabled < 5e-11,
+        "'{}' general+MC64: backward error {:.2e}",
+        meta.name,
+        be_disabled
+    );
+}
+
+/// T019: CI-subset SuiteSparse matrices with fast path enabled.
+#[test]
+fn test_fast_path_suitesparse_ci() {
+    use rivrs_sparse::io::registry;
+
+    let all_matrices = registry::load_registry().expect("load registry");
+    let ci_matrices: Vec<_> = all_matrices.iter().filter(|m| m.ci_subset).collect();
+
+    assert!(
+        !ci_matrices.is_empty(),
+        "CI matrix subset should not be empty"
+    );
+
+    for meta in &ci_matrices {
+        let test = registry::load_test_matrix(&meta.name)
+            .unwrap_or_else(|e| panic!("load '{}': {}", meta.name, e))
+            .unwrap_or_else(|| panic!("matrix '{}' not found", meta.name));
+
+        let a = &test.matrix;
+        let n = a.nrows();
+        let x_vec: Vec<f64> = (0..n).map(|i| ((i % 7) as f64 - 3.0) / 3.0).collect();
+        let b_vec = sparse_matvec(a, &x_vec);
+        let b = Col::from_fn(n, |i| b_vec[i]);
+
+        let ordering = if meta.category == "hard-indefinite" {
+            OrderingStrategy::MatchOrderMetis
+        } else {
+            OrderingStrategy::Metis
+        };
+        let opts = SolverOptions {
+            ordering,
+            small_leaf_threshold: 256,
+            ..SolverOptions::default()
+        };
+        let x = SparseLDLT::solve_full(a, &b, &opts)
+            .unwrap_or_else(|e| panic!("solve '{}': {}", meta.name, e));
+        let be = sparse_backward_error(a, &x, &b);
+        assert!(
+            be < 5e-11,
+            "fast path '{}': backward error {:.2e} >= 5e-11",
+            meta.name,
+            be
+        );
+    }
+}
