@@ -47,13 +47,13 @@
 
 ### Implementation for User Story 1
 
-- [ ] T009 [US1] Catalog all SPRAL `ldlt_app.cxx` test scenarios (48 deterministic in categories A–H + 2 torture suites) in `docs/spral-test-audit.md` — for each scenario: test name, what it tests, matrix size, key assertions, perturbation used. Reference `research.md` Decision 1 and `/opt/references/spral/tests/ssids/kernels/ldlt_app.cxx`.
-- [ ] T010 [US1] Catalog all SPRAL `ldlt_tpp.cxx` test scenarios (23 deterministic in categories A–D + 2 torture suites) in `docs/spral-test-audit.md` — same format as T009. Reference `/opt/references/spral/tests/ssids/kernels/ldlt_tpp.cxx`.
-- [ ] T011 [US1] Map each SPRAL scenario to rivrs-sparse coverage in `docs/spral-test-audit.md` — for each SPRAL test: status (Covered / N/A / Gap), rivrs-sparse test name or N/A rationale. Use `research.md` SPRAL-to-rivrs Architecture Mapping table. Note: `app_aggressive` maps to N/A (not implemented in rivrs).
-- [ ] T012 [US1] Evaluate each existing rivrs-sparse test for independent value in `docs/spral-test-audit.md` — for each of the ~524 tests: status (Retain / Remove), brief rationale. Apply pruning criteria from `research.md` Decision 6. Tests covering meaningful scenarios not in SPRAL are explicitly retained.
-- [ ] T013 [US1] Fill identified gaps: for each Gap entry in the SPRAL mapping, add a new test to the appropriate test file (e.g., `src/aptp/factor.rs` for kernel-level gaps, `tests/` for integration gaps). Update audit document to reflect gaps filled.
-- [ ] T014 [US1] Remove or consolidate tests marked Remove in T012. For each removal: verify a neighboring test provides equivalent or broader coverage. Run `cargo test` after each batch of removals to ensure no regression.
-- [ ] T015 [US1] Run full validation: `cargo test` (all non-ignored pass), `cargo test -- --ignored --test-threads=1` (SuiteSparse 65/65 pass), `cargo clippy --all-targets`. Update audit document with final test count and summary.
+- [X] T009 [US1] Catalog all SPRAL `ldlt_app.cxx` test scenarios (48 deterministic in categories A–H + 2 torture suites) in `docs/spral-test-audit.md` — for each scenario: test name, what it tests, matrix size, key assertions, perturbation used. Reference `research.md` Decision 1 and `/opt/references/spral/tests/ssids/kernels/ldlt_app.cxx`.
+- [X] T010 [US1] Catalog all SPRAL `ldlt_tpp.cxx` test scenarios (23 deterministic in categories A–D + 2 torture suites) in `docs/spral-test-audit.md` — same format as T009. Reference `/opt/references/spral/tests/ssids/kernels/ldlt_tpp.cxx`.
+- [X] T011 [US1] Map each SPRAL scenario to rivrs-sparse coverage in `docs/spral-test-audit.md` — for each SPRAL test: status (Covered / N/A / Gap), rivrs-sparse test name or N/A rationale. Use `research.md` SPRAL-to-rivrs Architecture Mapping table. Note: `app_aggressive` maps to N/A (not implemented in rivrs).
+- [X] T012 [US1] Evaluate each existing rivrs-sparse test for independent value in `docs/spral-test-audit.md` — for each of the ~524 tests: status (Retain / Remove), brief rationale. Apply pruning criteria from `research.md` Decision 6. Tests covering meaningful scenarios not in SPRAL are explicitly retained.
+- [X] T013 [US1] Fill identified gaps: for each Gap entry in the SPRAL mapping, add a new test to the appropriate test file (e.g., `src/aptp/factor.rs` for kernel-level gaps, `tests/` for integration gaps). Update audit document to reflect gaps filled.
+- [X] T014 [US1] Remove or consolidate tests marked Remove in T012. For each removal: verify a neighboring test provides equivalent or broader coverage. Run `cargo test` after each batch of removals to ensure no regression.
+- [X] T015 [US1] Run full validation: `cargo test` (all non-ignored pass), `cargo test -- --ignored --test-threads=1` (SuiteSparse 65/65 pass), `cargo clippy --all-targets`. Update audit document with final test count and summary.
 
 **Checkpoint**: Audit document complete, test suite pruned, all tests pass. US1 independently verifiable.
 
