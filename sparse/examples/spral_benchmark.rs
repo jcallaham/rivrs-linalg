@@ -92,6 +92,8 @@ struct RivrsResult {
     num_delayed: usize,
     num_2x2: usize,
     max_front_size: usize,
+    small_leaf_subtrees: usize,
+    small_leaf_nodes: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -522,6 +524,8 @@ fn run_rivrs_solver(matrix: &SparseColMat<usize, f64>, name: &str) -> Result<Riv
         num_delayed: stats.total_delayed,
         num_2x2: stats.total_2x2_pivots,
         max_front_size: stats.max_front_size,
+        small_leaf_subtrees: stats.small_leaf_subtrees,
+        small_leaf_nodes: stats.small_leaf_nodes,
     })
 }
 
@@ -559,10 +563,10 @@ fn print_comparison_header(threads: Option<usize>) {
         .unwrap_or_else(|| "threads=default".to_string());
     eprintln!("\n=== Comparison: SPRAL vs rivrs ({thread_str}) ===");
     eprintln!(
-        "{:<35} {:>8} {:>10} {:>10} {:>7} {:>10} {:>10}",
-        "Matrix", "n", "spral_fac", "rivrs_fac", "ratio", "spral_be", "rivrs_be"
+        "{:<35} {:>8} {:>10} {:>10} {:>7} {:>10} {:>10} {:>6} {:>6}",
+        "Matrix", "n", "spral_fac", "rivrs_fac", "ratio", "spral_be", "rivrs_be", "sl_st", "sl_nd"
     );
-    eprintln!("{}", "-".repeat(100));
+    eprintln!("{}", "-".repeat(114));
 }
 
 fn print_comparison_row(rec: &ComparisonRecord) {
@@ -571,19 +575,19 @@ fn print_comparison_row(rec: &ComparisonRecord) {
         .as_ref()
         .map(|s| (s.factor_s, s.backward_error))
         .unwrap_or((f64::NAN, f64::NAN));
-    let (rivrs_fac, rivrs_be) = rec
+    let (rivrs_fac, rivrs_be, sl_st, sl_nd) = rec
         .rivrs
         .as_ref()
-        .map(|r| (r.factor_s, r.backward_error))
-        .unwrap_or((f64::NAN, f64::NAN));
+        .map(|r| (r.factor_s, r.backward_error, r.small_leaf_subtrees, r.small_leaf_nodes))
+        .unwrap_or((f64::NAN, f64::NAN, 0, 0));
     let ratio = if spral_fac > 0.0 {
         rivrs_fac / spral_fac
     } else {
         f64::NAN
     };
     eprintln!(
-        "{:<35} {:>8} {:>10.3} {:>10.3} {:>7.2} {:>10.1e} {:>10.1e}",
-        rec.matrix_name, rec.n, spral_fac, rivrs_fac, ratio, spral_be, rivrs_be
+        "{:<35} {:>8} {:>10.3} {:>10.3} {:>7.2} {:>10.1e} {:>10.1e} {:>6} {:>6}",
+        rec.matrix_name, rec.n, spral_fac, rivrs_fac, ratio, spral_be, rivrs_be, sl_st, sl_nd
     );
 }
 

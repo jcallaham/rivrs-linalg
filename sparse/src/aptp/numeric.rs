@@ -705,6 +705,10 @@ pub struct FactorizationStats {
     /// Sum of deferred contribution GEMM times across all supernodes.
     #[cfg(feature = "diagnostic")]
     pub total_contrib_gemm_time: std::time::Duration,
+    /// Number of small-leaf subtrees identified by classification.
+    pub small_leaf_subtrees: usize,
+    /// Number of supernodes processed via the small-leaf fast path.
+    pub small_leaf_nodes: usize,
 }
 
 /// Assembled frontal matrix exported for diagnostic comparison.
@@ -945,6 +949,8 @@ impl AptpNumeric {
             total_extract_contrib_time: std::time::Duration::ZERO,
             #[cfg(feature = "diagnostic")]
             total_contrib_gemm_time: std::time::Duration::ZERO,
+            small_leaf_subtrees: small_leaf_subtrees.len(),
+            small_leaf_nodes: small_leaf_subtrees.iter().map(|s| s.nodes.len()).sum(),
         };
         for sn_stat in &per_sn_stats {
             stats.total_1x1_pivots += sn_stat.num_1x1;

@@ -48,6 +48,16 @@ within the subtree avoids parallel dispatch overhead and maintains cache localit
 - Baseline comparison for simplicial matrices (dixmaanl, bloweybq, mario001)
 - Performance validation: simplicial matrices should be ≤1.5× SPRAL
 
+
+### Performance Benchmarks
+
+```bash
+cargo run --example spral_benchmark --release -- --threads 1 --rivrs
+```
+
+```
+```
+
 ---
 
 ## Phase 9.1e: Direct GEMM into Contribution Buffer
