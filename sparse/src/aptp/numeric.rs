@@ -2141,7 +2141,7 @@ fn factor_tree_levelset(
 ///
 /// `info[s].parent.map_or(true, |p| p > s)` for all `s` (postorder).
 #[allow(clippy::single_range_in_vec_init)]
-pub(crate) fn build_supernode_info(symbolic: &AptpSymbolic) -> Vec<SupernodeInfo> {
+fn build_supernode_info(symbolic: &AptpSymbolic) -> Vec<SupernodeInfo> {
     match symbolic.raw() {
         SymbolicCholeskyRaw::Supernodal(sn) => {
             let ns = sn.n_supernodes();
@@ -2201,7 +2201,7 @@ pub(crate) fn build_supernode_info(symbolic: &AptpSymbolic) -> Vec<SupernodeInfo
 }
 
 /// Build a map from each supernode to its children in the assembly tree.
-pub(crate) fn build_children_map(infos: &[SupernodeInfo]) -> Vec<Vec<usize>> {
+fn build_children_map(infos: &[SupernodeInfo]) -> Vec<Vec<usize>> {
     let n = infos.len();
     let mut children = vec![Vec::new(); n];
     for (s, info) in infos.iter().enumerate() {
@@ -2240,7 +2240,7 @@ pub(crate) fn build_children_map(infos: &[SupernodeInfo]) -> Vec<Vec<usize>> {
 ///
 /// - SPRAL `SymbolicSubtree.hxx:57-84` (BSD-3): bottom-up classification
 /// - Duff, Hogg & Lopez (2020), Algorithm 6.1: find_subtree_partition
-pub(crate) fn classify_small_leaf_subtrees(
+fn classify_small_leaf_subtrees(
     supernodes: &mut [SupernodeInfo],
     children_map: &[Vec<usize>],
     threshold: usize,

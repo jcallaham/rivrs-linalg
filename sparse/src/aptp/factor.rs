@@ -2804,7 +2804,7 @@ fn tpp_find_rc_abs_max_exclude(
 ///
 /// `ldlt_tpp_factor(m, n, perm, lcol, ldl, d, ld, ...)` in
 /// `spral/src/ssids/cpu/kernels/ldlt_tpp.cxx` (BSD-3-Clause).
-pub(crate) fn tpp_factor_rect(
+pub(super) fn tpp_factor_rect(
     mut a: MatMut<'_, f64>,
     num_fully_summed: usize,
     options: &AptpOptions,
@@ -3008,7 +3008,7 @@ pub(crate) fn tpp_factor_rect(
 /// - `ld_workspace`: Reusable W = L·D buffer.
 /// - `par`: Parallelism control.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn compute_contribution_gemm_rect(
+pub(super) fn compute_contribution_gemm_rect(
     l_storage: &Mat<f64>,
     num_fully_summed: usize,
     num_eliminated: usize,
@@ -3058,7 +3058,7 @@ pub(crate) fn compute_contribution_gemm_rect(
 /// Adapts `extract_front_factors` for the case where the factored data lives
 /// in a rectangular m×k matrix instead of a square m×m frontal matrix.
 /// The L11, D11, L21 extraction logic is identical; only the source layout differs.
-pub(crate) fn extract_front_factors_rect(
+pub(super) fn extract_front_factors_rect(
     l_storage: &Mat<f64>,
     m: usize,
     k: usize,
@@ -3174,7 +3174,7 @@ pub(crate) fn extract_front_factors_rect(
 /// complement is already in `contrib_buffer` (from `compute_contribution_gemm_rect`).
 /// Delayed column data (if any) is read from `l_storage[ne..k, ne..k]` and
 /// `l_storage[k..m, ne..k]`.
-pub(crate) fn extract_contribution_rect(
+pub(super) fn extract_contribution_rect(
     l_storage: &Mat<f64>,
     m: usize,
     k: usize,
