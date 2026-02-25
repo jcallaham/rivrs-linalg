@@ -405,14 +405,14 @@ unit tests of the symbolic analysis and factorization kernel on small matrices.
 - Phase 9.1f: Small leaf subtree fast path — Classify leaf subtrees where all fronts < 256, factor via pre-pass with dedicated small workspace (≤512KB). `classify_small_leaf_subtrees()` + pre-pass in `factor_tree_levelset()`. `FactorOptions::small_leaf_threshold` (default 256, 0 = disabled). 12 new tests. Files: `src/aptp/numeric.rs` (classification, pre-pass), `src/aptp/solver.rs` (threshold config), `src/aptp/factor.rs` (AptpOptions field).
 - Phase 9.1g: Column-oriented extend-add scatter — Rewrote `extend_add_mapped` and `extend_add` to column-oriented iteration (à la SPRAL `asm_col`). Contiguous source reads via `col_as_slice`, 4× unrolled inner loop, `ea_scatter_one` helper. Added `g2l_reset_time` diagnostic. c-71: 2.16×→1.49× SPRAL, c-big: 2.30×→1.37×, dTLB 608M→31M. Instrumentation showed zeroing (8.8%) as biggest remaining non-compute overhead; per-node storage total addressable budget ~9%. 2 new tests + g2l_reset instrumentation. Files: `src/aptp/numeric.rs`, `examples/profile_matrix.rs`, `examples/baseline_collection.rs`.
 
+- Phase 9.2: Robustness — Testing & Hardening — SPRAL test parity audit (41 APP + 25 TPP scenarios mapped, 0 gaps remaining), SPRAL-style torture tests (9 configs × 500 = 4500 factorizations, zero panics, BE < 5e-11), proptest property-based tests (7 properties × 256 cases), adversarial edge-case tests (14 tests: 0×0, NaN, Inf, near-overflow, disconnected, etc., zero panics). No defensive guards needed — solver already handles all edge cases. Test count: 546 pass + 23 ignored. Files: `src/testing/perturbations.rs`, `src/testing/strategies.rs`, `src/aptp/factor.rs` (torture+property tests), `tests/property.rs`, `tests/adversarial.rs`, `docs/spral-test-audit.md`.
+
 **Next:**
-- Phase 9.2: Release preparation (docs, examples, crates.io)
+- Phase 9.3: Release preparation (docs, examples, crates.io)
 
 ## Recent Changes
+- 026-robustness-hardening: Added proptest 1.4 (optional, activated by test-util feature) for property-based testing
 - 025-small-leaf-fastpath: Added Rust 1.87+ (edition 2024) + faer 0.22 (dense LA, CSC), rayon 1.x (parallelism), serde/serde_json (diagnostic export)
 - 024-direct-gemm-contrib: Added Rust 1.87+ (edition 2024) + faer 0.22 (dense LA, CSC, `tri_matmul`, `matmul`), rayon 1.x (parallel tree traversal), serde/serde_json (diagnostic export)
-- 024-direct-gemm-contrib: Added Rust 1.87+ (edition 2024) + faer 0.22 (dense LA, CSC), rayon 1.x (parallel tree traversal), serde/serde_json (diagnostic export)
 
 ## Active Technologies
-- Rust 1.87+ (edition 2024) + faer 0.22 (dense LA, CSC), rayon 1.x (parallelism), serde/serde_json (diagnostic export) (025-small-leaf-fastpath)
-- N/A (in-memory numerical computation) (025-small-leaf-fastpath)

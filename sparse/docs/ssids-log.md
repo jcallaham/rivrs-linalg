@@ -1,5 +1,65 @@
 # SSIDS Development Log
 
+## Phase 9.2: Robustness — Testing & Hardening
+
+**Status**: Complete
+**Branch**: `026-robustness-hardening`
+**Date**: 2026-02-25
+
+### What Was Built
+
+Comprehensive robustness testing and hardening for the SSIDS solver across four
+independently verifiable user stories.
+
+**US1: SPRAL Test Parity Audit** (`docs/spral-test-audit.md`)
+- Cataloged all 41 `ldlt_app.cxx` and 25 `ldlt_tpp.cxx` SPRAL test scenarios
+- Mapped each scenario to rivrs-sparse coverage (26 covered, 8 N/A, 32 gap→filled)
+- Evaluated all 530 existing tests: 0 removals (each covers unique code path)
+- All gaps filled by new torture tests (US2)
+
+**US2: SPRAL-Style Torture Tests** (`src/aptp/factor.rs`)
+- `cause_delays`, `make_singular`, `make_dblk_singular` perturbation helpers
+- `TortureTestConfig` struct with SPRAL-matching 70/20/10 perturbation mix
+- 9 torture test entry points (5 APP, 4 TPP), 500 instances each = 4500 factorizations
+- All pass with zero panics and backward error < 5e-11
+
+**US3: Property-Based Testing** (`src/aptp/factor.rs`, `tests/property.rs`)
+- proptest strategies: `arb_symmetric_pd`, `arb_symmetric_indefinite`, `arb_sparse_symmetric`
+- 4 kernel-level properties (reconstruction, inertia sum, permutation valid, no panics)
+- 3 end-to-end properties (PD backward error, indefinite backward error/clean error, inertia consistency)
+- 256 cases per property, all pass
+
+**US4: Adversarial & Edge-Case Testing** (`tests/adversarial.rs`)
+- 14 adversarial tests: 0×0 empty, 1×1 zero/nonzero, pure diagonal, arrowhead,
+  all-2×2-pivots, exact cancellation, power-of-2 boundaries (32-512),
+  near-overflow (1e150), near-underflow (1e-150), NaN entries, Inf entries,
+  disconnected components
+- All pass with zero panics — no defensive guards needed (solver already handles
+  all edge cases gracefully)
+
+### Test Counts
+
+| Metric | Value |
+|--------|-------|
+| Tests before Phase 9.2 | 530 |
+| Tests after Phase 9.2 | 546 passed + 23 ignored |
+| New torture tests (ignored) | 9 (4500 factorizations) |
+| New property tests | 7 (kernel + end-to-end) |
+| New adversarial tests | 14 |
+| Tests removed | 0 |
+| Panics found | 0 |
+
+### Files Added/Modified
+
+- `src/testing/perturbations.rs` — perturbation helpers + TortureTestConfig + dense generators
+- `src/testing/strategies.rs` — proptest strategies for dense/sparse symmetric matrices
+- `src/testing/mod.rs` — module registration + re-exports
+- `src/aptp/factor.rs` — torture tests + kernel-level property tests (appended to test module)
+- `tests/property.rs` — end-to-end proptest properties
+- `tests/adversarial.rs` — adversarial edge-case tests
+- `docs/spral-test-audit.md` — two-directional SPRAL audit document
+- `Cargo.toml` — proptest as optional dependency (activated by test-util)
+
 ## Phase 9.1g: Column-Oriented Extend-Add Scatter
 
 **Status**: Complete

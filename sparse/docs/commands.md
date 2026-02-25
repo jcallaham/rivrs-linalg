@@ -10,7 +10,9 @@ Can you do a comprehensive review of the examples?  If we're coming up to releas
 %%
 
 - Review codebase & structure
-- Remove dead code or anything hidden besides unnecessary cfg flags
+- Remove dead code or anything hidden behind unnecessary cfg flags
 - Should anything be refactored, renamed, or deduplicated?
 - Remove references in comments to development processes (FR, US, task numbers, etc)
 - HACK, TODO, or FIXME comments
+- Remove comment references to SPRAL unless absolutely necessary.  SPRAL should be referenced for attribution, but the logic in the code should be explained directly with standalone logic, not "this is what SPRAL does".
+- Review benchmarks: what should be changed, removed, or added?
