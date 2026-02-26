@@ -6,7 +6,8 @@
 
 use faer::sparse::linalg::cholesky::SymmetricOrdering;
 
-use rivrs_sparse::aptp::{AptpSymbolic, metis_ordering};
+use rivrs_sparse::ordering::metis_ordering;
+use rivrs_sparse::symmetric::AptpSymbolic;
 use rivrs_sparse::testing::{TestCaseFilter, load_test_cases};
 
 // ---- Hogg et al. (2016) Table III reference nnz(L) values ----

@@ -6,7 +6,7 @@
 
 use faer::sparse::linalg::cholesky::SymmetricOrdering;
 
-use rivrs_sparse::aptp::AptpSymbolic;
+use rivrs_sparse::symmetric::AptpSymbolic;
 use rivrs_sparse::testing::{TestCaseFilter, load_test_cases};
 
 #[test]
@@ -153,7 +153,7 @@ fn test_custom_ordering_on_hand_constructed() {
     // Identity ordering
     let n = case.properties.size;
     let fwd: Vec<usize> = (0..n).collect();
-    let perm = rivrs_sparse::aptp::perm_from_forward(fwd).unwrap();
+    let perm = rivrs_sparse::ordering::perm_from_forward(fwd).unwrap();
     let sym_identity = AptpSymbolic::analyze(
         case.matrix.symbolic(),
         SymmetricOrdering::Custom(perm.as_ref()),

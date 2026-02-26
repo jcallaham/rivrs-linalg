@@ -26,9 +26,9 @@ use std::time::Instant;
 use faer::Col;
 use faer::Par;
 
-use rivrs_sparse::aptp::{AnalyzeOptions, FactorOptions, PerSupernodeStats, SparseLDLT};
 use rivrs_sparse::io::mtx::load_mtx;
 use rivrs_sparse::io::registry;
+use rivrs_sparse::symmetric::{AnalyzeOptions, FactorOptions, PerSupernodeStats, SparseLDLT};
 use rivrs_sparse::validate::sparse_backward_error;
 
 fn main() {

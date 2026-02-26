@@ -3,9 +3,10 @@
 //! Tests that APTP types correctly interoperate with the existing test matrix
 //! infrastructure and produce results consistent with reference factorizations.
 
-use rivrs_sparse::aptp::{Block2x2, MixedDiagonal, perm_from_forward};
 use rivrs_sparse::io::reference::DBlock;
 use rivrs_sparse::io::registry;
+use rivrs_sparse::ordering::perm_from_forward;
+use rivrs_sparse::symmetric::{Block2x2, MixedDiagonal};
 
 /// Helper: convert reference `DBlock` entries into `MixedDiagonal` calls.
 ///

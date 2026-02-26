@@ -43,8 +43,8 @@ use faer::dyn_stack::{MemBuffer, MemStack};
 use faer::sparse::SparseColMat;
 use serde::{Deserialize, Serialize};
 
-use rivrs_sparse::aptp::{AnalyzeOptions, FactorOptions, SparseLDLT};
 use rivrs_sparse::io::registry;
+use rivrs_sparse::symmetric::{AnalyzeOptions, FactorOptions, SparseLDLT};
 use rivrs_sparse::validate::sparse_backward_error;
 
 const DEFAULT_SPRAL_BIN: &str = "/tmp/spral_benchmark";

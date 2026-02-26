@@ -1,71 +1,17 @@
 # Sparse Module Roadmap & Design
 
-**Date**: 2026-02-25
+**Date**: 2026-02-25 (updated 2026-02-26)
 **Status**: Living design document
-**Context**: The `sparse` crate currently contains a single solver (SSIDS-style multifrontal LDL^T with APTP pivoting). This document analyzes what's general-purpose vs algorithm-specific, proposes a restructuring to make room for additional solvers, identifies high-value gaps in the Rust sparse LA ecosystem, and assesses the effort required for future work.
+**Context**: The `sparse` crate contains a symmetric indefinite direct solver (SSIDS-style multifrontal LDL^T with APTP pivoting) and general-purpose ordering infrastructure (METIS, MC64). This document identifies high-value gaps in the Rust sparse LA ecosystem, assesses the effort required for future work, and sketches a longer-term module structure for when additional solvers are added.
 
 ---
 
-## 1. Current Architecture: General vs SSIDS-Specific
+## 1. Current Module Structure & Future Evolution
 
-### Fully general infrastructure (reusable as-is)
+### Current structure (as of Phase 9.3a)
 
-| Module | Description |
-|--------|-------------|
-| `error.rs` | Error types (`SparseError`) |
-| `validate.rs` | `backward_error()`, `sparse_backward_error()`, `validate_permutation()` |
-| `profiling/` | Chrome Trace export, RSS tracking, section timing |
-| `debug/` | Sparsity visualization, elimination tree display |
-| `benchmarking/` | Criterion harness, baseline collection |
-| `testing/` | `SolverTest` trait, `NumericalValidator`, test case loading |
-| `lib.rs` | `SolverPhase` enum, module declarations |
-| `io/registry.rs` | Matrix metadata registry |
-| `aptp/ordering.rs` | METIS nested dissection |
-| `aptp/matching.rs` | MC64 weighted bipartite matching + scaling |
-| `aptp/perm.rs` | Permutation utilities |
-
-### Generic multifrontal machinery (reusable with interface changes)
-
-| Module | What's reusable |
-|--------|-----------------|
-| `aptp/numeric.rs` | `FactorizationWorkspace`, `AssemblyMaps`, extend-add scatter, column-oriented assembly, workspace reuse, small-leaf fast path, tree-level parallelism |
-| `aptp/solve.rs` | Per-supernode gather/scatter/solve traversal pattern |
-| `aptp/symbolic.rs` | `permute_symbolic_upper_triangle()`, faer `SymbolicCholesky` wrapper |
-| `aptp/solver.rs` | Analyze/factor/solve API pattern, ordering dispatch |
-| Amalgamation logic | Supernode merge predicates |
-
-### Inherently APTP / symmetric-indefinite-specific
-
-| Module | Why it's specific |
-|--------|-------------------|
-| `aptp/pivot.rs` | `PivotType` (1x1/2x2/Delayed), `Block2x2` — symmetric Bunch-Kaufman pivots |
-| `aptp/diagonal.rs` | `MixedDiagonal` — D factor with mixed 1x1/2x2 block sizes |
-| `aptp/factor.rs` | Dense APTP kernel, TPP fallback, threshold checking |
-| `aptp/inertia.rs` | Eigenvalue sign counts (symmetric concept) |
-| `io/mtx.rs` | Hardcoded symmetric format |
-| `io/reference.rs` | `DBlock` reference factorization format |
-| `validate.rs` (partial) | `reconstruction_error()` assumes LDL^T structure |
-
----
-
-## 2. Module Naming: `aptp` vs Alternatives
-
-`aptp` is an implementation detail — it tells you *how* the pivoting works, not *what* the solver does. From a user's perspective:
-
-| Name | Pros | Cons |
-|------|------|------|
-| `aptp` | Precise, distinguishes from other LDL^T variants | Implementation detail; users care about "sparse symmetric indefinite solve" |
-| `ldlt` | Describes the factorization | Too narrow if we add LL^T; faer already has LDL^T |
-| `ssids` | Recognizable to SPRAL users | Too specific to one reference implementation |
-| `symmetric` | Describes the matrix class | Correct scope — houses LDL^T, LL^T, Bunch-Kaufman |
-| `direct` | Describes solver class | Too broad — encompasses unsymmetric too |
-| `multifrontal` | Describes algorithm framework | Implementation detail, excludes simplicial |
-
-**Recommendation**: `symmetric` as the public-facing module, with `aptp` becoming an internal submodule. The user-facing type `SparseLDLT` is already well-named regardless of module path.
-
----
-
-## 3. Proposed Module Structure
+The initial restructure extracted `ordering/` as a top-level module and renamed
+`aptp/` to `symmetric/`. This is the current state:
 
 ```
 sparse/src/
@@ -74,30 +20,24 @@ sparse/src/
 ├── validate.rs                 # General
 │
 ├── io/                         # General infrastructure
-│   ├── mtx.rs                  # Generalize: add format param (symmetric/general)
-│   └── registry.rs             # General
+│   ├── mtx.rs                  # MatrixMarket reader (currently symmetric-only)
+│   └── registry.rs             # Test matrix registry
 │
-├── ordering/                   # Extracted from aptp/
-│   ├── metis.rs                # metis_ordering()
-│   ├── matching.rs             # mc64_matching(), match_order_metis()
+├── ordering/                   # General: fill-reducing orderings (solver-independent)
+│   ├── metis.rs                # metis_ordering(), match_order_metis()
+│   ├── matching.rs             # mc64_matching() — weighted bipartite matching & scaling
 │   └── perm.rs                 # perm_from_forward()
 │
-├── multifrontal/               # Generic multifrontal machinery
-│   ├── workspace.rs            # FactorizationWorkspace (parameterized by factor type)
-│   ├── assembly.rs             # AssemblyMaps, extend_add, scatter_original
-│   ├── symbolic.rs             # Symbolic analysis wrapping faer
-│   ├── amalgamation.rs         # Supernode merge
-│   └── tree.rs                 # Tree traversal, parallelism, small-leaf fast path
-│
-├── symmetric/                  # Symmetric solvers (current aptp/)
+├── symmetric/                  # Symmetric indefinite solver (APTP)
 │   ├── solver.rs               # SparseLDLT (public API)
-│   ├── factor.rs               # Multifrontal numeric (AptpNumeric)
+│   ├── factor.rs               # Dense APTP kernel + multifrontal numeric (AptpNumeric)
 │   ├── solve.rs                # Per-supernode solve
-│   ├── aptp/                   # APTP-specific internals
-│   │   ├── kernel.rs           # aptp_factor_in_place, TPP
-│   │   ├── pivot.rs            # PivotType, Block2x2
-│   │   └── diagonal.rs         # MixedDiagonal
-│   └── inertia.rs              # Inertia
+│   ├── symbolic.rs             # AptpSymbolic (wraps faer SymbolicCholesky)
+│   ├── pivot.rs                # PivotType, Block2x2
+│   ├── diagonal.rs             # MixedDiagonal
+│   ├── inertia.rs              # Inertia
+│   ├── numeric.rs              # Multifrontal factorization loop
+│   └── amalgamation.rs         # Supernode merge (internal)
 │
 ├── profiling/                  # General
 ├── debug/                      # General
@@ -105,25 +45,48 @@ sparse/src/
 └── benchmarking/               # General
 ```
 
+### Notional future structure (pending second consumer)
+
+When a second solver is added (e.g., unsymmetric multifrontal LU, iterative
+solvers), the generic multifrontal machinery currently inside `symmetric/` could
+be extracted into its own module. **This extraction should not happen until a
+concrete second consumer exists** — premature extraction risks designing the
+wrong abstractions. See "extract on the second consumer" principle in Section 5.
+
+```
+sparse/src/
+│   ...
+├── multifrontal/               # Generic multifrontal machinery (extract when needed)
+│   ├── workspace.rs            # FactorizationWorkspace (parameterized by factor type)
+│   ├── assembly.rs             # AssemblyMaps, extend_add, scatter_original
+│   ├── symbolic.rs             # Symbolic analysis wrapping faer
+│   ├── amalgamation.rs         # Supernode merge
+│   └── tree.rs                 # Tree traversal, parallelism, small-leaf fast path
+│
+├── symmetric/                  # Thinner: solver + APTP-specific code only
+│   ├── solver.rs               # SparseLDLT (public API)
+│   ├── factor.rs               # Dense APTP kernel
+│   ├── solve.rs                # Per-supernode solve
+│   ├── pivot.rs                # PivotType, Block2x2
+│   ├── diagonal.rs             # MixedDiagonal
+│   └── inertia.rs              # Inertia
+│   ...
+```
+
+The candidate reusable components within `symmetric/` today are:
+
+| Component | What's reusable | Where it lives now |
+|-----------|-----------------|-------------------|
+| `FactorizationWorkspace` | Pre-allocated buffer reuse across supernodes | `numeric.rs` |
+| `AssemblyMaps`, extend-add scatter | Core multifrontal assembly pattern | `numeric.rs` |
+| Tree traversal + parallelism | Postorder traversal, rayon scheduling, small-leaf fast path | `numeric.rs` |
+| Supernode amalgamation | Merge predicates | `amalgamation.rs` |
+| `permute_symbolic_upper_triangle()` | Symbolic analysis helper | `symbolic.rs` |
+| Analyze/factor/solve API pattern | Three-phase pipeline with ordering dispatch | `solver.rs` |
+
 ---
 
-## 4. Phased Migration Strategy
-
-### Short term (before Phase 9.2 release)
-
-Don't restructure yet. The public API type is `SparseLDLT`, which is already the right user-facing name. The `aptp` module path is an internal detail that doesn't leak into the user experience much.
-
-### Medium term (when adding a second solver)
-
-Extract `ordering/` as a sibling module to `aptp/` (or `symmetric/`). MC64 and METIS ordering are the most reusable, highest-value assets — they deserve to be first-class modules, not buried inside a solver-specific directory.
-
-### Longer term (if building unsymmetric multifrontal)
-
-Extract multifrontal assembly machinery (workspace, assembly maps, tree traversal, extend-add) into a generic `multifrontal/` module parameterized by factor type. This is where the real architectural payoff would be, but it's premature to design that interface without a concrete second consumer.
-
----
-
-## 5. Gaps: High-Value Functionality Beyond faer
+## 2. Gaps: High-Value Functionality Beyond faer
 
 ### What faer 0.22 provides in sparse
 
@@ -159,7 +122,7 @@ Extract multifrontal assembly machinery (workspace, assembly maps, tree traversa
 
 ---
 
-## 6. Unsymmetric Multifrontal (MUMPS-style) Reuse Assessment
+## 3. Unsymmetric Multifrontal (MUMPS-style) Reuse Assessment
 
 If we were to add an unsymmetric multifrontal LU solver:
 
@@ -188,7 +151,7 @@ If we were to add an unsymmetric multifrontal LU solver:
 
 ---
 
-## 7. Strategic Recommendations
+## 4. Strategic Recommendations
 
 ### Highest-impact next solvers
 
@@ -200,11 +163,11 @@ If we were to add an unsymmetric multifrontal LU solver:
 
 ### Principle: extract on the second consumer
 
-Don't prematurely generalize. Extract shared modules (`ordering/`, `multifrontal/`) when there's a concrete second consumer that exercises the interface. The current flat `aptp/` structure is fine for a single solver — premature extraction risks designing the wrong abstractions.
+Don't prematurely generalize. The `ordering/` module has been extracted (Phase 9.3a) because it's clearly solver-independent. The `multifrontal/` machinery should be extracted when there's a concrete second consumer (e.g., unsymmetric LU) that exercises the interface — premature extraction risks designing the wrong abstractions.
 
 ---
 
-## 8. Shared-Memory vs Distributed-Memory Parallelism
+## 5. Shared-Memory vs Distributed-Memory Parallelism
 
 ### Summary
 
@@ -277,7 +240,7 @@ The pattern: **distributed memory is compelling primarily when a single problem 
 
 ---
 
-## 9. Release Readiness Assessment
+## 6. Release Readiness Assessment
 
 ### Performance vs SPRAL
 
@@ -341,7 +304,7 @@ The solver is production-ready. Performance is at parity with SPRAL, the API is 
 
 ---
 
-## 10. Difficulty Assessment: Roadmap Items
+## 7. Difficulty Assessment: Roadmap Items
 
 The SSIDS multifrontal solver (Phases 0-9) was by far the hardest piece. The remaining roadmap items are well-trodden algorithms with mature literature and clear pseudocode.
 
@@ -387,7 +350,7 @@ faer's sparse LU and QR could be wrapped with our ordering infrastructure (METIS
 
 ---
 
-## 11. Case Study: AMR Euler Solver (Cart3D-style)
+## 8. Case Study: AMR Euler Solver (Cart3D-style)
 
 To ground the roadmap in a concrete application, consider building an AMR-based compressible Euler solver similar to NASA's Cart3D. What sparse LA would it need?
 
@@ -404,7 +367,7 @@ At each pseudo-time step, solve `J * δu = -R(u)` where J is the flux Jacobian:
 | Sparse matvec | GMRES inner loop | faer `sparse_dense_matmul` |
 | GMRES or BiCGStab | Outer Krylov solver | Build (straightforward) |
 | ILU(0) preconditioner | Convergence acceleration | Build (moderate) |
-| Block-sparse storage | 5x5 blocks per cell (ρ, ρu, ρv, ρw, E) | Build (see Section 12) |
+| Block-sparse storage | 5x5 blocks per cell (ρ, ρu, ρv, ρw, E) | Build (see Section 9) |
 
 What it does NOT need:
 - Direct solver for the global system (too expensive for 3D CFD)
@@ -413,7 +376,7 @@ What it does NOT need:
 
 ### Where our direct solver helps
 
-As a **coarse-grid solver in a multigrid preconditioner**. AMR gives a natural grid hierarchy — the coarsest level is small enough for a direct solve, and that direct solve is the most expensive part of the multigrid V-cycle. This is exactly the "solver as component" story from Section 8.
+As a **coarse-grid solver in a multigrid preconditioner**. AMR gives a natural grid hierarchy — the coarsest level is small enough for a direct solve, and that direct solve is the most expensive part of the multigrid V-cycle. This is exactly the "solver as component" story from Section 5.
 
 ### Adjoint solve for mesh adaptation
 
@@ -421,7 +384,7 @@ Cart3D uses adjoint-based error estimation: solve `J^T * λ = -∂f/∂u`. The s
 
 ### The real bottleneck: block-sparse storage
 
-For CFD with 5 conserved variables per cell, the Jacobian has 5x5 dense blocks at each nonzero position. Scalar CSC/CSR treats these as 25 separate entries with 25 index lookups. Block-sparse CSR stores blocks contiguously, giving 3-5x faster SpMV. This is the most important missing infrastructure piece for this class of application — more so than any solver algorithm. See Section 12 for the full format analysis.
+For CFD with 5 conserved variables per cell, the Jacobian has 5x5 dense blocks at each nonzero position. Scalar CSC/CSR treats these as 25 separate entries with 25 index lookups. Block-sparse CSR stores blocks contiguously, giving 3-5x faster SpMV. This is the most important missing infrastructure piece for this class of application — more so than any solver algorithm. See Section 9 for the full format analysis.
 
 ### Summary
 
@@ -429,7 +392,7 @@ The sparse LA needs for a Cart3D-like solver are modest: GMRES + ILU + block-spa
 
 ---
 
-## 12. Sparse Matrix Storage Formats
+## 9. Sparse Matrix Storage Formats
 
 ### CSC vs CSR: not just convention
 

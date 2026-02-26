@@ -15,9 +15,10 @@
 use faer::sparse::linalg::cholesky::SymmetricOrdering;
 use faer::sparse::{SparseColMat, Triplet};
 
-use rivrs_sparse::aptp::{
-    AptpSymbolic, MatchOrderResult, Mc64Job, match_order_metis, mc64_matching, metis_ordering,
+use rivrs_sparse::ordering::{
+    MatchOrderResult, Mc64Job, match_order_metis, mc64_matching, metis_ordering,
 };
+use rivrs_sparse::symmetric::AptpSymbolic;
 use rivrs_sparse::testing::{TestCaseFilter, load_test_cases};
 
 /// Helper: create a symmetric upper-triangular matrix from entries.
@@ -511,8 +512,8 @@ fn test_match_order_condensation_ratio() {
 //
 //   cargo test --release --test match_order test_match_order_full_suitesparse -- --ignored --test-threads=1
 
-use rivrs_sparse::aptp::matching::count_cycles;
 use rivrs_sparse::io::registry;
+use rivrs_sparse::ordering::matching::count_cycles;
 
 /// Minimum number of SuiteSparse matrices to consider the full collection present.
 const MIN_FULL_COLLECTION_SIZE: usize = 20;

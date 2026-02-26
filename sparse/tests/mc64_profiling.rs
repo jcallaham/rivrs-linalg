@@ -6,9 +6,9 @@
 
 use std::time::Instant;
 
-use rivrs_sparse::aptp::{Mc64Job, mc64_matching};
 use rivrs_sparse::benchmarking::read_current_rss_kb;
 use rivrs_sparse::io::registry;
+use rivrs_sparse::ordering::{Mc64Job, mc64_matching};
 use rivrs_sparse::profiling::ProfileSession;
 use rivrs_sparse::testing::{TestCaseFilter, load_test_cases};
 

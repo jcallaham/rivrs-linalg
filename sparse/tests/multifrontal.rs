@@ -12,8 +12,8 @@ use faer::Mat;
 use faer::sparse::SparseColMat;
 use faer::sparse::linalg::cholesky::SymmetricOrdering;
 
-use rivrs_sparse::aptp::pivot::PivotType;
-use rivrs_sparse::aptp::{AptpNumeric, AptpOptions, AptpSymbolic};
+use rivrs_sparse::symmetric::pivot::PivotType;
+use rivrs_sparse::symmetric::{AptpNumeric, AptpOptions, AptpSymbolic};
 
 use common::sparse_from_lower_triplets;
 
@@ -607,7 +607,7 @@ fn test_inertia_validation() {
 /// comparable to dense APTP.
 #[test]
 fn test_dense_equivalence() {
-    use rivrs_sparse::aptp::aptp_factor;
+    use rivrs_sparse::symmetric::aptp_factor;
 
     // Small PD matrix
     let n = 6;
@@ -881,7 +881,7 @@ fn test_medium_indefinite() {
 /// Uses METIS ordering for better fill-in (SPRAL's default).
 #[test]
 fn test_suitesparse_ci_subset() {
-    use rivrs_sparse::aptp::metis_ordering;
+    use rivrs_sparse::ordering::metis_ordering;
     use rivrs_sparse::testing::{TestCaseFilter, load_test_cases};
 
     const MAX_DIM: usize = 2000;
@@ -988,7 +988,7 @@ fn test_rank_deficient_matrix_zero_pivots() {
 /// non-default orderings.
 #[test]
 fn test_metis_ordering() {
-    use rivrs_sparse::aptp::metis_ordering;
+    use rivrs_sparse::ordering::metis_ordering;
 
     // Moderately sized banded indefinite matrix
     let n = 30;
@@ -1030,7 +1030,7 @@ fn test_metis_ordering() {
 /// comparable reconstruction error.
 #[test]
 fn test_metis_vs_amd_reconstruction() {
-    use rivrs_sparse::aptp::metis_ordering;
+    use rivrs_sparse::ordering::metis_ordering;
 
     // Arrow matrix: forces non-trivial tree structure
     let n = 15;
@@ -1171,8 +1171,8 @@ fn test_cascading_delayed_pivots() {
 #[test]
 #[ignore = "requires full SuiteSparse collection"]
 fn test_suitesparse_full() {
-    use rivrs_sparse::aptp::metis_ordering;
     use rivrs_sparse::io::registry;
+    use rivrs_sparse::ordering::metis_ordering;
 
     const MAX_DIM_FOR_RECON: usize = 1000;
     const MAX_DIM_FOR_FACTOR: usize = 20000;

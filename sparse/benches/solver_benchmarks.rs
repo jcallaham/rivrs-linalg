@@ -14,10 +14,9 @@ use faer::Col;
 use faer::Par;
 use faer::dyn_stack::{MemBuffer, MemStack};
 
-use rivrs_sparse::aptp::{
-    AnalyzeOptions, FactorOptions, Mc64Job, SparseLDLT, match_order_metis, mc64_matching,
-};
 use rivrs_sparse::benchmarking::read_peak_rss_kb;
+use rivrs_sparse::ordering::{Mc64Job, match_order_metis, mc64_matching};
+use rivrs_sparse::symmetric::{AnalyzeOptions, FactorOptions, SparseLDLT};
 use rivrs_sparse::testing::{TestCaseFilter, load_test_cases};
 
 /// Benchmark analyze+factor and solve on CI SuiteSparse matrices using SparseLDLT.
@@ -99,7 +98,7 @@ fn bench_factor_solve(c: &mut Criterion) {
 
 fn bench_symbolic_analysis(c: &mut Criterion) {
     use faer::sparse::linalg::cholesky::SymmetricOrdering;
-    use rivrs_sparse::aptp::AptpSymbolic;
+    use rivrs_sparse::symmetric::AptpSymbolic;
 
     let cases = match load_test_cases(&TestCaseFilter::ci_subset()) {
         Ok(cases) => cases,
@@ -223,7 +222,7 @@ fn bench_match_order(c: &mut Criterion) {
 /// (forced via outer_block_size=usize::MAX).
 fn bench_kernel_two_level(c: &mut Criterion) {
     use faer::Mat;
-    use rivrs_sparse::aptp::{AptpOptions, aptp_factor};
+    use rivrs_sparse::symmetric::{AptpOptions, aptp_factor};
 
     let sizes = [128, 256, 512, 1024];
 

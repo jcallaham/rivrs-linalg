@@ -1,4 +1,4 @@
-//! Permutation construction utilities for APTP factorization.
+//! Permutation construction utilities for sparse matrix orderings.
 //!
 //! Provides [`perm_from_forward`] to bridge ordering algorithm output (forward
 //! permutation arrays) to faer's [`Perm<usize>`](faer::perm::Perm) type by
@@ -27,7 +27,7 @@ use crate::validate;
 /// # Examples
 ///
 /// ```
-/// use rivrs_sparse::aptp::perm_from_forward;
+/// use rivrs_sparse::ordering::perm_from_forward;
 ///
 /// let fwd = vec![2, 0, 1];
 /// let perm = perm_from_forward(fwd).unwrap();

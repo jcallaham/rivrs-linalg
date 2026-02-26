@@ -742,7 +742,7 @@ pub struct ExportedFrontal {
 /// ```
 /// use faer::sparse::{SparseColMat, Triplet};
 /// use faer::sparse::linalg::cholesky::SymmetricOrdering;
-/// use rivrs_sparse::aptp::{AptpSymbolic, AptpOptions, AptpNumeric};
+/// use rivrs_sparse::symmetric::{AptpSymbolic, AptpOptions, AptpNumeric};
 ///
 /// // Analyze
 /// # let triplets = vec![Triplet::new(0, 0, 1.0)];
@@ -2780,7 +2780,7 @@ pub(crate) fn extract_contribution(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::aptp::factor::AptpOptions;
+    use crate::symmetric::factor::AptpOptions;
 
     /// Helper: build frontal matrix data from a dense lower-triangle matrix.
     ///

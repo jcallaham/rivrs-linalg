@@ -5,7 +5,7 @@
 
 use faer::Col;
 use faer::sparse::{SparseColMat, Triplet};
-use rivrs_sparse::aptp::solver::{SolverOptions, SparseLDLT};
+use rivrs_sparse::symmetric::solver::{SolverOptions, SparseLDLT};
 use rivrs_sparse::validate::sparse_backward_error;
 
 // ==========================================================================

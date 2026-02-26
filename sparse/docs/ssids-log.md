@@ -1,5 +1,43 @@
 # SSIDS Development Log
 
+## Phase 9.3a: Module Restructure
+
+**Status**: Complete
+**Branch**: `027-module-restructure`
+**Date**: 2026-02-26
+
+### What Was Built
+
+Restructured the crate's module hierarchy to separate general-purpose ordering
+infrastructure from the symmetric solver, improving modularity for future
+solver additions.
+
+**Extracted `ordering/` module** (from `aptp/`)
+- `ordering/metis.rs` — METIS nested dissection (`metis_ordering`, `match_order_metis`)
+- `ordering/matching.rs` — MC64 weighted bipartite matching & scaling
+- `ordering/perm.rs` — permutation construction utilities
+- Zero dependencies on the `symmetric` module (clean separation)
+
+**Renamed `aptp/` → `symmetric/`**
+- Module path now describes the problem domain (symmetric indefinite) rather
+  than the implementation detail (a posteriori threshold pivoting)
+- All public types remain accessible: `rivrs_sparse::symmetric::{SparseLDLT, ...}`
+- Internal structure unchanged (flat submodules, no premature nesting)
+
+**Updated all consumers**
+- 13 integration test files, 5 examples, 1 benchmark, 1 comparison driver
+- All doctests in src/ updated
+- `CLAUDE.md`, `README.md`, `docs/ssids-plan.md` documentation updated
+
+**Decision: no `multifrontal/` extraction**
+- Followed the "extract on second consumer" principle from `docs/roadmap.md`
+- Workspace, assembly maps, tree traversal remain in `symmetric/` until a second
+  solver (e.g., unsymmetric LU) needs them
+
+All 525 tests pass. Zero clippy warnings. Clean formatting.
+
+---
+
 ## Phase 9.2: Robustness — Testing & Hardening
 
 **Status**: Complete
@@ -17,13 +55,13 @@ independently verifiable user stories.
 - Evaluated all 530 existing tests: 0 removals (each covers unique code path)
 - All gaps filled by new torture tests (US2)
 
-**US2: SPRAL-Style Torture Tests** (`src/aptp/factor.rs`)
+**US2: SPRAL-Style Torture Tests** (`src/symmetric/factor.rs`)
 - `cause_delays`, `make_singular`, `make_dblk_singular` perturbation helpers
 - `TortureTestConfig` struct with SPRAL-matching 70/20/10 perturbation mix
 - 9 torture test entry points (5 APP, 4 TPP), 500 instances each = 4500 factorizations
 - All pass with zero panics and backward error < 5e-11
 
-**US3: Property-Based Testing** (`src/aptp/factor.rs`, `tests/property.rs`)
+**US3: Property-Based Testing** (`src/symmetric/factor.rs`, `tests/property.rs`)
 - proptest strategies: `arb_symmetric_pd`, `arb_symmetric_indefinite`, `arb_sparse_symmetric`
 - 4 kernel-level properties (reconstruction, inertia sum, permutation valid, no panics)
 - 3 end-to-end properties (PD backward error, indefinite backward error/clean error, inertia consistency)
