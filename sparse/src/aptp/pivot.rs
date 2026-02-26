@@ -23,7 +23,10 @@ pub enum PivotType {
     /// Standard 1x1 scalar pivot.
     OneByOne,
     /// 2x2 Bunch-Kaufman pivot. `partner` identifies the paired column.
-    TwoByTwo { partner: usize },
+    TwoByTwo {
+        /// Index of the paired column forming this 2x2 block.
+        partner: usize,
+    },
     /// Column failed APTP stability check; deferred to ancestor node.
     Delayed,
 }

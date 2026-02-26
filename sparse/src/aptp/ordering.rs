@@ -42,12 +42,20 @@ use crate::error::SparseError;
 ///
 /// # Usage
 ///
-/// ```no_run
+/// ```
 /// use rivrs_sparse::aptp::match_order_metis;
-/// use faer::sparse::linalg::cholesky::SymmetricOrdering;
-/// # let matrix = todo!();
+/// use faer::sparse::{SparseColMat, Triplet};
+///
+/// let triplets = vec![
+///     Triplet::new(0, 0, 4.0),
+///     Triplet::new(0, 1, 1.0),
+///     Triplet::new(1, 0, 1.0),
+///     Triplet::new(1, 1, 3.0),
+/// ];
+/// let matrix = SparseColMat::try_new_from_triplets(2, 2, &triplets).unwrap();
 ///
 /// let result = match_order_metis(&matrix).unwrap();
+/// assert_eq!(result.scaling.len(), 2);
 /// // Use ordering for symbolic analysis:
 /// // SymmetricOrdering::Custom(result.ordering.as_ref())
 /// ```
@@ -204,7 +212,7 @@ pub fn match_order_metis(
 ///
 /// # Examples
 ///
-/// ```no_run
+/// ```
 /// use rivrs_sparse::aptp::{AptpSymbolic, metis_ordering};
 /// use faer::sparse::linalg::cholesky::SymmetricOrdering;
 /// use faer::sparse::{SparseColMat, Triplet};

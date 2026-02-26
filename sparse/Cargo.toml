@@ -7,6 +7,8 @@ description = "Sparse linear algebra solvers for the Rivrs symbolic-numeric fram
 license = "Apache-2.0"
 categories = ["science", "mathematics"]
 keywords = ["linear-algebra", "sparse-solver", "numerical-computing", "rust"]
+repository = "https://github.com/jcallaham/rivrs-linalg"
+readme = "README.md"
 
 [dependencies]
 faer = "0.22"

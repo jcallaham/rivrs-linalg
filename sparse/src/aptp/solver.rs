@@ -167,18 +167,23 @@ impl Default for SolverOptions {
 ///
 /// # Examples
 ///
-/// ```no_run
+/// ```
 /// use faer::sparse::{SparseColMat, Triplet};
 /// use faer::Col;
 /// use rivrs_sparse::aptp::{SparseLDLT, SolverOptions};
 ///
 /// let triplets = vec![
 ///     Triplet::new(0, 0, 4.0),
-///     Triplet::new(1, 0, 1.0), Triplet::new(1, 1, 3.0),
+///     Triplet::new(0, 1, 1.0),
+///     Triplet::new(1, 0, 1.0),
+///     Triplet::new(1, 1, 3.0),
 /// ];
 /// let a = SparseColMat::try_new_from_triplets(2, 2, &triplets).unwrap();
 /// let b = Col::from_fn(2, |i| [5.0, 4.0][i]);
 /// let x = SparseLDLT::solve_full(&a, &b, &SolverOptions::default()).unwrap();
+/// // A = [[4, 1], [1, 3]], b = [5, 4] => x = [1, 1]
+/// assert!((x[0] - 1.0).abs() < 1e-12);
+/// assert!((x[1] - 1.0).abs() < 1e-12);
 /// ```
 pub struct SparseLDLT {
     symbolic: AptpSymbolic,

@@ -739,7 +739,7 @@ pub struct ExportedFrontal {
 ///
 /// # Usage
 ///
-/// ```no_run
+/// ```
 /// use faer::sparse::{SparseColMat, Triplet};
 /// use faer::sparse::linalg::cholesky::SymmetricOrdering;
 /// use rivrs_sparse::aptp::{AptpSymbolic, AptpOptions, AptpNumeric};

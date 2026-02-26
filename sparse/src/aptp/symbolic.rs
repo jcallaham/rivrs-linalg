@@ -130,7 +130,7 @@ pub(crate) fn permute_symbolic_upper_triangle(
 ///
 /// # Examples
 ///
-/// ```no_run
+/// ```
 /// use faer::sparse::{SparseColMat, Triplet};
 /// use faer::sparse::linalg::cholesky::SymmetricOrdering;
 /// use rivrs_sparse::aptp::AptpSymbolic;
@@ -231,7 +231,7 @@ impl AptpSymbolic {
     ///
     /// # Examples
     ///
-    /// ```no_run
+    /// ```
     /// use faer::sparse::{SparseColMat, Triplet};
     /// use faer::sparse::linalg::cholesky::SymmetricOrdering;
     /// use rivrs_sparse::aptp::AptpSymbolic;
@@ -405,7 +405,7 @@ impl AptpSymbolic {
     ///
     /// # Examples
     ///
-    /// ```no_run
+    /// ```
     /// # use faer::sparse::{SparseColMat, Triplet};
     /// # use faer::sparse::linalg::cholesky::SymmetricOrdering;
     /// # use rivrs_sparse::aptp::AptpSymbolic;
