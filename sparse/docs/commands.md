@@ -5,13 +5,5 @@ Can you review PR #22, looking for code quality, consistency with the plan outli
 %%
 
 - Review codebase & structure
-
-
-- Remove dead code or anything hidden behind unnecessary cfg flags
-- Should anything be refactored, renamed, or deduplicated? Can any names be condensed from things like `get_item_from_sparse_matrix` to `get_element`?
-- Remove references in comments to development processes (FR, US, task numbers, etc)
-- Are there any HACK, TODO, or FIXME comments?
-- Remove comment references to SPRAL unless absolutely necessary.  SPRAL should be referenced clearly for attribution, but the logic in the code should be explained directly with standalone logic, not "this is what SPRAL does".
-
-
 - Review benchmarks: what should be changed, removed, or added?
+- Documentation - how do we build and view, and what's the appropriate scope?  All public exports?
