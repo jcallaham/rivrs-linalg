@@ -831,7 +831,7 @@ impl AptpNumeric {
     /// If a root supernode has columns that cannot be eliminated (all pivots
     /// delayed to root but still fail the threshold), these are recorded as
     /// zero pivots in [`FactorizationStats::zero_pivots`] rather than returning
-    /// an error. This matches SPRAL's behavior: the factorization succeeds but
+    /// an error. The factorization succeeds;
     /// the solve phase must handle the rank deficiency.
     ///
     /// # References
@@ -1532,7 +1532,7 @@ fn factor_single_supernode(
     })
 }
 
-/// Factor a small-leaf subtree using SPRAL-style rectangular L storage.
+/// Factor a small-leaf subtree using rectangular L storage.
 ///
 /// Replaces the general `factor_single_supernode` path for classified small-leaf
 /// subtrees with a streamlined per-node loop that:
@@ -1982,7 +1982,7 @@ fn factor_tree_levelset(
     let mut all_results: Vec<(usize, FrontFactors, PerSupernodeStats)> =
         Vec::with_capacity(n_supernodes);
 
-    // --- Small-leaf subtree pre-pass (SPRAL-style rectangular fast path) ---
+    // --- Small-leaf subtree pre-pass (rectangular workspace fast path) ---
     // Factor all classified small-leaf subtrees before the main level-set loop.
     // Each subtree uses a rectangular m×k L storage kernel instead of the general
     // m×m frontal matrix, eliminating the large square allocation, frontal zeroing,
@@ -2455,7 +2455,7 @@ pub(crate) fn extend_add(
 /// rows correspond exactly to the child's symbolic pattern and the precomputed
 /// `ea_row_map` provides direct local index lookup without `global_to_local`.
 ///
-/// Uses column-oriented processing (à la SPRAL `asm_col`): for each child
+/// Uses column-oriented processing: for each child
 /// column `j`, scatters the lower-triangle entries `(j..cb_size, j)` into
 /// the parent. Source reads are contiguous in column-major layout.
 ///
@@ -2482,7 +2482,7 @@ fn extend_add_mapped(
         cb_size
     );
 
-    // Column-oriented scatter (à la SPRAL asm_col).
+    // Column-oriented scatter.
     // For each child column j, scatter lower-triangle entries (rows j..cb_size)
     // into the parent. Source reads via col_as_slice are contiguous in column-
     // major layout; writes target a single parent column when li >= lj (common

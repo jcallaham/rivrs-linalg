@@ -5,7 +5,7 @@
 //! - [`metis_ordering()`] — METIS nested dissection on the raw sparsity pattern
 //! - [`match_order_metis()`] — Combined MC64 matching + METIS ordering with cycle
 //!   condensation, guaranteeing matched 2-cycle pairs are adjacent in the
-//!   elimination order (SPRAL `ordering=2` mode)
+//!   elimination order (matching+METIS mode)
 //!
 //! The resulting permutations integrate with
 //! [`AptpSymbolic::analyze()`](super::AptpSymbolic::analyze) via
@@ -77,7 +77,7 @@ pub struct MatchOrderResult {
 
 /// Compute a combined MC64 matching + METIS ordering with cycle condensation.
 ///
-/// This implements SPRAL's `match_order_metis` pipeline:
+/// Combined matching and ordering pipeline:
 /// 1. MC64 matching → scaling + matching permutation
 /// 2. Cycle splitting → decompose matching into singletons and 2-cycles
 /// 3. Condensed graph → fuse 2-cycle pairs into single super-nodes
@@ -266,7 +266,7 @@ pub fn metis_ordering(
 /// Result of decomposing an MC64 matching permutation into singletons and 2-cycles.
 ///
 /// Longer cycles in the matching are split into 2-cycles plus at most one singleton
-/// (for odd-length cycles), following SPRAL's `mo_split` algorithm.
+/// (for odd-length cycles) by pairing consecutive cycle members.
 ///
 /// Each matched index is mapped to a condensed super-node index, where 2-cycle pairs
 /// share the same super-node. Unmatched indices are excluded from the condensed graph.
@@ -299,8 +299,8 @@ struct CycleDecomposition {
 
 /// Decompose an MC64 matching into singletons, 2-cycles, and unmatched indices.
 ///
-/// Follows SPRAL's `mo_split` algorithm: walk each cycle in the matching permutation,
-/// pairing consecutive members into 2-cycles. Odd-length cycles produce one extra
+/// Walk each cycle in the matching permutation, pairing consecutive members into
+/// 2-cycles. Odd-length cycles produce one extra
 /// singleton. The `is_matched` slice distinguishes true singletons (matched, `fwd[i]==i`)
 /// from unmatched indices (assigned to arbitrary free columns by `build_singular_permutation`).
 ///
@@ -330,8 +330,8 @@ fn split_matching_cycles(
     }
 
     // Second pass: walk cycles, split into singletons + 2-cycles.
-    // Following SPRAL's mo_split: ALL nodes get condensed indices (including
-    // unmatched, which become singleton condensed nodes for METIS).
+    // All nodes get condensed indices (including unmatched, which become
+    // singleton condensed nodes for METIS).
     let mut condensed_idx = 0usize;
     for i in 0..n {
         if visited[i] && partner[i] != -2 {

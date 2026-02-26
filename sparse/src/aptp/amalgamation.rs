@@ -1,8 +1,8 @@
 //! Supernode amalgamation pass for the multifrontal factorization.
 //!
 //! Merges small parent-child supernode pairs after faer's symbolic analysis
-//! to reduce assembly and extraction overhead. This implements SPRAL's
-//! two-condition merge predicate:
+//! to reduce assembly and extraction overhead. The merge predicate uses two
+//! conditions:
 //!
 //! 1. **Structural match**: parent has 1 eliminated column and column count
 //!    matches child's minus 1 (zero fill-in merge)
@@ -20,9 +20,7 @@ use std::ops::Range;
 
 use super::numeric::SupernodeInfo;
 
-/// Check whether a child supernode should merge into its parent.
-///
-/// Implements SPRAL's `do_merge` predicate (`core_analyse.f90:806-822`):
+/// Determine whether a child supernode should merge into its parent.
 ///
 /// - **Condition (a)**: structural match — parent has exactly 1 eliminated
 ///   column and its column count equals child's minus 1. This produces
@@ -104,7 +102,7 @@ fn sorted_union_excluding(a: &[usize], b: &[usize], exclude_range: Range<usize>)
 /// Amalgamate supernodes by merging small parent-child pairs.
 ///
 /// Processes the assembly tree in postorder, merging child supernodes into
-/// their parents when SPRAL's merge predicate is satisfied. Returns a
+/// their parents when the merge predicate is satisfied. Returns a
 /// compacted `Vec<SupernodeInfo>` with renumbered parent pointers.
 ///
 /// # Arguments

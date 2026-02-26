@@ -63,11 +63,11 @@ const COMPLETE_PIVOTING_GROWTH_BOUND: f64 = 4.0;
 /// Configuration for the APTP factorization kernel.
 ///
 /// # Defaults
-/// - `threshold`: 0.01 (growth factor bound of 100, matching SPRAL)
-/// - `small`: 1e-20 (singularity detection, matching SPRAL)
+/// - `threshold`: 0.01 (growth factor bound of 100)
+/// - `small`: 1e-20 (singularity detection)
 /// - `fallback`: [`AptpFallback::BunchKaufman`]
-/// - `outer_block_size`: 256 (two-level outer block, matching SPRAL)
-/// - `inner_block_size`: 32 (two-level inner block, matching SPRAL)
+/// - `outer_block_size`: 256 (two-level outer block)
+/// - `inner_block_size`: 32 (two-level inner block)
 ///
 /// # Block Size Parameters (Two-Level APTP)
 ///
@@ -82,7 +82,6 @@ const COMPLETE_PIVOTING_GROWTH_BOUND: f64 = 4.0;
 ///
 /// # References
 ///
-/// - SPRAL default: `u = 0.01`, `small = 1e-20`
 /// - Duff, Hogg & Lopez (2020), Section 4: threshold parameter u
 /// - Duff, Hogg & Lopez (2020), Section 3: two-level blocking with nb=256, ib=32
 #[derive(Debug, Clone)]
@@ -354,20 +353,17 @@ pub fn aptp_factor_in_place(
 
     // Primary factorization dispatch.
     //
-    // SPRAL uses ldlt_tpp_factor (TPP) for blocks with ncol < INNER_BLOCK_SIZE,
-    // and block_ldlt (complete pivoting) for full aligned blocks. TPP tries 2x2
-    // pivots first for every column, accepting more 2x2 pivots than complete
-    // pivoting (which only tries 2x2 when the off-diagonal is the global max).
-    // For indefinite matrices, 2x2 pivots pair +/- eigenvalues and produce
+    // Small fronts (< inner_block_size) use TPP, which tries 2x2 pivots first
+    // on every column. This accepts more 2x2 pivots than complete pivoting
+    // (which only tries 2x2 when the off-diagonal is the global max). For
+    // indefinite matrices, 2x2 pivots pair +/- eigenvalues and produce
     // better-conditioned factors.
-    //
-    // See SPRAL ldlt_app.cxx Block::factor() lines 994-1020.
     // Allocate kernel workspace once for the BLAS-3 paths (reused across
     // all block iterations within factor_inner / two_level_factor).
     let mut kernel_ws = AptpKernelWorkspace::new(m, options.inner_block_size);
 
     let mut result = if num_fully_summed < options.inner_block_size {
-        // Small front: use TPP as primary method (matching SPRAL)
+        // Small front: use TPP as primary method
         tpp_factor_rect(a.rb_mut(), num_fully_summed, options)?
     } else if num_fully_summed > options.outer_block_size {
         two_level_factor(a.rb_mut(), num_fully_summed, options, &mut kernel_ws)?
@@ -1268,7 +1264,7 @@ impl<'a> BlockBackup<'a> {
         // with symmetric permutation from backup.
         // backup[r, c] stored with r >= c (lower triangle).
         // In backup coordinates: row i, col j.
-        // SPRAL: aval[j*lda+i] = backup[min(r,c)*ldcopy + max(r,c)]
+        // a[(col_start+i, col_start+j)] = backup[(max(r,c), min(r,c))]
         for j in nelim..block_cols {
             let c = block_perm[j]; // pre-perm column
             for i in nelim..block_cols {
@@ -1286,7 +1282,7 @@ impl<'a> BlockBackup<'a> {
         // Region 2: Panel below diagonal block — restore a[k+bs..m, k+e..k+bs]
         // Only column permutation applies (panel rows were permuted by
         // apply_cperm step, but we need original values at permuted column).
-        // SPRAL: aval[j*lda+i] = backup[c*ldcopy+i]
+        // a[(col_start+i, col_start+j)] = backup[(i, c)]
         for j in nelim..block_cols {
             let c = block_perm[j]; // pre-perm column
             for i in block_cols..(m - col_start) {
@@ -1636,9 +1632,9 @@ pub(crate) fn compute_contribution_gemm(
     //         contrib_buffer[0..nfs, 0..nfs] (lower triangle only).
     //
     // This copy is unavoidable: assembly scatters into frontal_data, but the
-    // GEMM output goes to contrib_buffer. SPRAL avoids this by scattering
-    // NFS entries directly into the contribution buffer during assembly — a
-    // larger architectural change deferred for a future phase.
+    // GEMM output goes to contrib_buffer. A future optimization could scatter
+    // NFS entries directly into the contribution buffer during assembly,
+    // eliminating this copy at the cost of a larger architectural change.
     for j in 0..nfs {
         let col_len = nfs - j;
         let src = &frontal_data.col_as_slice(p + j)[p + j..m];
@@ -1809,7 +1805,7 @@ fn update_cross_terms(
 ///
 /// This is the middle level of the two-level hierarchy. Processes `num_fully_summed`
 /// columns of the block `a[0..m, 0..m]` using ib-sized sub-blocks with the
-/// three-phase BLAS-3 pattern from SPRAL's `run_elim_pivoted_notasks`:
+/// three-phase BLAS-3 pattern (factor / apply+check / update):
 ///
 /// 1. **Backup**: Save `a[k..m, k..k+block_size]` before factoring
 /// 2. **Factor**: `factor_block_diagonal` on the ib×ib diagonal block (complete pivoting)
@@ -1827,8 +1823,7 @@ fn update_cross_terms(
 /// Key difference from the old implementation: on threshold failure we DO NOT
 /// fully restore and retry. Instead we keep the passed columns, partially
 /// restore only the failed columns (using permuted backup), apply Schur updates
-/// from passed to failed+trailing, and advance. This matches SPRAL's
-/// `run_elim_pivoted_notasks` (ldlt_app.cxx:1585-1713).
+/// from passed to failed+trailing, and advance.
 ///
 /// # Arguments
 /// - `a`: Dense frontal matrix block (m × m), modified in place
@@ -1866,7 +1861,7 @@ fn factor_inner(
 
     // BLAS-3 Factor/Apply/Update loop with ib-sized inner blocks.
     //
-    // Matches SPRAL's `run_elim_pivoted_notasks` architecture:
+    // BLAS-3 Factor/Apply/Update architecture:
     //   1. Backup (pre-factor)
     //   2. Factor diagonal block (complete pivoting, block-scoped swaps)
     //   3. Permute panel columns by block_perm
@@ -1880,9 +1875,8 @@ fn factor_inner(
     //  11. Delay failed columns (swap to end_pos)
     //  12. Advance k += effective_nelim
     //
-    // Steps 5-6 happen BEFORE apply_and_check so the matrix is in a consistent
-    // permuted state regardless of threshold outcome (matching SPRAL where
-    // apply_rperm_and_backup happens before apply_pivot_app).
+    // Steps 5-6 happen BEFORE apply_and_check to ensure a consistent
+    // permuted state regardless of threshold outcome.
     while k < end_pos {
         let block_size = (end_pos - k).min(ib);
         let block_end = k + block_size;
@@ -1947,8 +1941,7 @@ fn factor_inner(
         }
 
         // 5. ROW PERM PROPAGATION: apply block_perm to columns 0..k.
-        //    Done BEFORE apply_and_check (matching SPRAL where apply_rperm_and_backup
-        //    happens before apply_pivot_app). This ensures the matrix is in a
+        //    Done BEFORE apply_and_check to ensure the matrix is in a
         //    consistent permuted state regardless of threshold outcome.
         if k > 0 {
             for c in 0..k {
@@ -1985,7 +1978,6 @@ fn factor_inner(
 
         // 9. PARTIAL RESTORE (on failure): restore only failed columns from
         //    pre-factor backup with permutation applied.
-        //    SPRAL: restore_part_with_sym_perm for diagonal, restore_part for panel.
         //    We keep passed columns (0..effective_nelim) — their L11, D, L21 are committed.
         if effective_nelim < block_nelim {
             backup.restore_diagonal_with_perm(
@@ -2290,7 +2282,7 @@ fn two_level_factor(
 
 /// Test if `(t, p)` with `t < p` form a good 2x2 pivot.
 ///
-/// Three checks (matching SPRAL):
+/// Three necessary conditions for a stable 2x2 block pivot:
 /// 1. Non-zero pivot block: max(|a11|, |a21|, |a22|) >= small
 /// 2. Non-singular determinant with cancellation guard
 /// 3. Threshold: u * max(|D^{-1}_{11}|*maxt + |D^{-1}_{12}|*maxp,
@@ -2357,7 +2349,8 @@ fn tpp_test_2x2(
 /// pivoting.
 ///
 /// Uses full-matrix `swap_symmetric` which correctly propagates row swaps to
-/// already-factored L columns (matching SPRAL's `aleft` parameter).
+/// already-factored L columns (essential for correct L21 computation when rows
+/// are reordered).
 ///
 /// Returns the number of additional columns eliminated.
 ///
@@ -2487,7 +2480,7 @@ fn tpp_factor(
             }
 
             // Try p as 1x1 pivot
-            // maxp should include |a(p, t)| (SPRAL line 225)
+            // maxp should include |a(p, t)| for the off-diagonal contribution
             let maxp_with_t = maxp.max(tpp_sym_entry(a.as_ref(), p, t).abs());
             if a[(p, p)].abs() >= u * maxp_with_t {
                 // Accept 1x1 pivot: swap p→nelim

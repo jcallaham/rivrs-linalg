@@ -32,15 +32,18 @@ use crate::error::SparseError;
 
 /// Fill-reducing ordering strategy.
 ///
-/// Following SPRAL's approach, the ordering is a user-configurable option
-/// rather than an automatic heuristic. Guidance from Duff, Hogg & Lopez (2020):
+/// The ordering is a user-configurable option rather than an automatic
+/// heuristic. Guidance from Duff, Hogg & Lopez (2020):
 ///
 /// - **Easy-indefinite** (structural FEM, thermal, acoustic, model reduction,
 ///   quantum chemistry): use [`Metis`](Self::Metis) (the default).
 /// - **Hard-indefinite** (KKT/saddle-point, optimal control, power networks,
 ///   mixed FEM / Stokes): use [`MatchOrderMetis`](Self::MatchOrderMetis).
 ///
-/// SPRAL equivalent: `options%ordering` (1=METIS default, 2=matching+METIS).
+///
+/// # SPRAL Equivalent
+///
+/// `options%ordering` (1=METIS default, 2=matching+METIS).
 #[derive(Debug, Clone)]
 pub enum OrderingStrategy {
     /// AMD ordering (faer built-in).

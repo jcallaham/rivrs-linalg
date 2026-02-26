@@ -330,7 +330,6 @@ impl MixedDiagonal {
                     let d = self.diag[col];
                     if d == 0.0 {
                         // Zero pivot: set solution component to zero
-                        // (SPRAL action=true convention)
                         x[col] = 0.0;
                     } else {
                         x[col] /= d;
@@ -345,7 +344,6 @@ impl MixedDiagonal {
                         let det = a * c - b * b;
                         if det == 0.0 {
                             // Zero-determinant 2x2 block: set both components to zero
-                            // (SPRAL action=true convention)
                             x[col] = 0.0;
                             x[partner] = 0.0;
                         } else {
