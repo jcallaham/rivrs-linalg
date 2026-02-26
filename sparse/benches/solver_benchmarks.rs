@@ -52,17 +52,12 @@ fn bench_factor_solve(c: &mut Criterion) {
             let nnz = case.properties.nnz;
             group.throughput(Throughput::Elements(nnz as u64));
 
-            group.bench_with_input(
-                BenchmarkId::from_parameter(&case.name),
-                &case,
-                |b, case| {
-                    b.iter(|| {
-                        let mut solver =
-                            SparseLDLT::analyze_with_matrix(&case.matrix, &opts).unwrap();
-                        solver.factor(&case.matrix, &factor_opts).unwrap();
-                    });
-                },
-            );
+            group.bench_with_input(BenchmarkId::from_parameter(&case.name), &case, |b, case| {
+                b.iter(|| {
+                    let mut solver = SparseLDLT::analyze_with_matrix(&case.matrix, &opts).unwrap();
+                    solver.factor(&case.matrix, &factor_opts).unwrap();
+                });
+            });
         }
         group.finish();
     }
@@ -215,9 +210,7 @@ fn bench_match_order(c: &mut Criterion) {
         group.throughput(Throughput::Elements(nnz as u64));
 
         group.bench_with_input(BenchmarkId::from_parameter(&case.name), &case, |b, case| {
-            b.iter(|| {
-                match_order_metis(&case.matrix).expect("match_order_metis should succeed")
-            });
+            b.iter(|| match_order_metis(&case.matrix).expect("match_order_metis should succeed"));
         });
     }
     group.finish();
