@@ -17,7 +17,7 @@ Sparse Symmetric Indefinite Direct Solver (SSIDS) for Rust, inspired by [SPRAL](
 ```rust
 use faer::sparse::{SparseColMat, Triplet};
 use faer::Col;
-use rivrs_sparse::aptp::{SparseLDLT, SolverOptions};
+use rivrs_sparse::symmetric::{SparseLDLT, SolverOptions};
 
 // Build a symmetric matrix (full storage, both triangles)
 let triplets = vec![
@@ -36,7 +36,7 @@ For the three-phase API with parallel factorization:
 
 ```rust
 use faer::{Par, dyn_stack::{MemBuffer, MemStack}};
-use rivrs_sparse::aptp::{AnalyzeOptions, FactorOptions, SparseLDLT};
+use rivrs_sparse::symmetric::{AnalyzeOptions, FactorOptions, SparseLDLT};
 
 let mut solver = SparseLDLT::analyze_with_matrix(&a, &AnalyzeOptions::default()).unwrap();
 solver.factor(&a, &FactorOptions { par: Par::rayon(4), ..Default::default() }).unwrap();

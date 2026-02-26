@@ -11,7 +11,7 @@
 use faer::sparse::{SparseColMat, Triplet};
 use faer::{Col, Par};
 
-use rivrs_sparse::aptp::{AnalyzeOptions, FactorOptions, OrderingStrategy, SparseLDLT};
+use rivrs_sparse::symmetric::{AnalyzeOptions, FactorOptions, OrderingStrategy, SparseLDLT};
 use rivrs_sparse::validate::sparse_backward_error;
 
 fn main() {

@@ -1286,7 +1286,7 @@ for APTP's 2x2 pivot detection efficiency. The pipeline:
 5. Expand → map back to original indices, 2-cycle pairs get consecutive positions
 
 **Implementation:**
-- `match_order_metis()` in `src/aptp/ordering.rs` — public orchestrator
+- `match_order_metis()` in `src/ordering/metis.rs` — public orchestrator
 - `CycleDecomposition` — internal struct with partner/old_to_new/new_to_old mappings
 - `split_matching_cycles()` — cycle decomposition using SPRAL's `mo_split` algorithm
 - `build_condensed_adjacency()` — marker-array deduplication for condensed graph
@@ -2612,7 +2612,7 @@ Estimated effort: 600-800 LOC in a new `amalgamation.rs` module.
 SPRAL reference: `core_analyse.f90:528-853` — `find_supernodes()` and `do_merge()`.
 faer reference: `cholesky.rs:2364-2544` — fundamental detection + relaxed merging.
 faer limitation: `cholesky.rs:2461` — consecutivity check blocks most merges.
-rivrs entry point: `src/aptp/symbolic.rs:284` — `factorize_symbolic_cholesky` call.
+rivrs entry point: `src/symmetric/symbolic.rs:284` — `factorize_symbolic_cholesky` call.
 
 Expected impact: 5-15× speedup on c-71/c-big by reducing supernode count 3-5×.
 
@@ -2626,7 +2626,7 @@ Results:
 - Simplicial outliers improved: rail_79841 7.78→2.24×, mario001 6.56→2.13×,
   dixmaanl 5.23→2.51×, spmsrtls 4.99→2.30×
 - Median ratio vs SPRAL improved from ~1.27× to ~1.13×
-- Implementation: ~620 LOC in `src/aptp/amalgamation.rs` (amalgamate, do_merge,
+- Implementation: ~620 LOC in `src/symmetric/amalgamation.rs` (amalgamate, do_merge,
   sorted_union_excluding) + `owned_ranges` on SupernodeInfo for non-contiguous merges
 - `scatter_original_entries_multi()` handles multi-range column ownership correctly
 - nemin configurable via `AnalyzeOptions.nemin` / `SolverOptions.nemin` (default 32)

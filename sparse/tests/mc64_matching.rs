@@ -13,9 +13,9 @@
 
 use faer::sparse::{SparseColMat, Triplet};
 
-use rivrs_sparse::aptp::matching::count_cycles;
-use rivrs_sparse::aptp::{Mc64Job, Mc64Result, mc64_matching};
 use rivrs_sparse::io::registry;
+use rivrs_sparse::ordering::matching::count_cycles;
+use rivrs_sparse::ordering::{Mc64Job, Mc64Result, mc64_matching};
 use rivrs_sparse::testing::{
     TestCaseFilter, classify_scaling_violations, load_test_cases, verify_spral_scaling_properties,
 };
@@ -224,7 +224,8 @@ fn test_mc64_6x6_larger_indefinite() {
 #[test]
 fn test_mc64_metis_independent_composition() {
     use faer::sparse::linalg::cholesky::SymmetricOrdering;
-    use rivrs_sparse::aptp::{AptpSymbolic, metis_ordering};
+    use rivrs_sparse::ordering::metis_ordering;
+    use rivrs_sparse::symmetric::AptpSymbolic;
 
     // Test on a few indefinite matrices
     let test_matrices: Vec<(&str, SparseColMat<usize, f64>)> = vec![

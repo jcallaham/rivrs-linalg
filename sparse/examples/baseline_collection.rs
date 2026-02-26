@@ -15,9 +15,9 @@ use faer::Col;
 use faer::Par;
 use serde::{Deserialize, Serialize};
 
-use rivrs_sparse::aptp::{AnalyzeOptions, FactorOptions, SparseLDLT};
 use rivrs_sparse::benchmarking::read_peak_rss_kb;
 use rivrs_sparse::io::registry;
+use rivrs_sparse::symmetric::{AnalyzeOptions, FactorOptions, SparseLDLT};
 use rivrs_sparse::validate::sparse_backward_error;
 
 /// Per-supernode stats snapshot (serializable subset of PerSupernodeStats).

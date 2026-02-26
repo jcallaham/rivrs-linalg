@@ -15,11 +15,11 @@ use faer::dyn_stack::{MemBuffer, MemStack};
 use faer::sparse::linalg::cholesky::SymmetricOrdering;
 use faer::sparse::{SparseColMat, Triplet};
 
-use rivrs_sparse::aptp::{
+use rivrs_sparse::error::SparseError;
+use rivrs_sparse::symmetric::{
     AnalyzeOptions, AptpNumeric, AptpOptions, AptpSymbolic, FactorOptions, OrderingStrategy,
     SolverOptions, SparseLDLT,
 };
-use rivrs_sparse::error::SparseError;
 use rivrs_sparse::validate::sparse_backward_error;
 
 use common::{sparse_from_lower_triplets, sparse_matvec};
@@ -67,10 +67,10 @@ fn test_aptp_solve_small_pd() {
     }
 
     // Solve in permuted coordinates
-    let scratch = rivrs_sparse::aptp::solve::aptp_solve_scratch(&numeric, 1);
+    let scratch = rivrs_sparse::symmetric::solve::aptp_solve_scratch(&numeric, 1);
     let mut mem = MemBuffer::new(scratch);
     let stack = MemStack::new(&mut mem);
-    rivrs_sparse::aptp::solve::aptp_solve(&symbolic, &numeric, &mut rhs_perm, stack, Par::Seq)
+    rivrs_sparse::symmetric::solve::aptp_solve(&symbolic, &numeric, &mut rhs_perm, stack, Par::Seq)
         .expect("solve");
 
     // Unpermute solution

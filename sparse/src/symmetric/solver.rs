@@ -25,10 +25,10 @@ use faer::sparse::{SparseColMat, SymbolicSparseColMatRef};
 use super::factor::{AptpFallback, AptpOptions};
 use super::inertia::Inertia;
 use super::numeric::{AptpNumeric, FactorizationStats};
-use super::ordering::{match_order_metis, metis_ordering};
 use super::solve::{aptp_solve, aptp_solve_scratch};
 use super::symbolic::AptpSymbolic;
 use crate::error::SparseError;
+use crate::ordering::{match_order_metis, metis_ordering};
 
 /// Fill-reducing ordering strategy.
 ///
@@ -170,7 +170,7 @@ impl Default for SolverOptions {
 /// ```
 /// use faer::sparse::{SparseColMat, Triplet};
 /// use faer::Col;
-/// use rivrs_sparse::aptp::{SparseLDLT, SolverOptions};
+/// use rivrs_sparse::symmetric::{SparseLDLT, SolverOptions};
 ///
 /// let triplets = vec![
 ///     Triplet::new(0, 0, 4.0),

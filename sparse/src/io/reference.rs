@@ -11,8 +11,8 @@ use serde::Deserialize;
 use crate::error::SparseError;
 use crate::validate;
 
-// Inertia relocated to aptp module; re-export for backward compatibility.
-pub use crate::aptp::Inertia;
+// Inertia relocated to symmetric module; re-export for backward compatibility.
+pub use crate::symmetric::Inertia;
 
 /// Single entry in the strict lower triangle of L.
 #[derive(Debug, Clone, Deserialize)]

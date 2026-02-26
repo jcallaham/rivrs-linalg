@@ -33,7 +33,7 @@
 //! ```
 //! use faer::sparse::{SparseColMat, Triplet};
 //! use faer::Col;
-//! use rivrs_sparse::aptp::{SparseLDLT, SolverOptions};
+//! use rivrs_sparse::symmetric::{SparseLDLT, SolverOptions};
 //!
 //! // Symmetric indefinite 2x2: A = [[2, 1], [1, -1]]
 //! let triplets = vec![
@@ -58,7 +58,7 @@
 //! use faer::sparse::{SparseColMat, Triplet};
 //! use faer::{Col, Par};
 //! use faer::dyn_stack::{MemBuffer, MemStack};
-//! use rivrs_sparse::aptp::{SparseLDLT, AnalyzeOptions, FactorOptions};
+//! use rivrs_sparse::symmetric::{SparseLDLT, AnalyzeOptions, FactorOptions};
 //!
 //! // Build a symmetric matrix (full CSC — both triangles stored)
 //! let triplets = vec![
@@ -88,9 +88,9 @@
 //!
 //! | Strategy | Best for | Notes |
 //! |----------|----------|-------|
-//! | [`MatchOrderMetis`](aptp::OrderingStrategy::MatchOrderMetis) | Hard-indefinite (KKT, saddle-point) | Default. MC64 matching + METIS |
-//! | [`Metis`](aptp::OrderingStrategy::Metis) | Easy-indefinite (FEM, thermal) | Pure METIS nested dissection |
-//! | [`Amd`](aptp::OrderingStrategy::Amd) | Small matrices, unit tests | faer built-in AMD |
+//! | [`MatchOrderMetis`](symmetric::OrderingStrategy::MatchOrderMetis) | Hard-indefinite (KKT, saddle-point) | Default. MC64 matching + METIS |
+//! | [`Metis`](symmetric::OrderingStrategy::Metis) | Easy-indefinite (FEM, thermal) | Pure METIS nested dissection |
+//! | [`Amd`](symmetric::OrderingStrategy::Amd) | Small matrices, unit tests | faer built-in AMD |
 //!
 //! # Feature Flags
 //!
@@ -133,9 +133,10 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-pub mod aptp;
 pub mod error;
 pub mod io;
+pub mod ordering;
+pub mod symmetric;
 pub mod validate;
 
 #[cfg(any(feature = "test-util", feature = "diagnostic"))]

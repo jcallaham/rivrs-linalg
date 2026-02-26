@@ -133,7 +133,7 @@ pub(crate) fn permute_symbolic_upper_triangle(
 /// ```
 /// use faer::sparse::{SparseColMat, Triplet};
 /// use faer::sparse::linalg::cholesky::SymmetricOrdering;
-/// use rivrs_sparse::aptp::AptpSymbolic;
+/// use rivrs_sparse::symmetric::AptpSymbolic;
 ///
 /// // Build a small symmetric matrix
 /// let triplets = vec![
@@ -234,7 +234,7 @@ impl AptpSymbolic {
     /// ```
     /// use faer::sparse::{SparseColMat, Triplet};
     /// use faer::sparse::linalg::cholesky::SymmetricOrdering;
-    /// use rivrs_sparse::aptp::AptpSymbolic;
+    /// use rivrs_sparse::symmetric::AptpSymbolic;
     ///
     /// let triplets = vec![
     ///     Triplet::new(0, 0, 1.0),
@@ -408,7 +408,7 @@ impl AptpSymbolic {
     /// ```
     /// # use faer::sparse::{SparseColMat, Triplet};
     /// # use faer::sparse::linalg::cholesky::SymmetricOrdering;
-    /// # use rivrs_sparse::aptp::AptpSymbolic;
+    /// # use rivrs_sparse::symmetric::AptpSymbolic;
     /// # let triplets = vec![Triplet::new(0, 0, 1.0)];
     /// # let matrix = SparseColMat::try_new_from_triplets(1, 1, &triplets).unwrap();
     /// let symbolic = AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Amd)?;
@@ -796,7 +796,7 @@ mod tests {
 
         // Construct identity permutation
         let fwd: Vec<usize> = (0..n).collect();
-        let perm = crate::aptp::perm_from_forward(fwd).unwrap();
+        let perm = crate::ordering::perm_from_forward(fwd).unwrap();
 
         let sym =
             AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Custom(perm.as_ref()))
@@ -818,7 +818,7 @@ mod tests {
 
         // Construct reverse permutation
         let fwd: Vec<usize> = (0..n).rev().collect();
-        let perm = crate::aptp::perm_from_forward(fwd).unwrap();
+        let perm = crate::ordering::perm_from_forward(fwd).unwrap();
 
         let sym_reverse =
             AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Custom(perm.as_ref()))
@@ -840,7 +840,7 @@ mod tests {
 
         // Construct a permutation with wrong dimension (4 instead of 5)
         let fwd: Vec<usize> = (0..4).collect();
-        let perm = crate::aptp::perm_from_forward(fwd).unwrap();
+        let perm = crate::ordering::perm_from_forward(fwd).unwrap();
 
         let result =
             AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Custom(perm.as_ref()));
@@ -1353,7 +1353,7 @@ mod tests {
 
         // Reverse permutation: [4,3,2,1,0]
         let fwd: Vec<usize> = (0..n).rev().collect();
-        let perm = crate::aptp::perm_from_forward(fwd).unwrap();
+        let perm = crate::ordering::perm_from_forward(fwd).unwrap();
 
         let sym =
             AptpSymbolic::analyze(matrix.symbolic(), SymmetricOrdering::Custom(perm.as_ref()))

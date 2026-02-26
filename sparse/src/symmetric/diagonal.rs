@@ -511,7 +511,7 @@ impl<'a> Iterator for PivotIter<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::aptp::pivot::{Block2x2, PivotType};
+    use crate::symmetric::pivot::{Block2x2, PivotType};
 
     // ---- MixedDiagonal construction and query ----
 

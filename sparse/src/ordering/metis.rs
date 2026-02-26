@@ -8,7 +8,7 @@
 //!   elimination order (matching+METIS mode)
 //!
 //! The resulting permutations integrate with
-//! [`AptpSymbolic::analyze()`](super::AptpSymbolic::analyze) via
+//! [`AptpSymbolic::analyze()`](crate::symmetric::AptpSymbolic::analyze) via
 //! [`SymmetricOrdering::Custom`](faer::sparse::linalg::cholesky::SymmetricOrdering::Custom).
 //!
 //! # Algorithm References
@@ -43,7 +43,7 @@ use crate::error::SparseError;
 /// # Usage
 ///
 /// ```
-/// use rivrs_sparse::aptp::match_order_metis;
+/// use rivrs_sparse::ordering::match_order_metis;
 /// use faer::sparse::{SparseColMat, Triplet};
 ///
 /// let triplets = vec![
@@ -186,7 +186,7 @@ pub fn match_order_metis(
 /// to compute a fill-reducing permutation via multilevel nested dissection.
 ///
 /// The returned permutation is suitable for use with
-/// [`AptpSymbolic::analyze()`](super::AptpSymbolic::analyze) via
+/// [`AptpSymbolic::analyze()`](crate::symmetric::AptpSymbolic::analyze) via
 /// [`SymmetricOrdering::Custom`](faer::sparse::linalg::cholesky::SymmetricOrdering::Custom).
 ///
 /// # Arguments
@@ -213,7 +213,8 @@ pub fn match_order_metis(
 /// # Examples
 ///
 /// ```
-/// use rivrs_sparse::aptp::{AptpSymbolic, metis_ordering};
+/// use rivrs_sparse::ordering::metis_ordering;
+/// use rivrs_sparse::symmetric::AptpSymbolic;
 /// use faer::sparse::linalg::cholesky::SymmetricOrdering;
 /// use faer::sparse::{SparseColMat, Triplet};
 ///

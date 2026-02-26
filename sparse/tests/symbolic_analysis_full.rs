@@ -36,8 +36,9 @@
 
 use faer::sparse::linalg::cholesky::SymmetricOrdering;
 
-use rivrs_sparse::aptp::{AptpSymbolic, metis_ordering};
 use rivrs_sparse::io::registry;
+use rivrs_sparse::ordering::metis_ordering;
+use rivrs_sparse::symmetric::AptpSymbolic;
 
 /// Minimum number of SuiteSparse matrices to consider the full collection present.
 const MIN_FULL_COLLECTION_SIZE: usize = 20;

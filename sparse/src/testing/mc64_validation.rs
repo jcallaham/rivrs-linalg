@@ -1,12 +1,12 @@
 //! Shared validation helpers for MC64 matching & scaling tests.
 //!
-//! Used by both unit tests in `src/aptp/matching.rs` and integration tests
+//! Used by both unit tests in `src/ordering/matching.rs` and integration tests
 //! in `tests/mc64_matching.rs` to avoid duplicated verification logic.
 
 use faer::sparse::SparseColMat;
 
-use crate::aptp::Mc64Result;
-use crate::aptp::matching::count_cycles;
+use crate::ordering::Mc64Result;
+use crate::ordering::matching::count_cycles;
 
 /// Categorized scaling violation report.
 ///

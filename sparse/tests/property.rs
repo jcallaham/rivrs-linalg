@@ -6,7 +6,7 @@
 
 use faer::Col;
 use proptest::prelude::*;
-use rivrs_sparse::aptp::solver::{SolverOptions, SparseLDLT};
+use rivrs_sparse::symmetric::solver::{SolverOptions, SparseLDLT};
 use rivrs_sparse::testing::strategies;
 use rivrs_sparse::validate::sparse_backward_error;
 
@@ -84,10 +84,10 @@ proptest! {
     ) {
         let n = a.nrows();
         let options = SolverOptions::default();
-        let analyze_opts = rivrs_sparse::aptp::solver::AnalyzeOptions {
+        let analyze_opts = rivrs_sparse::symmetric::solver::AnalyzeOptions {
             ordering: options.ordering.clone(),
         };
-        let factor_opts = rivrs_sparse::aptp::solver::FactorOptions::default();
+        let factor_opts = rivrs_sparse::symmetric::solver::FactorOptions::default();
 
         let solver = SparseLDLT::analyze_with_matrix(&a, &analyze_opts);
         if let Ok(mut solver) = solver {

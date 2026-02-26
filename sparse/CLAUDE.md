@@ -68,19 +68,22 @@ src/
 ├── io/                 # Matrix I/O
 │   ├── mtx.rs          # MatrixMarket (.mtx) reader (mirrors for full symmetric CSC)
 │   └── registry.rs     # Test matrix registry (metadata.json, CI-path fallback)
-├── aptp/               # Core APTP solver
+├── ordering/           # Fill-reducing orderings (general, solver-independent)
+│   ├── mod.rs          # Public re-exports
+│   ├── metis.rs        # metis_ordering(), match_order_metis() (METIS + MC64 pipeline)
+│   ├── matching.rs     # mc64_matching() — weighted bipartite matching & scaling
+│   └── perm.rs         # perm_from_forward()
+├── symmetric/          # Sparse symmetric indefinite solver (APTP)
 │   ├── mod.rs          # Public re-exports
 │   ├── pivot.rs        # PivotType, Block2x2
 │   ├── diagonal.rs     # MixedDiagonal (D factor: mixed 1x1/2x2, solve, inertia)
 │   ├── inertia.rs      # Inertia (eigenvalue sign counts)
-│   ├── perm.rs         # perm_from_forward()
 │   ├── symbolic.rs     # AptpSymbolic (wraps faer's SymbolicCholesky + pivot buffer estimates)
-│   ├── ordering.rs     # metis_ordering(), match_order_metis() (METIS + MC64 pipeline)
-│   ├── matching.rs     # mc64_matching() — weighted bipartite matching & scaling
 │   ├── factor.rs       # Dense APTP kernel: aptp_factor_in_place(), factor_inner (BLAS-3)
 │   ├── numeric.rs      # AptpNumeric::factor() — multifrontal factorization loop
 │   ├── solve.rs        # aptp_solve() — per-supernode forward/diagonal/backward solve
-│   └── solver.rs       # SparseLDLT — user-facing API (analyze/factor/solve)
+│   ├── solver.rs       # SparseLDLT — user-facing API (analyze/factor/solve)
+│   └── amalgamation.rs # Supernode merge predicates (internal)
 ├── profiling/          # Performance profiling (behind test-util or diagnostic)
 │   ├── session.rs      # ProfileSession, SectionGuard (RAII), FinishedSession
 │   ├── section.rs      # Section timing data structures
@@ -158,7 +161,7 @@ cargo test -- --ignored --test-threads=1
 cargo test test_name
 
 # Run tests in a specific module
-cargo test aptp::factor
+cargo test symmetric::factor
 ```
 
 **Important**: Full SuiteSparse `--ignored` tests MUST use `--test-threads=1` to avoid memory pressure from concurrent large-matrix factorizations.
@@ -428,17 +431,18 @@ unit tests of the symbolic analysis and factorization kernel on small matrices.
 - Phase 9.1b: Workspace reuse — Two-tier pre-allocated workspace (FactorizationWorkspace in numeric.rs, AptpKernelWorkspace in factor.rs). FrontalMatrix changed from owned to borrowed types. Thread-local workspace via Cell for parallel path. CI subset: median 1.16× factor speedup, 24% RSS reduction, bit-exact backward errors.
 - Phase 9.1c: Assembly & extraction optimization — Precomputed scatter maps (AssemblyMaps), bulk column-slice copies, fill(0.0) zeroing, sub-phase timing instrumentation. c-71: 4.06×→2.48× SPRAL. Sub-phase profiling identified contribution block allocation as dominant bottleneck (extract_contrib 40.1% + extend-add 33.3% of factor time). perf stat: 644B dTLB misses, 3.1s/32% sys time from mmap churn.
 - Phase 9.1e: Direct GEMM into contribution buffer — Deferred NFS×NFS Schur complement to single post-loop GEMM into pre-allocated buffer. Extraction copy eliminated (40.1%→0.0%). c-71: 2.53×→2.16× SPRAL, c-big: 4.11×→2.30×, median: 0.98× (33/65 beat SPRAL). Remaining bottleneck: extend-add scatter (49.6%) from shared-workspace architecture.
-- Phase 9.1f: Small leaf subtree fast path — Classify leaf subtrees where all fronts < 256, factor via pre-pass with dedicated small workspace (≤512KB). `classify_small_leaf_subtrees()` + pre-pass in `factor_tree_levelset()`. `FactorOptions::small_leaf_threshold` (default 256, 0 = disabled). 12 new tests. Files: `src/aptp/numeric.rs` (classification, pre-pass), `src/aptp/solver.rs` (threshold config), `src/aptp/factor.rs` (AptpOptions field).
-- Phase 9.1g: Column-oriented extend-add scatter — Rewrote `extend_add_mapped` and `extend_add` to column-oriented iteration (à la SPRAL `asm_col`). Contiguous source reads via `col_as_slice`, 4× unrolled inner loop, `ea_scatter_one` helper. Added `g2l_reset_time` diagnostic. c-71: 2.16×→1.49× SPRAL, c-big: 2.30×→1.37×, dTLB 608M→31M. Instrumentation showed zeroing (8.8%) as biggest remaining non-compute overhead; per-node storage total addressable budget ~9%. 2 new tests + g2l_reset instrumentation. Files: `src/aptp/numeric.rs`, `examples/profile_matrix.rs`, `examples/baseline_collection.rs`.
+- Phase 9.1f: Small leaf subtree fast path — Classify leaf subtrees where all fronts < 256, factor via pre-pass with dedicated small workspace (≤512KB). `classify_small_leaf_subtrees()` + pre-pass in `factor_tree_levelset()`. `FactorOptions::small_leaf_threshold` (default 256, 0 = disabled). 12 new tests. Files: `src/symmetric/numeric.rs` (classification, pre-pass), `src/symmetric/solver.rs` (threshold config), `src/symmetric/factor.rs` (AptpOptions field).
+- Phase 9.1g: Column-oriented extend-add scatter — Rewrote `extend_add_mapped` and `extend_add` to column-oriented iteration (à la SPRAL `asm_col`). Contiguous source reads via `col_as_slice`, 4× unrolled inner loop, `ea_scatter_one` helper. Added `g2l_reset_time` diagnostic. c-71: 2.16×→1.49× SPRAL, c-big: 2.30×→1.37×, dTLB 608M→31M. Instrumentation showed zeroing (8.8%) as biggest remaining non-compute overhead; per-node storage total addressable budget ~9%. 2 new tests + g2l_reset instrumentation. Files: `src/symmetric/numeric.rs`, `examples/profile_matrix.rs`, `examples/baseline_collection.rs`.
 
-- Phase 9.2: Robustness — Testing & Hardening — SPRAL test parity audit (41 APP + 25 TPP scenarios mapped, 0 gaps remaining), SPRAL-style torture tests (9 configs × 500 = 4500 factorizations, zero panics, BE < 5e-11), proptest property-based tests (7 properties × 256 cases), adversarial edge-case tests (14 tests: 0×0, NaN, Inf, near-overflow, disconnected, etc., zero panics). No defensive guards needed — solver already handles all edge cases. Test count: 546 pass + 23 ignored. Files: `src/testing/perturbations.rs`, `src/testing/strategies.rs`, `src/aptp/factor.rs` (torture+property tests), `tests/property.rs`, `tests/adversarial.rs`, `docs/spral-test-audit.md`.
+- Phase 9.2: Robustness — Testing & Hardening — SPRAL test parity audit (41 APP + 25 TPP scenarios mapped, 0 gaps remaining), SPRAL-style torture tests (9 configs × 500 = 4500 factorizations, zero panics, BE < 5e-11), proptest property-based tests (7 properties × 256 cases), adversarial edge-case tests (14 tests: 0×0, NaN, Inf, near-overflow, disconnected, etc., zero panics). No defensive guards needed — solver already handles all edge cases. Test count: 546 pass + 23 ignored. Files: `src/testing/perturbations.rs`, `src/testing/strategies.rs`, `src/symmetric/factor.rs` (torture+property tests), `tests/property.rs`, `tests/adversarial.rs`, `docs/spral-test-audit.md`.
 
 **Next:**
 - Phase 9.3: Release preparation (docs, examples, crates.io)
 
 ## Recent Changes
+- 027-module-restructure: Added Rust 1.87+ (edition 2024) + faer 0.22, metis-sys 0.3, rayon, serde (unchanged)
 - 026-robustness-hardening: Added proptest 1.4 (optional, activated by test-util feature) for property-based testing
 - 025-small-leaf-fastpath: Added Rust 1.87+ (edition 2024) + faer 0.22 (dense LA, CSC), rayon 1.x (parallelism), serde/serde_json (diagnostic export)
-- 024-direct-gemm-contrib: Added Rust 1.87+ (edition 2024) + faer 0.22 (dense LA, CSC, `tri_matmul`, `matmul`), rayon 1.x (parallel tree traversal), serde/serde_json (diagnostic export)
 
 ## Active Technologies
+- Rust 1.87+ (edition 2024) + faer 0.22, metis-sys 0.3, rayon, serde (unchanged) (027-module-restructure)

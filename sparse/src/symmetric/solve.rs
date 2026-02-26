@@ -332,9 +332,9 @@ mod tests {
     use faer::sparse::linalg::cholesky::SymmetricOrdering;
     use faer::sparse::{SparseColMat, Triplet};
 
-    use crate::aptp::factor::AptpOptions;
-    use crate::aptp::numeric::AptpNumeric;
-    use crate::aptp::symbolic::AptpSymbolic;
+    use crate::symmetric::factor::AptpOptions;
+    use crate::symmetric::numeric::AptpNumeric;
+    use crate::symmetric::symbolic::AptpSymbolic;
 
     /// Build a full symmetric CSC matrix from lower-triangular entries.
     fn sparse_from_lower(n: usize, lower: &[(usize, usize, f64)]) -> SparseColMat<usize, f64> {

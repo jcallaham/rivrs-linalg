@@ -44,9 +44,9 @@ use faer::prelude::*;
 use faer::{Accum, Conj, Mat, MatMut, MatRef};
 
 use super::diagonal::MixedDiagonal;
-use super::perm::perm_from_forward;
 use super::pivot::{Block2x2, PivotType};
 use crate::error::SparseError;
+use crate::ordering::perm_from_forward;
 
 /// Bunch-Kaufman α parameter for 2×2 determinant condition: |det| ≥ α × |a₂₁|².
 const BUNCH_KAUFMAN_ALPHA: f64 = 0.5;

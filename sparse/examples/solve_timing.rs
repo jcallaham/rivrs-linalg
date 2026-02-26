@@ -7,8 +7,8 @@
 
 use faer::Col;
 use faer::Par;
-use rivrs_sparse::aptp::SparseLDLT;
 use rivrs_sparse::io::registry;
+use rivrs_sparse::symmetric::SparseLDLT;
 use rivrs_sparse::validate::sparse_backward_error;
 use std::time::Instant;
 
@@ -52,7 +52,7 @@ fn main() {
 
         // Analyze + factor (MatchOrderMetis default)
         let t0 = Instant::now();
-        let opts = rivrs_sparse::aptp::AnalyzeOptions::default();
+        let opts = rivrs_sparse::symmetric::AnalyzeOptions::default();
         let mut solver = match SparseLDLT::analyze_with_matrix(a, &opts) {
             Ok(s) => s,
             Err(e) => {
@@ -64,7 +64,7 @@ fn main() {
                 continue;
             }
         };
-        let factor_opts = rivrs_sparse::aptp::FactorOptions::default();
+        let factor_opts = rivrs_sparse::symmetric::FactorOptions::default();
         match solver.factor(a, &factor_opts) {
             Ok(()) => {}
             Err(e) => {
