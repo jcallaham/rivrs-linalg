@@ -36,8 +36,8 @@ diag.set_1x1(5, 2.0);
 assert_eq!(diag.num_delayed(), 0);
 assert_eq!(diag.num_2x2_pairs(), 1);
 assert_eq!(diag.num_1x1(), 4);
-assert_eq!(diag.get_pivot_type(0), PivotType::TwoByTwo { partner: 1 });
-assert_eq!(diag.get_pivot_type(2), PivotType::OneByOne);
+assert_eq!(diag.pivot_type(0), PivotType::TwoByTwo { partner: 1 });
+assert_eq!(diag.pivot_type(2), PivotType::OneByOne);
 ```
 
 ### Solving D x = b

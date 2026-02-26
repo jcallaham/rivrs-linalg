@@ -13,9 +13,13 @@ use super::validator::NumericalValidator;
 /// Outcome of a single numerical metric check.
 #[derive(Debug, Clone)]
 pub struct MetricResult {
+    /// Metric name (e.g. "backward_error", "reconstruction_error").
     pub name: String,
+    /// Computed metric value.
     pub value: f64,
+    /// Pass/fail threshold.
     pub threshold: f64,
+    /// Whether the metric is within threshold.
     pub passed: bool,
 }
 
@@ -33,10 +37,15 @@ impl fmt::Display for MetricResult {
 /// Complete outcome of a solver test.
 #[derive(Debug, Clone)]
 pub struct TestResult {
+    /// Whether all metrics passed.
     pub passed: bool,
+    /// Solver phase that was tested.
     pub phase: SolverPhase,
+    /// Name of the test matrix.
     pub matrix_name: String,
+    /// Individual metric checks.
     pub metrics: Vec<MetricResult>,
+    /// Informational messages (not pass/fail).
     pub diagnostics: Vec<String>,
 }
 
@@ -62,7 +71,7 @@ impl fmt::Display for TestResult {
 /// and returns a `TestResult`. This works for the `MockSolver` (which uses
 /// reference data directly) but will need rethinking for the real solver,
 /// where `test_factor` needs symbolic analysis output and `test_solve` needs
-/// the factorization. Options for Phase 1+:
+/// the factorization. Options:
 ///
 /// - Add associated types for intermediate state (analysis result, factorization)
 /// - Split into separate traits per phase
@@ -70,9 +79,13 @@ impl fmt::Display for TestResult {
 ///
 /// The `test_roundtrip` method partially addresses this by combining all phases.
 pub trait SolverTest {
+    /// Test the symbolic analysis phase.
     fn test_analyze(&self, case: &SolverTestCase) -> TestResult;
+    /// Test the numeric factorization phase.
     fn test_factor(&self, case: &SolverTestCase) -> TestResult;
+    /// Test the triangular solve phase.
     fn test_solve(&self, case: &SolverTestCase) -> TestResult;
+    /// Test the full analyze → factor → solve pipeline.
     fn test_roundtrip(&self, case: &SolverTestCase) -> TestResult;
 }
 
@@ -85,6 +98,7 @@ pub struct MockSolver {
 }
 
 impl MockSolver {
+    /// Create a new mock solver with default numerical tolerances.
     pub fn new() -> Self {
         Self {
             validator: NumericalValidator::new(),

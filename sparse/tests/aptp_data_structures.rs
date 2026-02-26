@@ -10,7 +10,7 @@ use rivrs_sparse::io::registry;
 /// Helper: convert reference `DBlock` entries into `MixedDiagonal` calls.
 ///
 /// The reference factorization format (`DBlock`) and the live factorization
-/// format (`MixedDiagonal`) are intentionally separate types (FR-012). This
+/// format (`MixedDiagonal`) are intentionally separate types. This
 /// test helper bridges the two for integration testing.
 fn build_mixed_diagonal_from_dblocks(d_blocks: &[DBlock], n: usize) -> MixedDiagonal {
     let mut diag = MixedDiagonal::new(n);
@@ -35,7 +35,7 @@ fn build_mixed_diagonal_from_dblocks(d_blocks: &[DBlock], n: usize) -> MixedDiag
     diag
 }
 
-// ---- T018: Integration test — compute_inertia against 15 hand-constructed matrices ----
+// ---- Integration test — compute_inertia against 15 hand-constructed matrices ----
 
 #[test]
 fn inertia_matches_all_15_hand_constructed_references() {
@@ -72,7 +72,7 @@ fn inertia_matches_all_15_hand_constructed_references() {
     }
 }
 
-// ---- T022: Integration test — perm_from_forward against hand-constructed references ----
+// ---- Integration test — perm_from_forward against hand-constructed references ----
 
 #[test]
 fn perm_from_forward_matches_hand_constructed_references() {

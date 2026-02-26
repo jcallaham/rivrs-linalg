@@ -9,8 +9,11 @@ use crate::error::SparseError;
 
 /// Configuration for random sparse symmetric matrix generation.
 pub struct RandomMatrixConfig {
+    /// Matrix dimension (number of rows/columns).
     pub size: usize,
+    /// Target number of nonzeros (approximate, before mirroring).
     pub target_nnz: usize,
+    /// If true, generate a positive definite matrix; otherwise indefinite.
     pub positive_definite: bool,
 }
 

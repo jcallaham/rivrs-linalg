@@ -9,7 +9,7 @@ use rivrs_sparse::aptp::solver::{SolverOptions, SparseLDLT};
 use rivrs_sparse::validate::sparse_backward_error;
 
 // ==========================================================================
-// Edge-case tests (T029)
+// Edge-case tests
 // ==========================================================================
 
 #[test]
@@ -167,7 +167,7 @@ fn adversarial_power_of_2_boundary_sizes() {
     }
 }
 
-// T029.7: Exact numerical cancellation
+// Exact numerical cancellation
 #[test]
 fn adversarial_exact_cancellation() {
     // Matrix where elimination produces exact cancellation:
@@ -202,7 +202,7 @@ fn adversarial_exact_cancellation() {
     }
 }
 
-// T029.1: 0×0 empty matrix
+// 0x0 empty matrix
 #[test]
 fn adversarial_0x0_empty_matrix() {
     let triplets: Vec<Triplet<usize, usize, f64>> = vec![];
@@ -217,7 +217,7 @@ fn adversarial_0x0_empty_matrix() {
 }
 
 // ==========================================================================
-// Extreme value tests (T030)
+// Extreme value tests
 // ==========================================================================
 
 #[test]
@@ -334,7 +334,7 @@ fn adversarial_inf_entries() {
 }
 
 // ==========================================================================
-// Structural validity tests (T031)
+// Structural validity tests
 // ==========================================================================
 
 #[test]

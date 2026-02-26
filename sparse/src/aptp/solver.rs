@@ -32,15 +32,18 @@ use crate::error::SparseError;
 
 /// Fill-reducing ordering strategy.
 ///
-/// Following SPRAL's approach, the ordering is a user-configurable option
-/// rather than an automatic heuristic. Guidance from Duff, Hogg & Lopez (2020):
+/// The ordering is a user-configurable option rather than an automatic
+/// heuristic. Guidance from Duff, Hogg & Lopez (2020):
 ///
 /// - **Easy-indefinite** (structural FEM, thermal, acoustic, model reduction,
 ///   quantum chemistry): use [`Metis`](Self::Metis) (the default).
 /// - **Hard-indefinite** (KKT/saddle-point, optimal control, power networks,
 ///   mixed FEM / Stokes): use [`MatchOrderMetis`](Self::MatchOrderMetis).
 ///
-/// SPRAL equivalent: `options%ordering` (1=METIS default, 2=matching+METIS).
+///
+/// # SPRAL Equivalent
+///
+/// `options%ordering` (1=METIS default, 2=matching+METIS).
 #[derive(Debug, Clone)]
 pub enum OrderingStrategy {
     /// AMD ordering (faer built-in).
@@ -164,18 +167,23 @@ impl Default for SolverOptions {
 ///
 /// # Examples
 ///
-/// ```no_run
+/// ```
 /// use faer::sparse::{SparseColMat, Triplet};
 /// use faer::Col;
 /// use rivrs_sparse::aptp::{SparseLDLT, SolverOptions};
 ///
 /// let triplets = vec![
 ///     Triplet::new(0, 0, 4.0),
-///     Triplet::new(1, 0, 1.0), Triplet::new(1, 1, 3.0),
+///     Triplet::new(0, 1, 1.0),
+///     Triplet::new(1, 0, 1.0),
+///     Triplet::new(1, 1, 3.0),
 /// ];
 /// let a = SparseColMat::try_new_from_triplets(2, 2, &triplets).unwrap();
 /// let b = Col::from_fn(2, |i| [5.0, 4.0][i]);
 /// let x = SparseLDLT::solve_full(&a, &b, &SolverOptions::default()).unwrap();
+/// // A = [[4, 1], [1, 3]], b = [5, 4] => x = [1, 1]
+/// assert!((x[0] - 1.0).abs() < 1e-12);
+/// assert!((x[1] - 1.0).abs() < 1e-12);
 /// ```
 pub struct SparseLDLT {
     symbolic: AptpSymbolic,

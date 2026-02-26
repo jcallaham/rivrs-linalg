@@ -182,7 +182,7 @@ pub fn mc64_matching(
     // Greedy initial matching
     let mut state = greedy_initial_matching(&graph);
 
-    // Persistent Dijkstra state (reused across augmentations, like SPRAL)
+    // Persistent Dijkstra state (reused across augmentations; avoids O(n) re-init)
     let mut ds = DijkstraState::new(n);
     ds.init_jperm(&graph, &state);
 
@@ -217,14 +217,13 @@ pub fn mc64_matching(
     #[cfg(debug_assertions)]
     assert_dual_feasibility(&graph, &state);
 
-    // Match SPRAL's effective behavior (scaling.f90 line 1169):
-    // Zero unmatched row duals, then use the same formula as the full-match case.
-    // SPRAL: `where (iperm(1:m) .eq. 0) dualu(1:m) = 0.0`
+    // Zero unmatched row duals, then compute scaling using the full-match formula.
     //
-    // Note: For partial matching, the duals from the Hungarian algorithm are not
-    // globally feasible (u[i] + v[j] <= c[i,j] may be violated). SPRAL does not
-    // enforce this either — its tests only check |s*a*s| <= 1 for full-match
-    // matrices. The scaling still improves diagonal dominance for APTP.
+    // For partial matching, the duals from the Hungarian algorithm are not globally
+    // feasible (u[i] + v[j] <= c[i,j] may be violated for unmatched rows). Zeroing
+    // unmatched duals is a standard heuristic from Duff & Koster (2001) §4 that
+    // produces a well-defined scaling even for structurally singular matrices.
+    // The |s*a*s| <= 1 property only holds for entries incident to matched rows.
     for i in 0..n {
         if state.row_match[i] == UNMATCHED {
             state.u[i] = 0.0;
@@ -252,7 +251,7 @@ pub fn mc64_matching(
 ///
 /// For each matched column j: `v[j] = c[matched_row, j] - u[matched_row]`.
 /// Unmatched columns get `v[j] = 0.0`.
-/// This is the standard post-matching dual computation (SPRAL lines 1159-1167).
+/// This is the standard post-matching dual computation from complementary slackness.
 fn compute_column_duals(graph: &CostGraph, state: &MatchingState) -> Vec<f64> {
     let n = graph.n;
     let mut v = vec![0.0_f64; n];
@@ -481,7 +480,7 @@ fn greedy_initial_matching(graph: &CostGraph) -> MatchingState {
     }
 
     // Pass 1 matching: match row i to its best column if that column is unmatched
-    // Avoid matching on very dense columns (heuristic from SPRAL)
+    // Avoid matching on very dense columns (dense columns are better handled by Dijkstra)
     let dense_threshold = if n > 50 { n / 10 } else { n };
     for i in 0..n {
         let j = best_col_for_row[i];
@@ -587,16 +586,16 @@ fn greedy_initial_matching(graph: &CostGraph) -> MatchingState {
     }
 }
 
-/// Persistent state across Dijkstra augmentations, matching SPRAL's approach.
+/// Persistent state across Dijkstra augmentations.
 ///
-/// SPRAL allocates these arrays once and selectively resets touched elements after
-/// each augmentation (scaling.f90 lines 1144-1153). This avoids O(n) re-initialization
-/// per augmentation and, critically, ensures `jperm` is maintained incrementally.
+/// Arrays are allocated once and selectively reset for touched elements after each
+/// augmentation. This avoids O(n) re-initialization per augmentation and, critically,
+/// ensures `jperm` is maintained incrementally across successive shortest-path searches.
 struct DijkstraState {
     /// d[i] = shortest distance from current root column to row i (INFINITY = untouched)
     d: Vec<f64>,
-    /// l[i] = position tracking (0 = not touched, heap pos, or Q1/finalized encoding)
-    /// Exactly matches SPRAL's `l(i)` array.
+    /// l[i] = position tracking (0 = not touched, 1..qlen = heap position,
+    /// low..up-1 = in Q1, up.. = finalized)
     l: Vec<usize>,
     /// jperm[j] = edge index of matched edge in column j (for O(1) vj computation)
     jperm: Vec<usize>,
@@ -605,10 +604,8 @@ struct DijkstraState {
     /// out[j] = edge index of the discovery edge for column j's traceback
     out: Vec<usize>,
     /// q[0..m] = shared array for heap (0..qlen), Q1 (low..up), finalized (up..m)
-    /// We use this exactly like SPRAL's Q array.
     q: Vec<usize>,
     /// Scratch buffer for root column edge indices (avoids per-augmentation allocation).
-    /// Corresponds to SPRAL's `longwork(1:q0)` in the root column scan.
     root_edges: Vec<usize>,
 }
 
@@ -665,11 +662,10 @@ impl DijkstraState {
 ///
 /// Returns `true` if augmenting path found, `false` if no path exists.
 ///
-/// This is a faithful port of SPRAL's `hungarian_match` Dijkstra loop
-/// (scaling.f90 lines 995-1155), using an indexed binary min-heap with
-/// exact semantics matching SPRAL's heap_update/heap_pop/heap_delete.
+/// Uses Dijkstra on reduced costs with an indexed binary min-heap for
+/// O((m + n) log n) augmentation (Duff & Koster 2001, Algorithm MPD).
 ///
-/// Key data structures (matching SPRAL variable names):
+/// Key data structures:
 /// - `ds.d[i]`: shortest distance from root column to row i
 /// - `ds.l[i]`: position tracking (0=unseen, 1..qlen=heap, low..up-1=Q1, up..=finalized)
 /// - `ds.jperm[j]`: edge index of matched edge in column j
@@ -692,18 +688,17 @@ fn dijkstra_augment(
     let mut qlen: usize = 0;
     // Q1 region: q[low-1..up-1] (rows with d == dmin, 0-indexed)
     // Finalized region: q[up-1..m-1]
-    // Using 1-based indices like SPRAL for clarity, convert at array access
+    // Using 1-based indices for Q1/finalized region tracking, convert at array access
     let mut low: usize = n + 1; // 1-based, initially empty Q1
     let mut up: usize = n + 1; // 1-based, initially empty finalized
     let mut dmin = f64::INFINITY;
 
-    // Scan root column (SPRAL lines 1015-1029)
+    // Scan root column: compute initial reduced costs for adjacent rows
     ds.pr[root_col] = UNMATCHED; // sentinel
     let col_start = graph.col_ptr[root_col];
     let col_end = graph.col_ptr[root_col + 1];
 
     // First pass: compute d[i] for all rows in root column, collect edge refs
-    // SPRAL stores edges in longwork(1:q0), we collect in a temp vec
     ds.root_edges.clear();
     for idx in col_start..col_end {
         let i = graph.row_idx[idx];
@@ -724,7 +719,7 @@ fn dijkstra_augment(
         }
     }
 
-    // Second pass: build Q1 and heap from root column edges (SPRAL lines 1031-1053)
+    // Second pass: partition root-column rows into Q1 (d == dmin) and heap
     for k in 0..ds.root_edges.len() {
         let idx = ds.root_edges[k];
         let i = graph.row_idx[idx];
@@ -751,7 +746,7 @@ fn dijkstra_augment(
         ds.pr[jj] = root_col;
     }
 
-    // Main Dijkstra loop (SPRAL lines 1055-1119)
+    // Main Dijkstra loop: expand frontier until augmenting path found or exhausted
     for _jdum in 0..n {
         // If Q1 is empty, extract from heap
         if low == up {
@@ -789,7 +784,7 @@ fn dijkstra_augment(
         let j = state.row_match[q0];
         // q0 must be matched (greedy ensures only matched rows enter the heap)
 
-        // Compute vj using jperm for O(1) matched-edge cost lookup (SPRAL line 1081)
+        // Compute vj using jperm for O(1) matched-edge cost lookup
         debug_assert!(
             ds.jperm[j] != UNMATCHED,
             "jperm[{}] not set for matched column",
@@ -802,7 +797,7 @@ fn dijkstra_augment(
         for idx in col_start_j..col_end_j {
             let i = graph.row_idx[idx];
 
-            // Skip finalized rows (SPRAL line 1084: l(i) >= up)
+            // Skip finalized rows (l[i] >= up)
             if ds.l[i] >= up {
                 continue;
             }
@@ -818,12 +813,12 @@ fn dijkstra_augment(
                 isp = idx;
                 jsp = j;
             } else {
-                // Skip if not improving (SPRAL line 1097)
+                // Skip if not improving
                 let di = ds.d[i];
                 if di <= dnew {
                     continue;
                 }
-                // Skip if already in Q1 (SPRAL line 1098: l(i) >= low)
+                // Skip if already in Q1 (l[i] >= low)
                 if ds.l[i] >= low {
                     continue;
                 }
@@ -859,12 +854,12 @@ fn dijkstra_augment(
 
     // If csp = INFINITY, no augmenting path found
     if csp == f64::INFINITY {
-        // Clean up touched rows (SPRAL lines 1144-1153)
+        // Reset d[] and l[] for rows visited this augmentation
         ds.cleanup_touched(low, qlen, n);
         return false;
     }
 
-    // Augment matching along path (SPRAL lines 1124-1137)
+    // Augment matching along path
     let mut i = graph.row_idx[isp];
     let mut j = jsp;
     state.row_match[i] = j;
@@ -884,21 +879,19 @@ fn dijkstra_augment(
         j = jj;
     }
 
-    // Update dual variables for finalized rows (SPRAL lines 1140-1143)
-    // Finalized rows are in q[up-1..n-1] (0-indexed), i.e., q(up:m) in SPRAL 1-based
+    // Update dual variables for finalized rows (in q[up-1..n-1])
     for k in (up - 1)..n {
         let i = ds.q[k];
         state.u[i] = state.u[i] + ds.d[i] - csp;
     }
 
-    // Clean up touched rows: Q1 + finalized + heap (SPRAL lines 1144-1153)
+    // Reset state for all touched rows: Q1 + finalized + heap
     ds.cleanup_touched(low, qlen, n);
 
     true
 }
 
-/// Inline heap_update: sift row `idx` up in heap after d[idx] decreased.
-/// Matches SPRAL's `heap_update` (scaling.f90 lines 1180-1216).
+/// Sift row `idx` up after distance decreased.
 /// `pos` values are 1-based heap positions.
 fn heap_update_inline(idx: usize, q: &mut [usize], d: &[f64], pos: &mut [usize]) {
     let mut p = pos[idx]; // 1-based
@@ -929,8 +922,7 @@ fn heap_pop_inline(q: &mut [usize], d: &[f64], pos: &mut [usize], qlen: &mut usi
     result
 }
 
-/// Inline heap_delete: delete element at 1-based position `pos0`.
-/// Matches SPRAL's `heap_delete` (scaling.f90 lines 1245-1302).
+/// Delete element at 1-based position `pos0` and restore heap property.
 fn heap_delete_inline(
     pos0: usize,
     q: &mut [usize],
@@ -1009,9 +1001,8 @@ fn symmetrize_scaling(u: &[f64], v: &[f64], col_max_log: &[f64]) -> Vec<f64> {
     let mut scaling = Vec::with_capacity(n);
 
     for i in 0..n {
-        // SPRAL: rscaling = dualu, cscaling = dualv - cmax
-        // then scaling = exp((rscaling + cscaling) / 2)
-        // = exp((u[i] + v[i] - col_max_log[i]) / 2)
+        // row contribution u[i], column contribution (v[i] - col_max_log[i]),
+        // symmetrized: exp((u[i] + v[i] - col_max_log[i]) / 2)
         let log_scale = (u[i] + v[i] - col_max_log[i]) / 2.0;
 
         // Clamp to avoid overflow/underflow in exp
@@ -1162,7 +1153,7 @@ mod tests {
         )
     }
 
-    // ---- T004: build_cost_graph tests ----
+    // ---- build_cost_graph tests ----
 
     #[test]
     fn test_build_cost_graph_3x3() {
@@ -1267,7 +1258,7 @@ mod tests {
         assert!(has_entry(1, 2), "entry (2,1) should exist in col 1");
     }
 
-    // ---- T006: greedy_initial_matching tests ----
+    // ---- greedy_initial_matching tests ----
 
     #[test]
     fn test_greedy_matching_4x4() {
@@ -1318,7 +1309,7 @@ mod tests {
         }
     }
 
-    // ---- T007: dijkstra_augment tests ----
+    // ---- dijkstra_augment tests ----
 
     #[test]
     fn test_dijkstra_augment_3x3() {
@@ -1366,7 +1357,7 @@ mod tests {
         }
     }
 
-    // ---- T008: symmetrize_scaling tests ----
+    // ---- symmetrize_scaling tests ----
 
     #[test]
     fn test_symmetrize_scaling_known_duals() {
@@ -1403,7 +1394,7 @@ mod tests {
         }
     }
 
-    // ---- T009 (partial): end-to-end mc64_matching tests ----
+    // ---- end-to-end mc64_matching tests ----
 
     #[test]
     fn test_mc64_diagonal_identity() {
@@ -1561,7 +1552,7 @@ mod tests {
         verify_spral_scaling_properties("unit_test", matrix, result);
     }
 
-    // ---- T018: duff_pralet_correction tests ----
+    // ---- duff_pralet_correction tests ----
 
     #[test]
     fn test_duff_pralet_4x4_singular() {
@@ -1652,7 +1643,7 @@ mod tests {
         }
     }
 
-    // ---- T019 (unit part): structurally singular mc64_matching ----
+    // ---- structurally singular mc64_matching ----
 
     #[test]
     fn test_mc64_singular_zero_diagonal() {

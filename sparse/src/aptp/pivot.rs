@@ -23,7 +23,10 @@ pub enum PivotType {
     /// Standard 1x1 scalar pivot.
     OneByOne,
     /// 2x2 Bunch-Kaufman pivot. `partner` identifies the paired column.
-    TwoByTwo { partner: usize },
+    TwoByTwo {
+        /// Index of the paired column forming this 2x2 block.
+        partner: usize,
+    },
     /// Column failed APTP stability check; deferred to ancestor node.
     Delayed,
 }
@@ -67,7 +70,7 @@ impl Block2x2 {
 mod tests {
     use super::*;
 
-    // ---- T007: PivotType tests ----
+    // ---- PivotType tests ----
 
     #[test]
     fn pivot_type_one_by_one() {
@@ -122,7 +125,7 @@ mod tests {
         );
     }
 
-    // ---- T008: Block2x2 tests ----
+    // ---- Block2x2 tests ----
 
     #[test]
     fn block2x2_field_storage() {

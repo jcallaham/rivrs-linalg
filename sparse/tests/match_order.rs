@@ -6,11 +6,11 @@
 //!
 //! # Test Categories
 //!
-//! - **Pair adjacency**: Every 2-cycle pair occupies consecutive positions (SC-001)
-//! - **Fill quality**: Condensed ordering within 10% of unconstrained METIS (SC-003)
-//! - **Symbolic validity**: Pipeline produces valid AptpSymbolic results (SC-007)
-//! - **Singular handling**: Unmatched indices at end for singular matrices (SC-002)
-//! - **Performance**: Condensation overhead bounded vs separate MC64+METIS (SC-005)
+//! - **Pair adjacency**: Every 2-cycle pair occupies consecutive positions
+//! - **Fill quality**: Condensed ordering within 10% of unconstrained METIS
+//! - **Symbolic validity**: Pipeline produces valid AptpSymbolic results
+//! - **Singular handling**: Unmatched indices at end for singular matrices
+//! - **Performance**: Condensation overhead bounded vs separate MC64+METIS
 
 use faer::sparse::linalg::cholesky::SymmetricOrdering;
 use faer::sparse::{SparseColMat, Triplet};
@@ -51,7 +51,7 @@ fn assert_valid_permutation(name: &str, fwd: &[usize], inv: &[usize], n: usize) 
 }
 
 /// Verify that every 2-cycle pair in the matching occupies consecutive positions
-/// in the output ordering (SC-001).
+/// in the output ordering.
 fn assert_pair_adjacency(
     name: &str,
     matching_fwd: &[usize],
@@ -99,7 +99,7 @@ fn assert_result_pair_adjacency(
     assert_pair_adjacency(name, matching_fwd, &mc64.is_matched, ordering_inv);
 }
 
-// ---- US1: Pair adjacency tests (T009) ----
+// ---- Pair adjacency tests ----
 
 #[test]
 fn test_match_order_6x6_indefinite_pair_adjacency() {
@@ -131,7 +131,7 @@ fn test_match_order_6x6_indefinite_pair_adjacency() {
     let (fwd, inv) = result.ordering.as_ref().arrays();
     assert_valid_permutation("6x6_indef", fwd, inv, n);
 
-    // Pair adjacency (SC-001)
+    // Pair adjacency
     assert_result_pair_adjacency("6x6_indef", &matrix, &result);
 
     // Should have some 2-cycles for this indefinite matrix
@@ -185,7 +185,7 @@ fn test_match_order_edge_cases() {
     assert_eq!(rd.matched, 4);
 }
 
-// ---- US1: Fill quality comparison (T010) ----
+// ---- Fill quality comparison ----
 
 #[test]
 fn test_match_order_fill_quality_vs_metis() {
@@ -250,7 +250,7 @@ fn test_match_order_fill_quality_vs_metis() {
             result.condensed_dim
         );
 
-        // SC-003: Track fill quality. Condensation constrains METIS by fusing paired
+        // Track fill quality. Condensation constrains METIS by fusing paired
         // nodes, so some fill regression is expected. Matrices with heavy condensation
         // (many 2-cycles) may show significant regression. The goal is that most
         // matrices stay within 10%, with outliers documented.
@@ -275,7 +275,7 @@ fn test_match_order_fill_quality_vs_metis() {
     }
 }
 
-// ---- US1: Symbolic analysis integration (T011) ----
+// ---- Symbolic analysis integration ----
 
 #[test]
 fn test_match_order_symbolic_analysis_validity() {
@@ -291,7 +291,7 @@ fn test_match_order_symbolic_analysis_validity() {
         let result = match_order_metis(&case.matrix)
             .unwrap_or_else(|e| panic!("match_order_metis failed for '{}': {}", case.name, e));
 
-        // SC-007: Valid AptpSymbolic from condensed ordering
+        // Valid AptpSymbolic from condensed ordering
         let symbolic = AptpSymbolic::analyze(
             case.matrix.symbolic(),
             SymmetricOrdering::Custom(result.ordering.as_ref()),
@@ -309,7 +309,7 @@ fn test_match_order_symbolic_analysis_validity() {
             case.name
         );
 
-        // Pair adjacency on all SuiteSparse matrices (SC-001)
+        // Pair adjacency on all SuiteSparse matrices
         assert_result_pair_adjacency(&case.name, &case.matrix, &result);
 
         eprintln!(
@@ -324,7 +324,7 @@ fn test_match_order_symbolic_analysis_validity() {
     }
 }
 
-// ---- US2: Structurally singular tests (T014) ----
+// ---- Structurally singular tests ----
 
 #[test]
 fn test_match_order_singular_1_unmatched() {
@@ -422,7 +422,7 @@ fn test_match_order_singular_scaling_well_defined() {
     }
 }
 
-// ---- US2: SuiteSparse singular matrix tests (T015) ----
+// ---- SuiteSparse singular matrix tests ----
 
 #[test]
 fn test_match_order_singular_unmatched_at_end() {
@@ -467,7 +467,7 @@ fn test_match_order_singular_unmatched_at_end() {
     }
 }
 
-// ---- US3: Condensation ratio validation (T017) ----
+// ---- Condensation ratio validation ----
 
 #[test]
 fn test_match_order_condensation_ratio() {
@@ -484,7 +484,7 @@ fn test_match_order_condensation_ratio() {
         let result = match_order_metis(&case.matrix)
             .unwrap_or_else(|e| panic!("match_order_metis failed for '{}': {}", case.name, e));
 
-        // SC-004: condensed_dim < n when 2-cycles exist
+        // condensed_dim < n when 2-cycles exist
         if result.two_cycles > 0 {
             assert!(
                 result.condensed_dim < n,
@@ -504,7 +504,7 @@ fn test_match_order_condensation_ratio() {
     }
 }
 
-// ---- US3: Full SuiteSparse validation (T018) ----
+// ---- Full SuiteSparse validation ----
 //
 // Comprehensive match-order condensation analysis on the full SuiteSparse
 // collection. Loads one matrix at a time to avoid OOM. Run with:
@@ -594,14 +594,14 @@ fn test_match_order_full_suitesparse() {
         let result = match_order_metis(matrix)
             .unwrap_or_else(|e| panic!("match_order_metis failed for '{}': {}", meta.name, e));
 
-        // SC-001: Pair adjacency
+        // Pair adjacency
         assert_result_pair_adjacency(&meta.name, matrix, &result);
 
-        // FR-007: Valid permutation
+        // Valid permutation
         let (fwd, inv) = result.ordering.as_ref().arrays();
         assert_valid_permutation(&meta.name, fwd, inv, n);
 
-        // SC-007: Valid symbolic analysis with condensed ordering
+        // Valid symbolic analysis with condensed ordering
         let condensed_symbolic = AptpSymbolic::analyze(
             matrix.symbolic(),
             SymmetricOrdering::Custom(result.ordering.as_ref()),

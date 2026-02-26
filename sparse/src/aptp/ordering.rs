@@ -5,7 +5,7 @@
 //! - [`metis_ordering()`] — METIS nested dissection on the raw sparsity pattern
 //! - [`match_order_metis()`] — Combined MC64 matching + METIS ordering with cycle
 //!   condensation, guaranteeing matched 2-cycle pairs are adjacent in the
-//!   elimination order (SPRAL `ordering=2` mode)
+//!   elimination order (matching+METIS mode)
 //!
 //! The resulting permutations integrate with
 //! [`AptpSymbolic::analyze()`](super::AptpSymbolic::analyze) via
@@ -42,12 +42,20 @@ use crate::error::SparseError;
 ///
 /// # Usage
 ///
-/// ```no_run
+/// ```
 /// use rivrs_sparse::aptp::match_order_metis;
-/// use faer::sparse::linalg::cholesky::SymmetricOrdering;
-/// # let matrix = todo!();
+/// use faer::sparse::{SparseColMat, Triplet};
+///
+/// let triplets = vec![
+///     Triplet::new(0, 0, 4.0),
+///     Triplet::new(0, 1, 1.0),
+///     Triplet::new(1, 0, 1.0),
+///     Triplet::new(1, 1, 3.0),
+/// ];
+/// let matrix = SparseColMat::try_new_from_triplets(2, 2, &triplets).unwrap();
 ///
 /// let result = match_order_metis(&matrix).unwrap();
+/// assert_eq!(result.scaling.len(), 2);
 /// // Use ordering for symbolic analysis:
 /// // SymmetricOrdering::Custom(result.ordering.as_ref())
 /// ```
@@ -77,7 +85,7 @@ pub struct MatchOrderResult {
 
 /// Compute a combined MC64 matching + METIS ordering with cycle condensation.
 ///
-/// This implements SPRAL's `match_order_metis` pipeline:
+/// Combined matching and ordering pipeline:
 /// 1. MC64 matching → scaling + matching permutation
 /// 2. Cycle splitting → decompose matching into singletons and 2-cycles
 /// 3. Condensed graph → fuse 2-cycle pairs into single super-nodes
@@ -204,7 +212,7 @@ pub fn match_order_metis(
 ///
 /// # Examples
 ///
-/// ```no_run
+/// ```
 /// use rivrs_sparse::aptp::{AptpSymbolic, metis_ordering};
 /// use faer::sparse::linalg::cholesky::SymmetricOrdering;
 /// use faer::sparse::{SparseColMat, Triplet};
@@ -266,7 +274,7 @@ pub fn metis_ordering(
 /// Result of decomposing an MC64 matching permutation into singletons and 2-cycles.
 ///
 /// Longer cycles in the matching are split into 2-cycles plus at most one singleton
-/// (for odd-length cycles), following SPRAL's `mo_split` algorithm.
+/// (for odd-length cycles) by pairing consecutive cycle members.
 ///
 /// Each matched index is mapped to a condensed super-node index, where 2-cycle pairs
 /// share the same super-node. Unmatched indices are excluded from the condensed graph.
@@ -299,8 +307,8 @@ struct CycleDecomposition {
 
 /// Decompose an MC64 matching into singletons, 2-cycles, and unmatched indices.
 ///
-/// Follows SPRAL's `mo_split` algorithm: walk each cycle in the matching permutation,
-/// pairing consecutive members into 2-cycles. Odd-length cycles produce one extra
+/// Walk each cycle in the matching permutation, pairing consecutive members into
+/// 2-cycles. Odd-length cycles produce one extra
 /// singleton. The `is_matched` slice distinguishes true singletons (matched, `fwd[i]==i`)
 /// from unmatched indices (assigned to arbitrary free columns by `build_singular_permutation`).
 ///
@@ -330,8 +338,8 @@ fn split_matching_cycles(
     }
 
     // Second pass: walk cycles, split into singletons + 2-cycles.
-    // Following SPRAL's mo_split: ALL nodes get condensed indices (including
-    // unmatched, which become singleton condensed nodes for METIS).
+    // All nodes get condensed indices (including unmatched, which become
+    // singleton condensed nodes for METIS).
     let mut condensed_idx = 0usize;
     for i in 0..n {
         if visited[i] && partner[i] != -2 {
@@ -726,7 +734,7 @@ mod tests {
         SparseColMat::try_new_from_triplets(n, n, &triplets).unwrap()
     }
 
-    // ---- T008: metis_ordering unit tests ----
+    // ---- metis_ordering unit tests ----
 
     #[test]
     fn test_metis_ordering_tridiagonal_5() {
@@ -807,7 +815,7 @@ mod tests {
         }
     }
 
-    // ---- T005: extract_adjacency tests ----
+    // ---- extract_adjacency tests ----
 
     #[test]
     fn test_adjacency_tridiagonal_3x3() {
@@ -975,7 +983,7 @@ mod tests {
         }
     }
 
-    // ---- T003: split_matching_cycles unit tests ----
+    // ---- split_matching_cycles unit tests ----
 
     #[test]
     fn test_split_all_singletons() {
@@ -1094,7 +1102,7 @@ mod tests {
         assert_eq!(decomp.partner[0], -1);
     }
 
-    // ---- T005: build_condensed_adjacency unit tests ----
+    // ---- build_condensed_adjacency unit tests ----
 
     /// Helper: create a symmetric matrix from upper-triangular entries.
     fn make_upper_tri(n: usize, entries: &[(usize, usize, f64)]) -> SparseColMat<usize, f64> {
@@ -1197,7 +1205,7 @@ mod tests {
         assert!(adjncy[n1_start..n1_end].contains(&0));
     }
 
-    // ---- T007: expand_ordering unit tests ----
+    // ---- expand_ordering unit tests ----
 
     #[test]
     fn test_expand_ordering_with_pairs() {

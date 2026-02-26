@@ -1,3 +1,14 @@
+//! Error types for the sparse solver pipeline.
+//!
+//! Provides [`SparseError`], the unified error enum for all phases of the
+//! sparse solver (analysis, factorization, solve, and I/O). Implements
+//! [`std::error::Error`] and [`Display`](std::fmt::Display) for integration
+//! with standard Rust error handling.
+//!
+//! `PartialEq` is intentionally not derived because the `NumericalSingularity`
+//! variant contains `f64`, where `NaN != NaN` would cause subtle comparison
+//! bugs. Use `matches!()` for pattern-matching assertions in tests.
+
 use std::fmt;
 
 /// Errors that can occur during sparse solver operations.
@@ -9,41 +20,75 @@ use std::fmt;
 pub enum SparseError {
     /// Matrix dimensions are incompatible.
     DimensionMismatch {
+        /// Expected dimensions (rows, cols).
         expected: (usize, usize),
+        /// Actual dimensions (rows, cols).
         got: (usize, usize),
+        /// Description of where the mismatch occurred.
         context: String,
     },
 
     /// A matrix that should be square is not.
-    NotSquare { dims: (usize, usize) },
+    NotSquare {
+        /// Actual dimensions (rows, cols).
+        dims: (usize, usize),
+    },
 
     /// Input contains NaN, Inf, or other invalid floating-point values.
-    InvalidInput { reason: String },
+    InvalidInput {
+        /// Description of the invalid input.
+        reason: String,
+    },
 
     /// The matrix is structurally singular (symbolic analysis detected zero diagonal).
-    StructurallySingular { column: usize },
+    StructurallySingular {
+        /// Zero-diagonal column index.
+        column: usize,
+    },
 
     /// Numeric factorization encountered a zero or near-zero pivot.
-    NumericalSingularity { pivot_index: usize, value: f64 },
+    NumericalSingularity {
+        /// Index of the singular pivot.
+        pivot_index: usize,
+        /// The near-zero pivot value.
+        value: f64,
+    },
 
     /// An ordering or analysis algorithm failed.
-    AnalysisFailure { reason: String },
+    AnalysisFailure {
+        /// Description of the failure.
+        reason: String,
+    },
 
     /// An IO operation failed (file not found, permission denied, etc.).
-    IoError { source: String, path: String },
+    IoError {
+        /// Error description.
+        source: String,
+        /// File path that caused the error.
+        path: String,
+    },
 
     /// A file could not be parsed (malformed Matrix Market, invalid JSON, etc.).
     ParseError {
+        /// Description of the parse failure.
         reason: String,
+        /// File path that could not be parsed.
         path: String,
+        /// Line number where parsing failed, if available.
         line: Option<usize>,
     },
 
     /// A named matrix was not found in the registry.
-    MatrixNotFound { name: String },
+    MatrixNotFound {
+        /// Name that was looked up.
+        name: String,
+    },
 
     /// Solve was called before factor() completed.
-    SolveBeforeFactor { context: String },
+    SolveBeforeFactor {
+        /// Description of the premature solve attempt.
+        context: String,
+    },
 }
 
 impl fmt::Display for SparseError {

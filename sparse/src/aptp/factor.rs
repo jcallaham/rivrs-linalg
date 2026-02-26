@@ -63,11 +63,11 @@ const COMPLETE_PIVOTING_GROWTH_BOUND: f64 = 4.0;
 /// Configuration for the APTP factorization kernel.
 ///
 /// # Defaults
-/// - `threshold`: 0.01 (growth factor bound of 100, matching SPRAL)
-/// - `small`: 1e-20 (singularity detection, matching SPRAL)
+/// - `threshold`: 0.01 (growth factor bound of 100)
+/// - `small`: 1e-20 (singularity detection)
 /// - `fallback`: [`AptpFallback::BunchKaufman`]
-/// - `outer_block_size`: 256 (two-level outer block, matching SPRAL)
-/// - `inner_block_size`: 32 (two-level inner block, matching SPRAL)
+/// - `outer_block_size`: 256 (two-level outer block)
+/// - `inner_block_size`: 32 (two-level inner block)
 ///
 /// # Block Size Parameters (Two-Level APTP)
 ///
@@ -82,7 +82,6 @@ const COMPLETE_PIVOTING_GROWTH_BOUND: f64 = 4.0;
 ///
 /// # References
 ///
-/// - SPRAL default: `u = 0.01`, `small = 1e-20`
 /// - Duff, Hogg & Lopez (2020), Section 4: threshold parameter u
 /// - Duff, Hogg & Lopez (2020), Section 3: two-level blocking with nb=256, ib=32
 #[derive(Debug, Clone)]
@@ -266,7 +265,7 @@ pub struct AptpStatistics {
 pub struct AptpPivotRecord {
     /// Original column index.
     pub col: usize,
-    /// Classification from Phase 2 (OneByOne, TwoByTwo, Delayed).
+    /// Classification (OneByOne, TwoByTwo, Delayed).
     pub pivot_type: PivotType,
     /// Worst stability metric for this column's L entries.
     pub max_l_entry: f64,
@@ -354,20 +353,17 @@ pub fn aptp_factor_in_place(
 
     // Primary factorization dispatch.
     //
-    // SPRAL uses ldlt_tpp_factor (TPP) for blocks with ncol < INNER_BLOCK_SIZE,
-    // and block_ldlt (complete pivoting) for full aligned blocks. TPP tries 2x2
-    // pivots first for every column, accepting more 2x2 pivots than complete
-    // pivoting (which only tries 2x2 when the off-diagonal is the global max).
-    // For indefinite matrices, 2x2 pivots pair +/- eigenvalues and produce
+    // Small fronts (< inner_block_size) use TPP, which tries 2x2 pivots first
+    // on every column. This accepts more 2x2 pivots than complete pivoting
+    // (which only tries 2x2 when the off-diagonal is the global max). For
+    // indefinite matrices, 2x2 pivots pair +/- eigenvalues and produce
     // better-conditioned factors.
-    //
-    // See SPRAL ldlt_app.cxx Block::factor() lines 994-1020.
     // Allocate kernel workspace once for the BLAS-3 paths (reused across
     // all block iterations within factor_inner / two_level_factor).
     let mut kernel_ws = AptpKernelWorkspace::new(m, options.inner_block_size);
 
     let mut result = if num_fully_summed < options.inner_block_size {
-        // Small front: use TPP as primary method (matching SPRAL)
+        // Small front: use TPP as primary method
         tpp_factor_rect(a.rb_mut(), num_fully_summed, options)?
     } else if num_fully_summed > options.outer_block_size {
         two_level_factor(a.rb_mut(), num_fully_summed, options, &mut kernel_ws)?
@@ -421,7 +417,7 @@ pub fn aptp_factor_in_place(
 /// 4. Returns [`AptpFactorization`] with all components as owned types
 ///
 /// Suitable for standalone testing and small matrices. For large frontal
-/// matrices in multifrontal factorization (Phase 6), use
+/// matrices in multifrontal factorization, use
 /// [`aptp_factor_in_place`] directly to avoid the copy.
 pub fn aptp_factor(
     a: MatRef<'_, f64>,
@@ -580,7 +576,7 @@ fn extract_l(a: MatRef<'_, f64>, d: &MixedDiagonal, num_eliminated: usize) -> Ma
 
     let mut col = 0;
     while col < num_eliminated {
-        match d.get_pivot_type(col) {
+        match d.pivot_type(col) {
             PivotType::OneByOne => {
                 for i in (col + 1)..n {
                     l[(i, col)] = a[(i, col)];
@@ -1179,7 +1175,7 @@ fn adjust_for_2x2_boundary(effective_nelim: usize, d: &MixedDiagonal) -> usize {
         return 0;
     }
     let last = effective_nelim - 1;
-    match d.get_pivot_type(last) {
+    match d.pivot_type(last) {
         PivotType::TwoByTwo { partner } if partner > last => {
             // Last accepted is the first column of a 2×2 whose partner is beyond nelim
             effective_nelim - 1
@@ -1268,7 +1264,7 @@ impl<'a> BlockBackup<'a> {
         // with symmetric permutation from backup.
         // backup[r, c] stored with r >= c (lower triangle).
         // In backup coordinates: row i, col j.
-        // SPRAL: aval[j*lda+i] = backup[min(r,c)*ldcopy + max(r,c)]
+        // a[(col_start+i, col_start+j)] = backup[(max(r,c), min(r,c))]
         for j in nelim..block_cols {
             let c = block_perm[j]; // pre-perm column
             for i in nelim..block_cols {
@@ -1286,7 +1282,7 @@ impl<'a> BlockBackup<'a> {
         // Region 2: Panel below diagonal block — restore a[k+bs..m, k+e..k+bs]
         // Only column permutation applies (panel rows were permuted by
         // apply_cperm step, but we need original values at permuted column).
-        // SPRAL: aval[j*lda+i] = backup[c*ldcopy+i]
+        // a[(col_start+i, col_start+j)] = backup[(i, c)]
         for j in nelim..block_cols {
             let c = block_perm[j]; // pre-perm column
             for i in block_cols..(m - col_start) {
@@ -1363,9 +1359,9 @@ fn apply_and_check(
     // For 2×2 pivot at columns (j, j+1): solve the 2×2 system
     let mut col = 0;
     while col < block_nelim {
-        match d.get_pivot_type(col) {
+        match d.pivot_type(col) {
             PivotType::OneByOne => {
-                let d_val = d.get_1x1(col);
+                let d_val = d.diagonal_1x1(col);
                 let inv_d = 1.0 / d_val;
                 for i in 0..panel_rows {
                     a[(panel_start + i, col_start + col)] *= inv_d;
@@ -1373,7 +1369,7 @@ fn apply_and_check(
                 col += 1;
             }
             PivotType::TwoByTwo { partner } if partner > col => {
-                let block = d.get_2x2(col);
+                let block = d.diagonal_2x2(col);
                 let det = block.a * block.c - block.b * block.b;
                 let inv_det = 1.0 / det;
                 for i in 0..panel_rows {
@@ -1397,7 +1393,7 @@ fn apply_and_check(
 
     let mut scan_col = 0;
     while scan_col < block_nelim {
-        let pivot_width = match d.get_pivot_type(scan_col) {
+        let pivot_width = match d.pivot_type(scan_col) {
             PivotType::TwoByTwo { partner } if partner > scan_col => 2,
             _ => 1,
         };
@@ -1467,16 +1463,16 @@ fn update_trailing(
     let mut w = ld_buf.as_mut().submatrix_mut(0, 0, trailing_size, nelim);
     let mut col = 0;
     while col < nelim {
-        match d.get_pivot_type(col) {
+        match d.pivot_type(col) {
             PivotType::OneByOne => {
-                let d_val = d.get_1x1(col);
+                let d_val = d.diagonal_1x1(col);
                 for i in 0..trailing_size {
                     w[(i, col)] = a[(trailing_start + i, col_start + col)] * d_val;
                 }
                 col += 1;
             }
             PivotType::TwoByTwo { partner } if partner > col => {
-                let block = d.get_2x2(col);
+                let block = d.diagonal_2x2(col);
                 for i in 0..trailing_size {
                     let l1 = a[(trailing_start + i, col_start + col)];
                     let l2 = a[(trailing_start + i, col_start + col + 1)];
@@ -1561,16 +1557,16 @@ fn compute_ld_into(l: MatRef<'_, f64>, d: &MixedDiagonal, nelim: usize, mut dst:
     let nrows = l.nrows();
     let mut col = 0;
     while col < nelim {
-        match d.get_pivot_type(col) {
+        match d.pivot_type(col) {
             PivotType::OneByOne => {
-                let d_val = d.get_1x1(col);
+                let d_val = d.diagonal_1x1(col);
                 for i in 0..nrows {
                     dst[(i, col)] = l[(i, col)] * d_val;
                 }
                 col += 1;
             }
             PivotType::TwoByTwo { partner } if partner > col => {
-                let block = d.get_2x2(col);
+                let block = d.diagonal_2x2(col);
                 for i in 0..nrows {
                     let l1 = l[(i, col)];
                     let l2 = l[(i, col + 1)];
@@ -1636,9 +1632,9 @@ pub(crate) fn compute_contribution_gemm(
     //         contrib_buffer[0..nfs, 0..nfs] (lower triangle only).
     //
     // This copy is unavoidable: assembly scatters into frontal_data, but the
-    // GEMM output goes to contrib_buffer. SPRAL avoids this by scattering
-    // NFS entries directly into the contribution buffer during assembly — a
-    // larger architectural change deferred for a future phase.
+    // GEMM output goes to contrib_buffer. A future optimization could scatter
+    // NFS entries directly into the contribution buffer during assembly,
+    // eliminating this copy at the cost of a larger architectural change.
     for j in 0..nfs {
         let col_len = nfs - j;
         let src = &frontal_data.col_as_slice(p + j)[p + j..m];
@@ -1809,7 +1805,7 @@ fn update_cross_terms(
 ///
 /// This is the middle level of the two-level hierarchy. Processes `num_fully_summed`
 /// columns of the block `a[0..m, 0..m]` using ib-sized sub-blocks with the
-/// three-phase BLAS-3 pattern from SPRAL's `run_elim_pivoted_notasks`:
+/// three-phase BLAS-3 pattern (factor / apply+check / update):
 ///
 /// 1. **Backup**: Save `a[k..m, k..k+block_size]` before factoring
 /// 2. **Factor**: `factor_block_diagonal` on the ib×ib diagonal block (complete pivoting)
@@ -1827,8 +1823,7 @@ fn update_cross_terms(
 /// Key difference from the old implementation: on threshold failure we DO NOT
 /// fully restore and retry. Instead we keep the passed columns, partially
 /// restore only the failed columns (using permuted backup), apply Schur updates
-/// from passed to failed+trailing, and advance. This matches SPRAL's
-/// `run_elim_pivoted_notasks` (ldlt_app.cxx:1585-1713).
+/// from passed to failed+trailing, and advance.
 ///
 /// # Arguments
 /// - `a`: Dense frontal matrix block (m × m), modified in place
@@ -1866,7 +1861,7 @@ fn factor_inner(
 
     // BLAS-3 Factor/Apply/Update loop with ib-sized inner blocks.
     //
-    // Matches SPRAL's `run_elim_pivoted_notasks` architecture:
+    // BLAS-3 Factor/Apply/Update architecture:
     //   1. Backup (pre-factor)
     //   2. Factor diagonal block (complete pivoting, block-scoped swaps)
     //   3. Permute panel columns by block_perm
@@ -1880,9 +1875,8 @@ fn factor_inner(
     //  11. Delay failed columns (swap to end_pos)
     //  12. Advance k += effective_nelim
     //
-    // Steps 5-6 happen BEFORE apply_and_check so the matrix is in a consistent
-    // permuted state regardless of threshold outcome (matching SPRAL where
-    // apply_rperm_and_backup happens before apply_pivot_app).
+    // Steps 5-6 happen BEFORE apply_and_check to ensure a consistent
+    // permuted state regardless of threshold outcome.
     while k < end_pos {
         let block_size = (end_pos - k).min(ib);
         let block_end = k + block_size;
@@ -1934,7 +1928,7 @@ fn factor_inner(
         {
             let mut bc = 0;
             while bc < block_nelim {
-                match block_d.get_pivot_type(bc) {
+                match block_d.pivot_type(bc) {
                     PivotType::TwoByTwo { partner } if partner > bc => {
                         a[(k + bc + 1, k + bc)] = 0.0;
                         bc += 2;
@@ -1947,8 +1941,7 @@ fn factor_inner(
         }
 
         // 5. ROW PERM PROPAGATION: apply block_perm to columns 0..k.
-        //    Done BEFORE apply_and_check (matching SPRAL where apply_rperm_and_backup
-        //    happens before apply_pivot_app). This ensures the matrix is in a
+        //    Done BEFORE apply_and_check to ensure the matrix is in a
         //    consistent permuted state regardless of threshold outcome.
         if k > 0 {
             for c in 0..k {
@@ -1985,7 +1978,6 @@ fn factor_inner(
 
         // 9. PARTIAL RESTORE (on failure): restore only failed columns from
         //    pre-factor backup with permutation applied.
-        //    SPRAL: restore_part_with_sym_perm for diagonal, restore_part for panel.
         //    We keep passed columns (0..effective_nelim) — their L11, D, L21 are committed.
         if effective_nelim < block_nelim {
             backup.restore_diagonal_with_perm(
@@ -2040,7 +2032,7 @@ fn factor_inner(
         let mut passed_2x2 = 0;
         let mut sc = 0;
         while sc < nelim {
-            match block_d.get_pivot_type(sc) {
+            match block_d.pivot_type(sc) {
                 PivotType::OneByOne => {
                     passed_1x1 += 1;
                     sc += 1;
@@ -2290,7 +2282,7 @@ fn two_level_factor(
 
 /// Test if `(t, p)` with `t < p` form a good 2x2 pivot.
 ///
-/// Three checks (matching SPRAL):
+/// Three necessary conditions for a stable 2x2 block pivot:
 /// 1. Non-zero pivot block: max(|a11|, |a21|, |a22|) >= small
 /// 2. Non-singular determinant with cancellation guard
 /// 3. Threshold: u * max(|D^{-1}_{11}|*maxt + |D^{-1}_{12}|*maxp,
@@ -2357,7 +2349,8 @@ fn tpp_test_2x2(
 /// pivoting.
 ///
 /// Uses full-matrix `swap_symmetric` which correctly propagates row swaps to
-/// already-factored L columns (matching SPRAL's `aleft` parameter).
+/// already-factored L columns (essential for correct L21 computation when rows
+/// are reordered).
 ///
 /// Returns the number of additional columns eliminated.
 ///
@@ -2487,7 +2480,7 @@ fn tpp_factor(
             }
 
             // Try p as 1x1 pivot
-            // maxp should include |a(p, t)| (SPRAL line 225)
+            // maxp should include |a(p, t)| for the off-diagonal contribution
             let maxp_with_t = maxp.max(tpp_sym_entry(a.as_ref(), p, t).abs());
             if a[(p, p)].abs() >= u * maxp_with_t {
                 // Accept 1x1 pivot: swap p→nelim
@@ -2804,7 +2797,7 @@ fn tpp_find_rc_abs_max_exclude(
 ///
 /// `ldlt_tpp_factor(m, n, perm, lcol, ldl, d, ld, ...)` in
 /// `spral/src/ssids/cpu/kernels/ldlt_tpp.cxx` (BSD-3-Clause).
-pub(crate) fn tpp_factor_rect(
+pub(super) fn tpp_factor_rect(
     mut a: MatMut<'_, f64>,
     num_fully_summed: usize,
     options: &AptpOptions,
@@ -3008,7 +3001,7 @@ pub(crate) fn tpp_factor_rect(
 /// - `ld_workspace`: Reusable W = L·D buffer.
 /// - `par`: Parallelism control.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn compute_contribution_gemm_rect(
+pub(super) fn compute_contribution_gemm_rect(
     l_storage: &Mat<f64>,
     num_fully_summed: usize,
     num_eliminated: usize,
@@ -3058,7 +3051,7 @@ pub(crate) fn compute_contribution_gemm_rect(
 /// Adapts `extract_front_factors` for the case where the factored data lives
 /// in a rectangular m×k matrix instead of a square m×m frontal matrix.
 /// The L11, D11, L21 extraction logic is identical; only the source layout differs.
-pub(crate) fn extract_front_factors_rect(
+pub(super) fn extract_front_factors_rect(
     l_storage: &Mat<f64>,
     m: usize,
     k: usize,
@@ -3073,7 +3066,7 @@ pub(crate) fn extract_front_factors_rect(
         let mut col = 0;
         while col < ne {
             l[(col, col)] = 1.0;
-            match result.d.get_pivot_type(col) {
+            match result.d.pivot_type(col) {
                 PivotType::OneByOne => {
                     let n_entries = ne - (col + 1);
                     if n_entries > 0 {
@@ -3110,13 +3103,13 @@ pub(crate) fn extract_front_factors_rect(
     let mut d11 = MixedDiagonal::new(ne);
     let mut col = 0;
     while col < ne {
-        match result.d.get_pivot_type(col) {
+        match result.d.pivot_type(col) {
             PivotType::OneByOne => {
-                d11.set_1x1(col, result.d.get_1x1(col));
+                d11.set_1x1(col, result.d.diagonal_1x1(col));
                 col += 1;
             }
             PivotType::TwoByTwo { partner: _ } => {
-                let block = result.d.get_2x2(col);
+                let block = result.d.diagonal_2x2(col);
                 d11.set_2x2(Block2x2 {
                     first_col: col,
                     a: block.a,
@@ -3174,7 +3167,7 @@ pub(crate) fn extract_front_factors_rect(
 /// complement is already in `contrib_buffer` (from `compute_contribution_gemm_rect`).
 /// Delayed column data (if any) is read from `l_storage[ne..k, ne..k]` and
 /// `l_storage[k..m, ne..k]`.
-pub(crate) fn extract_contribution_rect(
+pub(super) fn extract_contribution_rect(
     l_storage: &Mat<f64>,
     m: usize,
     k: usize,
@@ -3231,7 +3224,7 @@ mod tests {
     use super::*;
     use faer::Mat;
 
-    // ---- Phase 2: Test infrastructure (T004-T005) ----
+    // ---- Test infrastructure ----
 
     /// Reconstruct P^T L D L^T P from factorization components.
     fn reconstruct_dense_ldlt(l: &Mat<f64>, d: &MixedDiagonal, perm: &[usize]) -> Mat<f64> {
@@ -3242,13 +3235,13 @@ mod tests {
         let nd = d.dimension();
         let mut col = 0;
         while col < nd {
-            match d.get_pivot_type(col) {
+            match d.pivot_type(col) {
                 PivotType::OneByOne => {
-                    d_mat[(col, col)] = d.get_1x1(col);
+                    d_mat[(col, col)] = d.diagonal_1x1(col);
                     col += 1;
                 }
                 PivotType::TwoByTwo { partner } if partner > col => {
-                    let block = d.get_2x2(col);
+                    let block = d.diagonal_2x2(col);
                     d_mat[(col, col)] = block.a;
                     d_mat[(col, col + 1)] = block.b;
                     d_mat[(col + 1, col)] = block.b;
@@ -3327,7 +3320,7 @@ mod tests {
         Mat::from_fn(n, n, |i, j| if i >= j { f(i, j) } else { f(j, i) })
     }
 
-    // ---- Phase 2 infrastructure test ----
+    // ---- Infrastructure test ----
 
     #[test]
     fn test_reconstruction_trivial_identity() {
@@ -3367,7 +3360,7 @@ mod tests {
 
     #[test]
     fn test_cp_identity() {
-        // T006: 3×3 identity → D=[1,1,1], no permutation
+        // 3×3 identity → D=[1,1,1], no permutation
         let a = Mat::identity(3, 3);
         let mut a_copy = a.clone();
         let result = complete_pivoting_factor(a_copy.as_mut(), 1e-20);
@@ -3379,7 +3372,7 @@ mod tests {
 
         // D should be [1, 1, 1]
         for i in 0..3 {
-            assert!((result.d.get_1x1(i) - 1.0).abs() < 1e-14);
+            assert!((result.d.diagonal_1x1(i) - 1.0).abs() < 1e-14);
         }
 
         // No off-diagonal L entries
@@ -3388,7 +3381,7 @@ mod tests {
 
     #[test]
     fn test_cp_diagonal_pivot_ordering() {
-        // T007: 3×3 diagonal with known pivot ordering (largest diagonal first)
+        // 3×3 diagonal with known pivot ordering (largest diagonal first)
         let a = symmetric_matrix(3, |i, j| if i == j { [2.0, 5.0, 3.0][i] } else { 0.0 });
         let mut a_copy = a.clone();
         let result = complete_pivoting_factor(a_copy.as_mut(), 1e-20);
@@ -3398,25 +3391,25 @@ mod tests {
 
         // First pivot should be 5.0 (col 1), then 3.0 (col 2), then 2.0 (col 0)
         assert!(
-            (result.d.get_1x1(0) - 5.0).abs() < 1e-14,
+            (result.d.diagonal_1x1(0) - 5.0).abs() < 1e-14,
             "first pivot should be 5.0, got {}",
-            result.d.get_1x1(0)
+            result.d.diagonal_1x1(0)
         );
         assert!(
-            (result.d.get_1x1(1) - 3.0).abs() < 1e-14,
+            (result.d.diagonal_1x1(1) - 3.0).abs() < 1e-14,
             "second pivot should be 3.0, got {}",
-            result.d.get_1x1(1)
+            result.d.diagonal_1x1(1)
         );
         assert!(
-            (result.d.get_1x1(2) - 2.0).abs() < 1e-14,
+            (result.d.diagonal_1x1(2) - 2.0).abs() < 1e-14,
             "third pivot should be 2.0, got {}",
-            result.d.get_1x1(2)
+            result.d.diagonal_1x1(2)
         );
     }
 
     #[test]
     fn test_cp_2x2_pivot() {
-        // T008: 4×4 matrix requiring 2×2 pivot (off-diagonal maximum)
+        // 4×4 matrix requiring 2×2 pivot (off-diagonal maximum)
         // Designed so max entry is off-diagonal and Δ condition passes
         let a = symmetric_matrix(4, |i, j| {
             let vals = [
@@ -3449,7 +3442,7 @@ mod tests {
 
     #[test]
     fn test_cp_failed_2x2_fallback() {
-        // T009: 4×4 matrix where 2×2 Δ test fails → fallback to 1×1 on max diagonal
+        // 4×4 matrix where 2×2 Δ test fails → fallback to 1×1 on max diagonal
         // Need |Δ| < 0.5 * |a_tm|^2
         // a_mm * a_tt - a_tm^2 should be small relative to a_tm^2
         // Let a_mm = 1.0, a_tt = 1.0, a_tm = 2.0
@@ -3491,7 +3484,7 @@ mod tests {
 
     #[test]
     fn test_cp_singular_block() {
-        // T010: singular/near-singular block → zero pivot handling
+        // singular/near-singular block → zero pivot handling
         let mut a = Mat::zeros(3, 3);
         a[(0, 0)] = 1e-25;
         a[(1, 1)] = 1e-25;
@@ -3509,7 +3502,7 @@ mod tests {
 
     #[test]
     fn test_cp_reconstruction_random() {
-        // T011: reconstruction on random symmetric indefinite matrices
+        // reconstruction on random symmetric indefinite matrices
         // Use deterministic seed for reproducibility
         let sizes = [8, 16, 32];
         for &n in &sizes {
@@ -3556,8 +3549,6 @@ mod tests {
             );
         }
     }
-
-    // ---- US1 Tests (T006-T012) ----
 
     #[test]
     fn test_1x1_trivial_diagonal() {
@@ -3700,8 +3691,6 @@ mod tests {
         let sum = result.stats.num_1x1 + 2 * result.stats.num_2x2 + result.stats.num_delayed;
         assert_eq!(sum, 5, "statistics sum {} != n=5", sum);
     }
-
-    // ---- US2 Tests (T022-T026) ----
 
     #[test]
     fn test_2x2_pivot_known_indefinite() {
@@ -3856,8 +3845,6 @@ mod tests {
         }
     }
 
-    // ---- US3 Tests (T033-T036) ----
-
     #[test]
     fn test_pd_statistics() {
         let a = symmetric_matrix(4, |i, j| {
@@ -3955,7 +3942,7 @@ mod tests {
         assert_eq!(inertia.zero, 0, "expected 0 zero");
     }
 
-    // ---- Phase 6: Polish tests ----
+    // ---- Polish tests ----
 
     #[test]
     fn test_partial_factorization() {
@@ -4160,7 +4147,7 @@ mod tests {
         assert!(matches!(result, Err(SparseError::InvalidInput { .. })));
     }
 
-    // ---- Phase 6: Random matrix stress tests (T041-T042) ----
+    // ---- Random matrix stress tests ----
 
     #[cfg(feature = "test-util")]
     mod stress_tests {
@@ -4283,7 +4270,7 @@ mod tests {
         }
     }
 
-    // ---- Phase 6: Integration tests with test data (T046-T047) ----
+    // ---- Integration tests with test data ----
 
     #[cfg(feature = "test-util")]
     mod integration_tests {
@@ -4383,11 +4370,11 @@ mod tests {
         }
     }
 
-    // ---- Phase 3: factor_inner tests (T022) ----
+    // ---- factor_inner tests ----
 
     #[test]
     fn test_factor_inner_reconstruction_moderate() {
-        // T022: factor_inner on matrices of moderate size (128, 256)
+        // factor_inner on matrices of moderate size (128, 256)
         // verifying reconstruction < 1e-12.
         let sizes = [64, 128, 256];
         let opts = AptpOptions::default();
@@ -4459,11 +4446,11 @@ mod tests {
         );
     }
 
-    // ---- Phase 5: Two-level integration tests (T030-T034) ----
+    // ---- Two-level integration tests ----
 
     #[test]
     fn test_two_level_dispatch_small_block_size() {
-        // T031/T032: Test the two-level dispatch by setting outer_block_size small
+        // Test the two-level dispatch by setting outer_block_size small
         // so matrices of moderate size trigger two_level_factor.
         let sizes = [33, 64, 100];
         let opts = AptpOptions {
@@ -4509,7 +4496,7 @@ mod tests {
 
     #[test]
     fn test_two_level_single_outer_block() {
-        // T031: frontal dimension == nb → single outer block, equivalent to factor_inner
+        // frontal dimension == nb → single outer block, equivalent to factor_inner
         let n = 32;
         let opts = AptpOptions {
             outer_block_size: 32,
@@ -4537,7 +4524,7 @@ mod tests {
 
     #[test]
     fn test_two_level_boundary_nb_plus_1() {
-        // T032: frontal dimension == nb+1 → two blocks, second block has 1 column
+        // frontal dimension == nb+1 → two blocks, second block has 1 column
         let n = 33;
         let opts = AptpOptions {
             outer_block_size: 32,
@@ -4569,7 +4556,7 @@ mod tests {
 
     #[test]
     fn test_two_level_partial_factorization() {
-        // T033: partial factorization (num_fully_summed < m) with dimension > nb
+        // partial factorization (num_fully_summed < m) with dimension > nb
         // This triggers two_level_factor with a contribution block.
         let n = 80;
         let p = 50; // > outer_block_size=32, triggers two-level
@@ -4740,7 +4727,7 @@ mod tests {
 
         // D should be [1, 1, 1, 1]
         for i in 0..4 {
-            assert!((d.get_1x1(i) - 1.0).abs() < 1e-14);
+            assert!((d.diagonal_1x1(i) - 1.0).abs() < 1e-14);
         }
 
         // Identity permutation
@@ -5480,7 +5467,7 @@ mod tests {
         }
         let mut col = 0;
         while col < q {
-            match d.get_pivot_type(col) {
+            match d.pivot_type(col) {
                 PivotType::OneByOne => {
                     for i in (col + 1)..m {
                         l_full[(i, col)] = factored[(i, col)];
@@ -5505,13 +5492,13 @@ mod tests {
         let mut d_mat = Mat::zeros(q, q);
         col = 0;
         while col < q {
-            match d.get_pivot_type(col) {
+            match d.pivot_type(col) {
                 PivotType::OneByOne => {
-                    d_mat[(col, col)] = d.get_1x1(col);
+                    d_mat[(col, col)] = d.diagonal_1x1(col);
                     col += 1;
                 }
                 PivotType::TwoByTwo { partner } if partner > col => {
-                    let block = d.get_2x2(col);
+                    let block = d.diagonal_2x2(col);
                     d_mat[(col, col)] = block.a;
                     d_mat[(col, col + 1)] = block.b;
                     d_mat[(col + 1, col)] = block.b;
@@ -6286,7 +6273,7 @@ mod tests {
         let mut col = 0;
         while col < ne {
             l[(col, col)] = 1.0;
-            match result.d.get_pivot_type(col) {
+            match result.d.pivot_type(col) {
                 PivotType::OneByOne => {
                     for r in (col + 1)..ne {
                         l[(r, col)] = factored_rect[(r, col)];
@@ -6311,13 +6298,13 @@ mod tests {
         let mut d_mat = Mat::zeros(ne, ne);
         col = 0;
         while col < ne {
-            match result.d.get_pivot_type(col) {
+            match result.d.pivot_type(col) {
                 PivotType::OneByOne => {
-                    d_mat[(col, col)] = result.d.get_1x1(col);
+                    d_mat[(col, col)] = result.d.diagonal_1x1(col);
                     col += 1;
                 }
                 PivotType::TwoByTwo { partner } if partner > col => {
-                    let block = result.d.get_2x2(col);
+                    let block = result.d.diagonal_2x2(col);
                     d_mat[(col, col)] = block.a;
                     d_mat[(col, col + 1)] = block.b;
                     d_mat[(col + 1, col)] = block.b;
@@ -6551,10 +6538,10 @@ mod tests {
         let ne = result_rect.num_eliminated;
         let mut col = 0;
         while col < ne {
-            match result_rect.d.get_pivot_type(col) {
+            match result_rect.d.pivot_type(col) {
                 PivotType::OneByOne => {
-                    let d_r = result_rect.d.get_1x1(col);
-                    let d_s = d_sq.get_1x1(col);
+                    let d_r = result_rect.d.diagonal_1x1(col);
+                    let d_s = d_sq.diagonal_1x1(col);
                     assert!(
                         (d_r - d_s).abs() < 1e-15,
                         "D mismatch at col {col}: rect={d_r} sq={d_s}"
@@ -6562,8 +6549,8 @@ mod tests {
                     col += 1;
                 }
                 PivotType::TwoByTwo { partner } if partner > col => {
-                    let br = result_rect.d.get_2x2(col);
-                    let bs = d_sq.get_2x2(col);
+                    let br = result_rect.d.diagonal_2x2(col);
+                    let bs = d_sq.diagonal_2x2(col);
                     assert!((br.a - bs.a).abs() < 1e-15, "D.a mismatch at col {col}");
                     assert!((br.b - bs.b).abs() < 1e-15, "D.b mismatch at col {col}");
                     assert!((br.c - bs.c).abs() < 1e-15, "D.c mismatch at col {col}");
@@ -6895,7 +6882,7 @@ mod tests {
     }
 
     // =====================================================================
-    // Phase 9.2: SPRAL-Style Torture Tests (US2)
+    // SPRAL-Style Torture Tests
     // =====================================================================
     //
     // These tests exercise the dense APTP kernel with randomized adversarial
@@ -7223,7 +7210,7 @@ mod tests {
     }
 
     // =====================================================================
-    // Phase 9.2: Property-Based Tests (US3) — Kernel Level
+    // Property-Based Tests — Kernel Level
     // =====================================================================
 
     use crate::testing::strategies;

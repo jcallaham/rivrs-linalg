@@ -2,13 +2,13 @@
 # Build the SPRAL dense APTP kernel driver for comparison testing.
 #
 # Prerequisites:
-#   1. Run tools/build_spral.sh first (builds libspral.a)
+#   1. Run comparisons/drivers/build_spral.sh first (builds libspral.a)
 #   2. Have OpenBLAS installed (libopenblas-dev)
 #
 # Produces: /tmp/spral_dense_factor
 #
 # Usage:
-#   ./tools/build_spral_dense_factor.sh
+#   ./comparisons/drivers/build_spral_dense_factor.sh
 #   cargo run --example export_frontal --release
 #   /tmp/spral_dense_factor [-v] [-u 0.01] [-b 256] < /tmp/frontal_matrix.txt
 
@@ -23,7 +23,7 @@ OUTPUT=/tmp/spral_dense_factor
 
 if [ ! -f "$SPRAL_BUILD/libspral.a" ]; then
     echo "ERROR: $SPRAL_BUILD/libspral.a not found."
-    echo "Run tools/build_spral.sh first."
+    echo "Run comparisons/drivers/build_spral.sh first."
     exit 1
 fi
 

@@ -270,7 +270,7 @@ mod tests {
     use super::*;
     use crate::io::registry;
 
-    // T021: reconstruction_error tests
+    // reconstruction_error tests
 
     #[test]
     fn reconstruction_error_arrow_5_pd() {
@@ -318,7 +318,7 @@ mod tests {
         );
     }
 
-    // T022: backward_error tests
+    // backward_error tests
 
     #[test]
     fn backward_error_exact_solution() {
@@ -364,7 +364,7 @@ mod tests {
         );
     }
 
-    // T023: check_inertia tests
+    // check_inertia tests
 
     #[test]
     fn check_inertia_matching() {
@@ -396,7 +396,7 @@ mod tests {
         assert!(!check_inertia(&a, &b));
     }
 
-    // T024: validate_permutation tests
+    // validate_permutation tests
 
     #[test]
     fn validate_permutation_valid() {
@@ -423,7 +423,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // T025: dense_matvec test
+    // dense_matvec test
 
     #[test]
     fn dense_matvec_matches_manual() {

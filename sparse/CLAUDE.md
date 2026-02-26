@@ -103,18 +103,30 @@ src/
     └── generators.rs   # Random matrix generators (PD, indefinite)
 ```
 
-### Key Examples
+### Examples
 
 ```
 examples/
+├── basic_usage.rs          # Self-contained hello world: construct matrix, solve, validate
+├── solve_timing.rs         # End-to-end solve timing on CI SuiteSparse matrices
 ├── profile_matrix.rs       # Single-matrix profiling: per-supernode timing + Chrome Trace (requires diagnostic)
-├── baseline_collection.rs  # Structured JSON baseline collection (requires diagnostic)
-├── workload_analysis.rs    # Workload distribution + parallelism classification (requires diagnostic)
-├── export_frontal.rs       # Chrome Trace export for frontal matrices (requires diagnostic)
-├── solve_timing.rs         # End-to-end solve timing
-├── spral_comparison.rs     # Compare against SPRAL reference results
-├── accuracy_benchmark.rs   # Backward error across SuiteSparse suite
-└── front_sizes.rs          # Front size distribution analysis
+├── baseline_collection.rs  # Structured JSON baseline collection for regression tracking (requires diagnostic)
+└── parallel_scaling.rs     # Parallel speedup measurement across thread counts
+```
+
+### External Solver Comparisons
+
+```
+comparisons/
+├── README.md               # Build instructions and usage
+├── drivers/                # Fortran/C driver source + build scripts for external solvers
+│   ├── build_spral.sh      # Builds SPRAL library from source
+│   ├── spral_benchmark.f90 # SPRAL SSIDS benchmark driver (subprocess)
+│   ├── spral_full_solve.f90
+│   ├── spral_match_order.f90
+│   └── ...
+└── src/
+    └── spral_benchmark.rs  # Rust orchestration binary (cargo run --bin spral-comparison)
 ```
 
 ## Commands Reference
@@ -178,9 +190,15 @@ cargo run --example baseline_collection --features diagnostic --release -- --com
 
 Baseline JSON output goes to `target/benchmarks/baselines/baseline-<timestamp>.json`.
 
-### Profiling & Analysis
+### Examples
 
 ```bash
+# Self-contained hello world (no external data needed)
+cargo run --example basic_usage
+
+# End-to-end solve timing on CI SuiteSparse matrices
+cargo run --example solve_timing --release
+
 # Profile a single matrix — phase timing, factor breakdown, top supernodes by time
 cargo run --example profile_matrix --features diagnostic --release -- <matrix-name>
 cargo run --example profile_matrix --features diagnostic --release -- --path <file.mtx>
@@ -191,20 +209,28 @@ cargo run --example profile_matrix --features diagnostic --release -- <matrix-na
 # List available matrices
 cargo run --example profile_matrix --features diagnostic --release -- --list
 
-# Workload analysis — classifies matrices by parallelism strategy (TreeLevel/IntraNode/Mixed)
-cargo run --example workload_analysis --features diagnostic --release
+# Parallel scaling across thread counts
+cargo run --example parallel_scaling --release -- --ci-only
+cargo run --example parallel_scaling --release -- --threads 1,2,4,8
+```
 
-# Export assembled frontal matrix for SPRAL comparison (open in chrome://tracing or Perfetto)
-cargo run --example export_frontal --features diagnostic --release
+### External Solver Comparisons
 
-# Front size distribution
-cargo run --example front_sizes --release
+```bash
+# Build SPRAL driver (prerequisite)
+comparisons/drivers/build_spral.sh
 
-# Solve timing
-cargo run --example solve_timing --release
+# SPRAL-only on CI subset
+cargo run --bin spral-comparison --release -- --ci-only
 
-# Per-supernode statistics
-cargo run --example supernode_stats --release
+# Side-by-side rivrs vs SPRAL
+cargo run --bin spral-comparison --release -- --ci-only --rivrs
+
+# Control SPRAL thread count
+cargo run --bin spral-comparison --release -- --ci-only --threads 4
+
+# Compare against a previously collected rivrs baseline
+cargo run --bin spral-comparison --release -- --ci-only --compare target/benchmarks/baselines/prev.json
 ```
 
 ### CI (GitHub Actions)

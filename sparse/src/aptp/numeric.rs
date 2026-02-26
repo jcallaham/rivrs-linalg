@@ -3,7 +3,7 @@
 //! Implements the multifrontal method with A Posteriori Threshold Pivoting (APTP)
 //! for computing P^T A P = L D L^T factorizations of sparse symmetric indefinite
 //! matrices. The factorization traverses the assembly tree in postorder, assembling
-//! dense frontal matrices and factoring them using Phase 5's [`aptp_factor_in_place`]
+//! dense frontal matrices and factoring them using the [`aptp_factor_in_place`]
 //! kernel.
 //!
 //! # Algorithm Overview
@@ -18,7 +18,7 @@
 //! # Key Types
 //!
 //! - [`AptpNumeric`] — complete factorization result (public API)
-//! - [`FrontFactors`] — per-supernode factors (public, used by Phase 7 solve)
+//! - [`FrontFactors`] — per-supernode factors (public, used by triangular solve)
 //! - [`FactorizationStats`] — aggregate statistics (public)
 //! - `SupernodeInfo` — unified supernode descriptor (internal)
 //! - `FrontalMatrix` — temporary dense assembly matrix (internal)
@@ -244,13 +244,9 @@ pub(crate) struct AssemblyMaps {
     /// enumeration (all children of all supernodes in tree order).
     /// Length: total_children + 1.
     pub ea_offsets: Vec<usize>,
-    /// Maps each entry in `ea_offsets` to its child supernode index.
-    /// Length: total_children.
-    #[allow(dead_code)]
-    pub ea_child_snode: Vec<usize>,
     /// Per-supernode start offset into the children enumeration.
     /// `ea_snode_child_begin[s]..ea_snode_child_begin[s+1]` gives the range
-    /// in `ea_child_snode` / `ea_offsets` for supernode s's children.
+    /// in `ea_offsets` for supernode s's children.
     /// Length: num_supernodes + 1.
     pub ea_snode_child_begin: Vec<usize>,
 }
@@ -278,7 +274,7 @@ fn build_assembly_maps(
     let col_ptrs = symbolic.col_ptr();
     let row_indices_csc = symbolic.row_idx();
 
-    // ---- Phase 1: Build amap (original entry scatter maps) ----
+    // ---- Build amap (original entry scatter maps) ----
     // Each entry is 4 u32: [src_csc_index, dest_frontal_linear, scale_row, scale_col]
     // where scale_row = perm_inv[orig_row], scale_col = perm_inv[orig_col]
     // (precomputed for efficient MC64 scaling at assembly time).
@@ -354,11 +350,10 @@ fn build_assembly_maps(
         amap_offsets[s + 1] = entry_end;
     }
 
-    // ---- Phase 2: Build extend-add maps ----
+    // ---- Build extend-add maps ----
 
     let mut ea_map = Vec::new();
     let mut ea_offsets = vec![0usize];
-    let mut ea_child_snode = Vec::new();
     let mut ea_snode_child_begin = vec![0usize; n_supernodes + 1];
 
     for (s, sn) in supernodes.iter().enumerate() {
@@ -382,8 +377,6 @@ fn build_assembly_maps(
             // Without delays, the contribution block rows are exactly the pattern.
             // With delays, additional delayed rows appear — the precomputed map
             // won't cover those (fallback to g2l at factorization time).
-            ea_child_snode.push(c);
-
             for &child_row in &child_sn.pattern {
                 let parent_local = g2l[child_row];
                 debug_assert!(
@@ -402,7 +395,7 @@ fn build_assembly_maps(
             g2l[global] = NOT_IN_FRONT;
         }
 
-        ea_snode_child_begin[s + 1] = ea_child_snode.len();
+        ea_snode_child_begin[s + 1] = ea_offsets.len() - 1;
     }
 
     AssemblyMaps {
@@ -410,7 +403,6 @@ fn build_assembly_maps(
         amap_offsets,
         ea_map,
         ea_offsets,
-        ea_child_snode,
         ea_snode_child_begin,
     }
 }
@@ -505,7 +497,7 @@ pub(crate) struct FrontalMatrix<'a> {
     /// Dense m × m storage (lower triangle used). Borrows from workspace.
     pub data: MatMut<'a, f64>,
     /// Global permuted column indices for each local row (length m).
-    /// Used by callers that need index mapping (e.g., scatter maps in Phase 4).
+    /// Used by callers that need index mapping (e.g., scatter maps).
     #[allow(dead_code)]
     pub row_indices: &'a [usize],
     /// Number of fully-summed rows/columns (supernode cols + delayed from children).
@@ -537,8 +529,8 @@ pub(crate) struct ContributionBlock {
 /// Per-supernode factorization result.
 ///
 /// Stores the L11, D11, and L21 blocks extracted from the factored frontal
-/// matrix, along with permutation and index information needed by Phase 7
-/// (triangular solve).
+/// matrix, along with permutation and index information needed by the
+/// triangular solve.
 ///
 /// # Invariants
 ///
@@ -742,12 +734,12 @@ pub struct ExportedFrontal {
 /// Complete multifrontal numeric factorization result.
 ///
 /// Contains per-supernode factors and aggregate statistics. Created by
-/// [`AptpNumeric::factor`] and used by Phase 7 (triangular solve) to
+/// [`AptpNumeric::factor`] and used by the triangular solve to
 /// perform forward/backward substitution.
 ///
 /// # Usage
 ///
-/// ```no_run
+/// ```
 /// use faer::sparse::{SparseColMat, Triplet};
 /// use faer::sparse::linalg::cholesky::SymmetricOrdering;
 /// use rivrs_sparse::aptp::{AptpSymbolic, AptpOptions, AptpNumeric};
@@ -820,7 +812,7 @@ impl AptpNumeric {
     /// Factor a sparse symmetric matrix using the multifrontal method with APTP.
     ///
     /// Traverses the assembly tree in postorder, assembling and factoring dense
-    /// frontal matrices at each supernode using Phase 5's APTP kernel.
+    /// frontal matrices at each supernode using the dense APTP kernel.
     ///
     /// # Arguments
     ///
@@ -839,7 +831,7 @@ impl AptpNumeric {
     /// If a root supernode has columns that cannot be eliminated (all pivots
     /// delayed to root but still fail the threshold), these are recorded as
     /// zero pivots in [`FactorizationStats::zero_pivots`] rather than returning
-    /// an error. This matches SPRAL's behavior: the factorization succeeds but
+    /// an error. The factorization succeeds;
     /// the solve phase must handle the rank deficiency.
     ///
     /// # References
@@ -1540,7 +1532,7 @@ fn factor_single_supernode(
     })
 }
 
-/// Factor a small-leaf subtree using SPRAL-style rectangular L storage.
+/// Factor a small-leaf subtree using rectangular L storage.
 ///
 /// Replaces the general `factor_single_supernode` path for classified small-leaf
 /// subtrees with a streamlined per-node loop that:
@@ -1990,7 +1982,7 @@ fn factor_tree_levelset(
     let mut all_results: Vec<(usize, FrontFactors, PerSupernodeStats)> =
         Vec::with_capacity(n_supernodes);
 
-    // --- Small-leaf subtree pre-pass (SPRAL-style rectangular fast path) ---
+    // --- Small-leaf subtree pre-pass (rectangular workspace fast path) ---
     // Factor all classified small-leaf subtrees before the main level-set loop.
     // Each subtree uses a rectangular m×k L storage kernel instead of the general
     // m×m frontal matrix, eliminating the large square allocation, frontal zeroing,
@@ -2149,7 +2141,7 @@ fn factor_tree_levelset(
 ///
 /// `info[s].parent.map_or(true, |p| p > s)` for all `s` (postorder).
 #[allow(clippy::single_range_in_vec_init)]
-pub(crate) fn build_supernode_info(symbolic: &AptpSymbolic) -> Vec<SupernodeInfo> {
+fn build_supernode_info(symbolic: &AptpSymbolic) -> Vec<SupernodeInfo> {
     match symbolic.raw() {
         SymbolicCholeskyRaw::Supernodal(sn) => {
             let ns = sn.n_supernodes();
@@ -2209,7 +2201,7 @@ pub(crate) fn build_supernode_info(symbolic: &AptpSymbolic) -> Vec<SupernodeInfo
 }
 
 /// Build a map from each supernode to its children in the assembly tree.
-pub(crate) fn build_children_map(infos: &[SupernodeInfo]) -> Vec<Vec<usize>> {
+fn build_children_map(infos: &[SupernodeInfo]) -> Vec<Vec<usize>> {
     let n = infos.len();
     let mut children = vec![Vec::new(); n];
     for (s, info) in infos.iter().enumerate() {
@@ -2248,7 +2240,7 @@ pub(crate) fn build_children_map(infos: &[SupernodeInfo]) -> Vec<Vec<usize>> {
 ///
 /// - SPRAL `SymbolicSubtree.hxx:57-84` (BSD-3): bottom-up classification
 /// - Duff, Hogg & Lopez (2020), Algorithm 6.1: find_subtree_partition
-pub(crate) fn classify_small_leaf_subtrees(
+fn classify_small_leaf_subtrees(
     supernodes: &mut [SupernodeInfo],
     children_map: &[Vec<usize>],
     threshold: usize,
@@ -2463,7 +2455,7 @@ pub(crate) fn extend_add(
 /// rows correspond exactly to the child's symbolic pattern and the precomputed
 /// `ea_row_map` provides direct local index lookup without `global_to_local`.
 ///
-/// Uses column-oriented processing (à la SPRAL `asm_col`): for each child
+/// Uses column-oriented processing: for each child
 /// column `j`, scatters the lower-triangle entries `(j..cb_size, j)` into
 /// the parent. Source reads are contiguous in column-major layout.
 ///
@@ -2490,7 +2482,7 @@ fn extend_add_mapped(
         cb_size
     );
 
-    // Column-oriented scatter (à la SPRAL asm_col).
+    // Column-oriented scatter.
     // For each child column j, scatter lower-triangle entries (rows j..cb_size)
     // into the parent. Source reads via col_as_slice are contiguous in column-
     // major layout; writes target a single parent column when li >= lj (common
@@ -2567,7 +2559,7 @@ pub(crate) fn extract_front_factors(
         let mut col = 0;
         while col < ne {
             l[(col, col)] = 1.0; // unit diagonal
-            match result.d.get_pivot_type(col) {
+            match result.d.pivot_type(col) {
                 PivotType::OneByOne => {
                     // L entries: rows (col+1)..ne — contiguous in both source and dest
                     let n_entries = ne - (col + 1);
@@ -2609,13 +2601,13 @@ pub(crate) fn extract_front_factors(
     let mut d11 = MixedDiagonal::new(ne);
     let mut col = 0;
     while col < ne {
-        match result.d.get_pivot_type(col) {
+        match result.d.pivot_type(col) {
             PivotType::OneByOne => {
-                d11.set_1x1(col, result.d.get_1x1(col));
+                d11.set_1x1(col, result.d.diagonal_1x1(col));
                 col += 1;
             }
             PivotType::TwoByTwo { partner: _ } => {
-                let block = result.d.get_2x2(col);
+                let block = result.d.diagonal_2x2(col);
                 d11.set_2x2(Block2x2 {
                     first_col: col,
                     a: block.a,
@@ -3060,16 +3052,16 @@ mod tests {
         let mut ld = Mat::zeros(ne, ne);
         let mut col = 0;
         while col < ne {
-            match ff.d11.get_pivot_type(col) {
+            match ff.d11.pivot_type(col) {
                 PivotType::OneByOne => {
-                    let d = ff.d11.get_1x1(col);
+                    let d = ff.d11.diagonal_1x1(col);
                     for i in 0..ne {
                         ld[(i, col)] = ff.l11[(i, col)] * d;
                     }
                     col += 1;
                 }
                 PivotType::TwoByTwo { .. } => {
-                    let block = ff.d11.get_2x2(col);
+                    let block = ff.d11.diagonal_2x2(col);
                     for i in 0..ne {
                         let l0 = ff.l11[(i, col)];
                         let l1 = ff.l11[(i, col + 1)];
@@ -3203,16 +3195,16 @@ mod tests {
         // LD = L * D (handling 1x1 and 2x2)
         let mut col = 0;
         while col < ne {
-            match ff.d11.get_pivot_type(col) {
+            match ff.d11.pivot_type(col) {
                 PivotType::OneByOne => {
-                    let d = ff.d11.get_1x1(col);
+                    let d = ff.d11.diagonal_1x1(col);
                     for i in 0..full_l_rows {
                         ld[(i, col)] = full_l[(i, col)] * d;
                     }
                     col += 1;
                 }
                 PivotType::TwoByTwo { .. } => {
-                    let block = ff.d11.get_2x2(col);
+                    let block = ff.d11.diagonal_2x2(col);
                     for i in 0..full_l_rows {
                         let l0 = full_l[(i, col)];
                         let l1 = full_l[(i, col + 1)];
@@ -3677,7 +3669,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Small-leaf subtree classification tests (T006–T011)
+    // Small-leaf subtree classification tests
     // -----------------------------------------------------------------------
 
     /// Helper: create a SupernodeInfo with given parameters for classification tests.
@@ -3700,7 +3692,7 @@ mod tests {
         }
     }
 
-    /// T006: Linear chain of 5 small supernodes — all should be in_small_leaf.
+    /// Linear chain of 5 small supernodes — all should be in_small_leaf.
     #[test]
     fn test_classify_all_small() {
         // Chain: 0 → 1 → 2 → 3 → 4 (each has 2 owned cols, 3 pattern → front_size=5)
@@ -3731,7 +3723,7 @@ mod tests {
         assert_eq!(subtrees[0].parent_of_root, None);
     }
 
-    /// T007: Mixed tree — small leaves, large root.
+    /// Mixed tree — small leaves, large root.
     #[test]
     fn test_classify_mixed_tree() {
         // Tree: leaves 0,1 → parent 2 (large)
@@ -3756,7 +3748,7 @@ mod tests {
         assert_eq!(subtrees.len(), 0);
     }
 
-    /// T008: Single isolated small leaves — no subtree formed (min 2 nodes).
+    /// Single isolated small leaves — no subtree formed (min 2 nodes).
     #[test]
     fn test_classify_single_node_excluded() {
         // Three independent small leaves (no parent linkage between them)
@@ -3777,7 +3769,7 @@ mod tests {
         }
     }
 
-    /// T009: Threshold boundary — front_size == 256 excluded, 255 included.
+    /// Threshold boundary — front_size == 256 excluded, 255 included.
     #[test]
     fn test_classify_threshold_boundary() {
         // Node 0: front_size=255 (qualifies), child of node 1
@@ -3812,7 +3804,7 @@ mod tests {
         assert_eq!(subtrees2[0].nodes, vec![0, 1]);
     }
 
-    /// T010: Disabled when threshold=0.
+    /// Disabled when threshold=0.
     #[test]
     fn test_classify_disabled() {
         let mut supernodes = vec![make_snode(0, 2, 3, Some(1)), make_snode(2, 2, 3, None)];
@@ -3825,7 +3817,7 @@ mod tests {
         assert!(!supernodes[1].in_small_leaf);
     }
 
-    /// T011: Two independent small-leaf subtrees.
+    /// Two independent small-leaf subtrees.
     #[test]
     fn test_classify_multiple_subtrees() {
         // Tree:

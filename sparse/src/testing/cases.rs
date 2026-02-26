@@ -12,14 +12,23 @@ use crate::io::registry;
 /// for convenient access in test code.
 #[derive(Debug, Clone)]
 pub struct TestMatrixProperties {
+    /// Matrix dimension (number of rows/columns).
     pub size: usize,
+    /// Number of stored nonzeros.
     pub nnz: usize,
+    /// Whether the matrix is symmetric.
     pub symmetric: bool,
+    /// Whether the matrix is positive definite.
     pub positive_definite: bool,
+    /// Whether the matrix is indefinite.
     pub indefinite: bool,
+    /// Difficulty classification (e.g. "easy", "hard").
     pub difficulty: String,
+    /// Structural description (e.g. "saddle-point"), if any.
     pub structure: Option<String>,
+    /// Origin of the matrix (e.g. "hand-constructed", "SuiteSparse").
     pub source: String,
+    /// Problem category (e.g. "structural", "optimization").
     pub category: String,
 }
 
@@ -42,19 +51,28 @@ impl From<&registry::MatrixMetadata> for TestMatrixProperties {
 /// A complete test scenario for solver validation.
 #[derive(Debug, Clone)]
 pub struct SolverTestCase {
+    /// Matrix name (matches registry entry).
     pub name: String,
+    /// The sparse symmetric matrix to solve.
     pub matrix: SparseColMat<usize, f64>,
+    /// Structural and numerical properties.
     pub properties: TestMatrixProperties,
+    /// Known-correct factorization for validation, if available.
     pub reference: Option<ReferenceFactorization>,
 }
 
 /// Criteria for loading subsets of test matrices from the registry.
 #[derive(Debug, Clone)]
 pub struct TestCaseFilter {
+    /// Filter by matrix source (e.g. "hand-constructed").
     pub source: Option<String>,
+    /// Filter by problem category.
     pub category: Option<String>,
+    /// Filter by difficulty level.
     pub difficulty: Option<String>,
+    /// If true, only include CI-subset matrices.
     pub ci_only: bool,
+    /// If true, only include matrices with reference factorizations.
     pub require_reference: bool,
 }
 

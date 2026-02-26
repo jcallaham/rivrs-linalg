@@ -1,195 +1,100 @@
-//! Criterion benchmark binary for SSIDS solver phases.
+//! Criterion benchmarks for the SSIDS sparse symmetric indefinite solver.
 //!
-//! Benchmarks individual solver phases (analyze, factor, solve) and the
-//! end-to-end pipeline (roundtrip) across test matrices using the
-//! `Benchmarkable` trait.
+//! Groups:
+//! - `ssids/factor` — analyze + factor on CI SuiteSparse matrices
+//! - `ssids/solve` — solve alone (pre-factored) on CI SuiteSparse matrices
+//! - `ssids/symbolic_analysis` — symbolic analysis (AMD ordering)
+//! - `ssids/mc64_matching` — MC64 weighted bipartite matching
+//! - `ssids/match_order_metis` — combined MC64 + METIS ordering pipeline
+//! - `kernel/two_level`, `kernel/single_level` — dense APTP kernel comparison
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
-use rivrs_sparse::SolverPhase;
-use rivrs_sparse::aptp::{Mc64Job, match_order_metis, mc64_matching, metis_ordering};
-use rivrs_sparse::benchmarking::traits::Benchmarkable;
-use rivrs_sparse::benchmarking::{
-    BenchmarkConfig, MockBenchmarkable, SkippedBenchmark, read_peak_rss_kb,
+use faer::Col;
+use faer::Par;
+use faer::dyn_stack::{MemBuffer, MemStack};
+
+use rivrs_sparse::aptp::{
+    AnalyzeOptions, FactorOptions, Mc64Job, SparseLDLT, match_order_metis, mc64_matching,
 };
-use rivrs_sparse::testing::{SolverTestCase, TestCaseFilter, load_test_cases};
+use rivrs_sparse::benchmarking::read_peak_rss_kb;
+use rivrs_sparse::testing::{TestCaseFilter, load_test_cases};
 
-fn run_component_benchmarks(
-    c: &mut Criterion,
-    config: &BenchmarkConfig,
-    solver: &dyn Benchmarkable,
-    cases: &[SolverTestCase],
-) {
-    let mut skipped: Vec<SkippedBenchmark> = Vec::new();
-
-    for phase in &config.phases {
-        if *phase == SolverPhase::Roundtrip {
-            continue; // Roundtrip handled by run_e2e_benchmarks
+/// Benchmark analyze+factor and solve on CI SuiteSparse matrices using SparseLDLT.
+fn bench_factor_solve(c: &mut Criterion) {
+    let cases = match load_test_cases(&TestCaseFilter::ci_subset()) {
+        Ok(cases) => cases,
+        Err(e) => {
+            eprintln!("WARNING: Failed to load test cases: {}", e);
+            return;
         }
+    };
 
-        let group_name = format!("ssids/{}", phase);
-        let mut group = c.benchmark_group(&group_name);
+    let suitesparse: Vec<_> = cases
+        .into_iter()
+        .filter(|c| c.properties.source == "suitesparse")
+        .collect();
 
-        if let Some(sample_size) = config.sample_size {
-            group.sample_size(sample_size);
-        }
-        if let Some(measurement_time) = config.measurement_time {
-            group.measurement_time(measurement_time);
-        }
-        if let Some(warm_up_time) = config.warm_up_time {
-            group.warm_up_time(warm_up_time);
-        }
+    if suitesparse.is_empty() {
+        eprintln!("WARNING: No SuiteSparse test cases matched the filter");
+        return;
+    }
 
-        for case in cases {
+    let opts = AnalyzeOptions::default();
+    let factor_opts = FactorOptions::default();
+
+    // Factor benchmark: analyze + factor (analysis is amortized setup)
+    {
+        let mut group = c.benchmark_group("ssids/factor");
+        group.sample_size(10);
+
+        for case in &suitesparse {
             let nnz = case.properties.nnz;
             group.throughput(Throughput::Elements(nnz as u64));
 
-            if !solver.supports_phase(*phase) {
-                skipped.push(SkippedBenchmark {
-                    matrix_name: case.name.clone(),
-                    phase: *phase,
-                    reason: "phase not implemented".to_string(),
-                });
-                continue;
-            }
-
             group.bench_with_input(BenchmarkId::from_parameter(&case.name), &case, |b, case| {
-                match phase {
-                    SolverPhase::Analyze => {
-                        b.iter(|| solver.bench_analyze(&case.matrix));
-                    }
-                    SolverPhase::Factor => {
-                        let analysis = solver.bench_analyze(&case.matrix);
-                        b.iter(|| solver.bench_factor(&case.matrix, analysis.as_deref()));
-                    }
-                    SolverPhase::Solve => {
-                        let analysis = solver.bench_analyze(&case.matrix);
-                        let factorization = solver.bench_factor(&case.matrix, analysis.as_deref());
-                        let rhs: Vec<f64> = vec![1.0; case.matrix.nrows()];
-                        b.iter(|| solver.bench_solve(&case.matrix, factorization.as_deref(), &rhs));
-                    }
-                    SolverPhase::Roundtrip => unreachable!(),
-                }
+                b.iter(|| {
+                    let mut solver = SparseLDLT::analyze_with_matrix(&case.matrix, &opts).unwrap();
+                    solver.factor(&case.matrix, &factor_opts).unwrap();
+                });
             });
         }
         group.finish();
     }
 
-    if !skipped.is_empty() {
-        eprintln!("\nSkipped benchmarks:");
-        for s in &skipped {
-            eprintln!("  {}", s);
+    // Solve benchmark: solve only (pre-factored)
+    {
+        let mut group = c.benchmark_group("ssids/solve");
+        group.sample_size(10);
+
+        for case in &suitesparse {
+            let n = case.matrix.nrows();
+            let nnz = case.properties.nnz;
+            group.throughput(Throughput::Elements(nnz as u64));
+
+            let mut solver = SparseLDLT::analyze_with_matrix(&case.matrix, &opts)
+                .expect("analyze should succeed");
+            solver
+                .factor(&case.matrix, &factor_opts)
+                .expect("factor should succeed");
+
+            let rhs = Col::from_fn(n, |i| (i % 7) as f64 - 3.0);
+            let scratch_req = solver.solve_scratch(1);
+
+            group.bench_with_input(
+                BenchmarkId::from_parameter(&case.name),
+                &case,
+                |b, _case| {
+                    b.iter(|| {
+                        let mut mem = MemBuffer::new(scratch_req);
+                        let stack = MemStack::new(&mut mem);
+                        solver.solve(&rhs, stack, Par::Seq).unwrap()
+                    });
+                },
+            );
         }
+        group.finish();
     }
-}
-
-fn run_e2e_benchmarks(
-    c: &mut Criterion,
-    solver: &dyn Benchmarkable,
-    cases: &[SolverTestCase],
-    config: &BenchmarkConfig,
-) {
-    let mut group = c.benchmark_group("ssids/roundtrip");
-
-    if let Some(sample_size) = config.sample_size {
-        group.sample_size(sample_size);
-    }
-    if let Some(measurement_time) = config.measurement_time {
-        group.measurement_time(measurement_time);
-    }
-    if let Some(warm_up_time) = config.warm_up_time {
-        group.warm_up_time(warm_up_time);
-    }
-
-    for case in cases {
-        let nnz = case.properties.nnz;
-        group.throughput(Throughput::Elements(nnz as u64));
-
-        if !solver.supports_phase(SolverPhase::Roundtrip) {
-            eprintln!("  SKIP {}/roundtrip: phase not implemented", case.name);
-            continue;
-        }
-
-        group.bench_with_input(BenchmarkId::from_parameter(&case.name), &case, |b, case| {
-            let rhs: Vec<f64> = vec![1.0; case.matrix.nrows()];
-            b.iter(|| solver.bench_roundtrip(&case.matrix, &rhs));
-        });
-    }
-    group.finish();
-}
-
-fn bench_components(c: &mut Criterion) {
-    let rss_before = read_peak_rss_kb();
-
-    let config = BenchmarkConfig::default_components();
-    let solver = MockBenchmarkable::new();
-
-    let cases = match load_test_cases(&config.filter) {
-        Ok(cases) => cases,
-        Err(e) => {
-            eprintln!("WARNING: Failed to load test cases: {}", e);
-            return;
-        }
-    };
-
-    if cases.is_empty() {
-        eprintln!("WARNING: No test cases matched the filter");
-        return;
-    }
-
-    run_component_benchmarks(c, &config, &solver, &cases);
-
-    let rss_after = read_peak_rss_kb();
-    if let (Some(before), Some(after)) = (rss_before, rss_after) {
-        eprintln!(
-            "\nPeak RSS: {} KB -> {} KB (delta: {} KB)",
-            before,
-            after,
-            after.saturating_sub(before)
-        );
-    } else if let Some(after) = rss_after {
-        eprintln!("\nPeak RSS: {} KB", after);
-    }
-}
-
-fn bench_e2e(c: &mut Criterion) {
-    let config = BenchmarkConfig::default_components().with_phases(vec![SolverPhase::Roundtrip]);
-    let solver = MockBenchmarkable::new();
-
-    let cases = match load_test_cases(&config.filter) {
-        Ok(cases) => cases,
-        Err(e) => {
-            eprintln!("WARNING: Failed to load test cases: {}", e);
-            return;
-        }
-    };
-
-    if cases.is_empty() {
-        eprintln!("WARNING: No test cases matched the filter");
-        return;
-    }
-
-    run_e2e_benchmarks(c, &solver, &cases, &config);
-}
-
-fn bench_ci_subset(c: &mut Criterion) {
-    let config = BenchmarkConfig::default_components().with_filter(TestCaseFilter::ci_subset());
-    let solver = MockBenchmarkable::new();
-
-    let cases = match load_test_cases(&config.filter) {
-        Ok(cases) => cases,
-        Err(e) => {
-            eprintln!("WARNING: Failed to load test cases: {}", e);
-            return;
-        }
-    };
-
-    if cases.is_empty() {
-        eprintln!("WARNING: No test cases matched the filter");
-        return;
-    }
-
-    run_component_benchmarks(c, &config, &solver, &cases);
 }
 
 fn bench_symbolic_analysis(c: &mut Criterion) {
@@ -297,44 +202,18 @@ fn bench_match_order(c: &mut Criterion) {
         return;
     }
 
-    // Benchmark combined match_order_metis pipeline
-    {
-        let mut group = c.benchmark_group("ssids/match_order_metis");
-        group.sample_size(10);
+    let mut group = c.benchmark_group("ssids/match_order_metis");
+    group.sample_size(10);
 
-        for case in &suitesparse {
-            let nnz = case.properties.nnz;
-            group.throughput(Throughput::Elements(nnz as u64));
+    for case in &suitesparse {
+        let nnz = case.properties.nnz;
+        group.throughput(Throughput::Elements(nnz as u64));
 
-            group.bench_with_input(BenchmarkId::from_parameter(&case.name), &case, |b, case| {
-                b.iter(|| {
-                    match_order_metis(&case.matrix).expect("match_order_metis should succeed")
-                });
-            });
-        }
-        group.finish();
+        group.bench_with_input(BenchmarkId::from_parameter(&case.name), &case, |b, case| {
+            b.iter(|| match_order_metis(&case.matrix).expect("match_order_metis should succeed"));
+        });
     }
-
-    // Benchmark separate MC64 + METIS for comparison
-    {
-        let mut group = c.benchmark_group("ssids/mc64_plus_metis_separate");
-        group.sample_size(10);
-
-        for case in &suitesparse {
-            let nnz = case.properties.nnz;
-            group.throughput(Throughput::Elements(nnz as u64));
-
-            group.bench_with_input(BenchmarkId::from_parameter(&case.name), &case, |b, case| {
-                b.iter(|| {
-                    let _mc64 = mc64_matching(&case.matrix, Mc64Job::MaximumProduct)
-                        .expect("MC64 should succeed");
-                    let _metis =
-                        metis_ordering(case.matrix.symbolic()).expect("METIS should succeed");
-                });
-            });
-        }
-        group.finish();
-    }
+    group.finish();
 }
 
 /// Dense APTP kernel benchmark: two-level vs single-level comparison.
@@ -401,17 +280,13 @@ fn bench_kernel_two_level(c: &mut Criterion) {
     }
 }
 
-criterion_group!(component_benches, bench_components);
-criterion_group!(e2e_benches, bench_e2e);
-criterion_group!(ci_benches, bench_ci_subset);
+criterion_group!(factor_solve_benches, bench_factor_solve);
 criterion_group!(symbolic_benches, bench_symbolic_analysis);
 criterion_group!(mc64_benches, bench_mc64_matching);
 criterion_group!(match_order_benches, bench_match_order);
 criterion_group!(kernel_benches, bench_kernel_two_level);
 criterion_main!(
-    component_benches,
-    e2e_benches,
-    ci_benches,
+    factor_solve_benches,
     symbolic_benches,
     mc64_benches,
     match_order_benches,

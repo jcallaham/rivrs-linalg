@@ -9,7 +9,7 @@ use faer::sparse::linalg::cholesky::SymmetricOrdering;
 use rivrs_sparse::aptp::{AptpSymbolic, metis_ordering};
 use rivrs_sparse::testing::{TestCaseFilter, load_test_cases};
 
-// ---- T013: Hogg et al. (2016) Table III reference nnz(L) values ----
+// ---- Hogg et al. (2016) Table III reference nnz(L) values ----
 //
 // Source: Hogg, Ovtchinnikov & Scott (2016), "A New Sparse LDLT Solver using
 // A Posteriori Threshold Pivoting", Table III.
@@ -33,7 +33,7 @@ fn hogg2016_table3_nnz(name: &str) -> Option<usize> {
     }
 }
 
-// ---- T009: Integration tests for metis_ordering ----
+// ---- Integration tests for metis_ordering ----
 
 #[test]
 fn test_metis_ordering_suitesparse_ci_subset() {
@@ -123,7 +123,7 @@ fn test_metis_ordering_suitesparse_ci_subset() {
     }
 }
 
-// ---- T014: Validate nnz(L) against Hogg et al. (2016) Table III ----
+// ---- Validate nnz(L) against Hogg et al. (2016) Table III ----
 
 #[test]
 fn test_metis_nnz_matches_paper_values() {

@@ -7,6 +7,8 @@ description = "Sparse linear algebra solvers for the Rivrs symbolic-numeric fram
 license = "Apache-2.0"
 categories = ["science", "mathematics"]
 keywords = ["linear-algebra", "sparse-solver", "numerical-computing", "rust"]
+repository = "https://github.com/jcallaham/rivrs-linalg"
+readme = "README.md"
 
 [dependencies]
 faer = "0.22"
@@ -37,28 +39,22 @@ tempfile = "3"
 rivrs-sparse = { path = ".", features = ["test-util"] }
 
 [[example]]
-name = "export_frontal"
-required-features = ["diagnostic"]
-
-[[example]]
 name = "baseline_collection"
 required-features = ["diagnostic"]
 
 [[example]]
-name = "workload_analysis"
+name = "profile_matrix"
 required-features = ["diagnostic"]
 
-[[example]]
-name = "parallel_scaling"
-required-features = ["diagnostic"]
+[[bin]]
+name = "spral-comparison"
+path = "comparisons/src/spral_benchmark.rs"
 
 [[bench]]
 name = "solver_benchmarks"
 harness = false
 
 [profile.dev]
-# opt-level = 3 in dev/test profiles because faer's dense linear algebra
-# operations are unusably slow at opt-level 0, causing test timeouts.
 opt-level = 3
 
 [profile.test]

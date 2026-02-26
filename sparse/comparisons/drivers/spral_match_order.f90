@@ -24,7 +24,7 @@
 !   METIS_LIB=$(find /workspace/rivrs-linalg/sparse/target -name "libmetis.a" | head -1)
 !   gfortran -O2 -I /tmp/spral_mo -o /tmp/spral_match_order \
 !     /tmp/spral_mo/matrix_util.o /tmp/spral_mo/scaling.o /tmp/spral_mo/metis5_wrapper.o /tmp/spral_mo/match_order.o \
-!     tools/spral_match_order.f90 $METIS_LIB -lm
+!     comparisons/drivers/spral_match_order.f90 $METIS_LIB -lm
 
 program spral_match_order_driver
   use spral_match_order

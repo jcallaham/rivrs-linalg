@@ -1,3 +1,4 @@
+#![warn(missing_docs)]
 //! rivrs-sparse — Sparse Linear Algebra for Rivrs
 //!
 //! A scientific computing library providing sparse linear algebra solvers
@@ -26,6 +27,107 @@
 //! - SPRAL (BSD-3-Clause) for reference implementation patterns
 //!
 //! See [NOTICE](../NOTICE) for complete attribution and licensing information.
+//!
+//! # Quick Start
+//!
+//! ```
+//! use faer::sparse::{SparseColMat, Triplet};
+//! use faer::Col;
+//! use rivrs_sparse::aptp::{SparseLDLT, SolverOptions};
+//!
+//! // Symmetric indefinite 2x2: A = [[2, 1], [1, -1]]
+//! let triplets = vec![
+//!     Triplet::new(0, 0, 2.0),
+//!     Triplet::new(1, 0, 1.0), Triplet::new(0, 1, 1.0),
+//!     Triplet::new(1, 1, -1.0),
+//! ];
+//! let a = SparseColMat::try_new_from_triplets(2, 2, &triplets).unwrap();
+//! let b = Col::from_fn(2, |i| [3.0, 0.0][i]);
+//!
+//! let x = SparseLDLT::solve_full(&a, &b, &SolverOptions::default()).unwrap();
+//! assert!((x[0] - 1.0).abs() < 1e-12);
+//! assert!((x[1] - 1.0).abs() < 1e-12);
+//! ```
+//!
+//! # Three-Phase API
+//!
+//! For repeated solves with the same sparsity pattern, use the three-phase API
+//! to reuse the symbolic analysis:
+//!
+//! ```
+//! use faer::sparse::{SparseColMat, Triplet};
+//! use faer::{Col, Par};
+//! use faer::dyn_stack::{MemBuffer, MemStack};
+//! use rivrs_sparse::aptp::{SparseLDLT, AnalyzeOptions, FactorOptions};
+//!
+//! // Build a symmetric matrix (full CSC — both triangles stored)
+//! let triplets = vec![
+//!     Triplet::new(0, 0, 4.0),
+//!     Triplet::new(1, 0, 1.0), Triplet::new(0, 1, 1.0),
+//!     Triplet::new(1, 1, 3.0),
+//! ];
+//! let a = SparseColMat::try_new_from_triplets(2, 2, &triplets).unwrap();
+//!
+//! // Phase 1: Symbolic analysis (reusable for same sparsity pattern)
+//! let mut solver = SparseLDLT::analyze_with_matrix(&a, &AnalyzeOptions::default())?;
+//!
+//! // Phase 2: Numeric factorization
+//! solver.factor(&a, &FactorOptions::default())?;
+//!
+//! // Phase 3: Triangular solve
+//! let b = Col::from_fn(2, |i| [5.0, 4.0][i]);
+//! let req = solver.solve_scratch(1);
+//! let mut mem = MemBuffer::new(req);
+//! let x = solver.solve(&b, &mut MemStack::new(&mut mem), Par::Seq)?;
+//! assert!((x[0] - 1.0).abs() < 1e-12);
+//! assert!((x[1] - 1.0).abs() < 1e-12);
+//! # Ok::<(), rivrs_sparse::error::SparseError>(())
+//! ```
+//!
+//! # Ordering Strategies
+//!
+//! | Strategy | Best for | Notes |
+//! |----------|----------|-------|
+//! | [`MatchOrderMetis`](aptp::OrderingStrategy::MatchOrderMetis) | Hard-indefinite (KKT, saddle-point) | Default. MC64 matching + METIS |
+//! | [`Metis`](aptp::OrderingStrategy::Metis) | Easy-indefinite (FEM, thermal) | Pure METIS nested dissection |
+//! | [`Amd`](aptp::OrderingStrategy::Amd) | Small matrices, unit tests | faer built-in AMD |
+//!
+//! # Feature Flags
+//!
+//! | Feature | Purpose |
+//! |---------|---------|
+//! | `diagnostic` | Per-supernode timing instrumentation. Zero overhead when disabled. |
+//! | `test-util` | Test infrastructure: random matrix generators, property-based testing. |
+//!
+//! # Error Handling
+//!
+//! All fallible operations return [`Result<T, SparseError>`](error::SparseError).
+//! Error variants are organized by solver phase:
+//!
+//! - **Analysis**: [`NotSquare`](error::SparseError::NotSquare),
+//!   [`AnalysisFailure`](error::SparseError::AnalysisFailure)
+//! - **Factorization**: [`NumericalSingularity`](error::SparseError::NumericalSingularity),
+//!   [`StructurallySingular`](error::SparseError::StructurallySingular)
+//! - **Solve**: [`SolveBeforeFactor`](error::SparseError::SolveBeforeFactor),
+//!   [`DimensionMismatch`](error::SparseError::DimensionMismatch)
+//! - **I/O**: [`IoError`](error::SparseError::IoError),
+//!   [`ParseError`](error::SparseError::ParseError)
+//!
+//! # Matrix Storage Convention
+//!
+//! All input matrices must be stored as **full symmetric CSC** (both upper and
+//! lower triangles). The [`io::mtx`] reader automatically mirrors entries from
+//! Matrix Market files.
+//!
+//! # Examples
+//!
+//! See the [`examples/`](https://github.com/jcallaham/rivrs-linalg/tree/main/sparse/examples)
+//! directory for complete programs:
+//!
+//! - `basic_usage.rs` — Self-contained hello world
+//! - `solve_timing.rs` — End-to-end solve timing on SuiteSparse matrices
+//! - `profile_matrix.rs` — Per-supernode profiling with Chrome Trace export
+//! - `parallel_scaling.rs` — Parallel speedup measurement
 
 use std::fmt;
 
@@ -52,9 +154,13 @@ pub mod testing;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SolverPhase {
+    /// Symbolic analysis: ordering, elimination tree, supernode structure.
     Analyze,
+    /// Numeric factorization: LDL^T with APTP pivoting.
     Factor,
+    /// Triangular solve: forward/backward substitution.
     Solve,
+    /// Full end-to-end pipeline (analyze + factor + solve).
     Roundtrip,
 }
 

@@ -18,9 +18,9 @@
 !
 ! OpenMP thread count is controlled externally via OMP_NUM_THREADS.
 !
-! Compile (after running tools/build_spral.sh):
+! Compile (after running comparisons/drivers/build_spral.sh):
 !   gfortran -O2 -fopenmp -I /tmp/spral_ssids -o /tmp/spral_benchmark \
-!     tools/spral_benchmark.f90 \
+!     comparisons/drivers/spral_benchmark.f90 \
 !     -Wl,--whole-archive /tmp/spral_ssids/libspral.a -Wl,--no-whole-archive \
 !     $METIS_LIB -lopenblas -lstdc++ -lm -lgomp
 

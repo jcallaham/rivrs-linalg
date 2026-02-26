@@ -31,9 +31,15 @@ pub struct LEntry {
 #[derive(Debug, Clone)]
 pub enum DBlock {
     /// 1×1 scalar pivot.
-    OneByOne { value: f64 },
+    OneByOne {
+        /// The scalar pivot value.
+        value: f64,
+    },
     /// 2×2 symmetric pivot block (row-major).
-    TwoByTwo { values: [[f64; 2]; 2] },
+    TwoByTwo {
+        /// The 2x2 block entries in row-major layout.
+        values: [[f64; 2]; 2],
+    },
 }
 
 /// The known-correct LDL^T factorization of a hand-constructed matrix.

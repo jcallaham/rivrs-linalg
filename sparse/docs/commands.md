@@ -4,15 +4,6 @@ Can you review PR #22, looking for code quality, consistency with the plan outli
 
 %%
 
-Can you do a comprehensive review of the examples?  If we're coming up to release, which of these do we really need to keep, and which can be removed or condensed to a minimal set?  Then, let's also add a README.md file to this directory including an explanation of what each example does and how to run it.
-
-
-%%
-
 - Review codebase & structure
-- Remove dead code or anything hidden behind unnecessary cfg flags
-- Should anything be refactored, renamed, or deduplicated?
-- Remove references in comments to development processes (FR, US, task numbers, etc)
-- HACK, TODO, or FIXME comments
-- Remove comment references to SPRAL unless absolutely necessary.  SPRAL should be referenced for attribution, but the logic in the code should be explained directly with standalone logic, not "this is what SPRAL does".
 - Review benchmarks: what should be changed, removed, or added?
+- Documentation - how do we build and view, and what's the appropriate scope?  All public exports?
