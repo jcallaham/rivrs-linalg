@@ -9,6 +9,7 @@
 use faer::Mat;
 use faer::sparse::{SparseColMat, Triplet};
 use proptest::prelude::*;
+use rand::RngExt;
 
 use super::perturbations::{generate_dense_symmetric_indefinite, generate_dense_symmetric_pd};
 
@@ -89,8 +90,8 @@ fn generate_sparse_symmetric_from_density(
         if placed.len() >= target_pairs {
             break;
         }
-        let i = rng.gen_range(0..n);
-        let j = rng.gen_range(0..n);
+        let i = rng.random_range(0..n);
+        let j = rng.random_range(0..n);
         if i == j {
             continue;
         }
@@ -99,7 +100,7 @@ fn generate_sparse_symmetric_from_density(
             continue;
         }
         placed.insert((lo, hi));
-        let v: f64 = rng.gen_range(-1.0..1.0);
+        let v: f64 = rng.random_range(-1.0..1.0);
         triplets.push(Triplet::new(lo, hi, v));
         triplets.push(Triplet::new(hi, lo, v));
         row_abs_sum[lo] += v.abs();
@@ -109,7 +110,7 @@ fn generate_sparse_symmetric_from_density(
     // Add diagonal entries (diagonal dominance, mixed signs for indefinite)
     let half = n / 2;
     for (i, &abs_sum) in row_abs_sum.iter().enumerate() {
-        let margin = 1.0 + rng.r#gen::<f64>();
+        let margin = 1.0 + rng.random::<f64>();
         let diag = if i < half {
             abs_sum + margin
         } else {

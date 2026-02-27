@@ -12,7 +12,7 @@
 //! - Duff, Hogg & Lopez (2020), Section 4: threshold parameter and pivot failures
 
 use faer::Mat;
-use rand::Rng;
+use rand::{Rng, RngExt};
 
 /// Configuration for probabilistic torture test generation.
 ///
@@ -82,9 +82,9 @@ pub fn cause_delays(matrix: &mut Mat<f64>, block_size: usize, rng: &mut impl Rng
     for i in 0..num_rows {
         let row = if i == 0 && n > block_size {
             // First oversized row must be past first block boundary
-            block_size + rng.gen_range(0..n - block_size)
+            block_size + rng.random_range(0..n - block_size)
         } else {
-            rng.gen_range(0..n)
+            rng.random_range(0..n)
         };
         scaled_rows.push(row);
 
@@ -99,8 +99,8 @@ pub fn cause_delays(matrix: &mut Mat<f64>, block_size: usize, rng: &mut impl Rng
 
     // Scale n/8 random individual entries by 1000 (symmetrized)
     for _ in 0..num_entries {
-        let i = rng.gen_range(0..n);
-        let j = rng.gen_range(0..n);
+        let i = rng.random_range(0..n);
+        let j = rng.random_range(0..n);
         matrix[(i, j)] *= 1000.0;
         matrix[(j, i)] *= 1000.0;
         if i == j {
@@ -208,7 +208,7 @@ pub fn generate_dense_symmetric_indefinite(n: usize, rng: &mut impl Rng) -> Mat<
     // Fill lower triangle with random values, then symmetrize
     for j in 0..n {
         for i in j..n {
-            let v: f64 = rng.gen_range(-1.0..1.0);
+            let v: f64 = rng.random_range(-1.0..1.0);
             a[(i, j)] = v;
             a[(j, i)] = v;
         }
@@ -217,7 +217,7 @@ pub fn generate_dense_symmetric_indefinite(n: usize, rng: &mut impl Rng) -> Mat<
     // Add diagonal dominance with mixed signs
     for i in 0..n {
         let row_sum: f64 = (0..n).filter(|&j| j != i).map(|j| a[(i, j)].abs()).sum();
-        let margin = 1.0 + rng.r#gen::<f64>();
+        let margin = 1.0 + rng.random::<f64>();
         if i < n / 2 {
             a[(i, i)] = row_sum + margin;
         } else {
@@ -238,7 +238,7 @@ pub fn generate_dense_symmetric_pd(n: usize, rng: &mut impl Rng) -> Mat<f64> {
     // Fill lower triangle with random values, then symmetrize
     for j in 0..n {
         for i in j..n {
-            let v: f64 = rng.gen_range(-1.0..1.0);
+            let v: f64 = rng.random_range(-1.0..1.0);
             a[(i, j)] = v;
             a[(j, i)] = v;
         }
@@ -247,7 +247,7 @@ pub fn generate_dense_symmetric_pd(n: usize, rng: &mut impl Rng) -> Mat<f64> {
     // Add positive diagonal dominance
     for i in 0..n {
         let row_sum: f64 = (0..n).filter(|&j| j != i).map(|j| a[(i, j)].abs()).sum();
-        let margin = 1.0 + rng.r#gen::<f64>();
+        let margin = 1.0 + rng.random::<f64>();
         a[(i, i)] = row_sum + margin;
     }
 
