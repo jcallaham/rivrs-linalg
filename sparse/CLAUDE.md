@@ -124,7 +124,6 @@ comparisons/
 ├── README.md               # Build instructions and usage
 ├── drivers/                # Fortran/C driver source + build scripts for external solvers
 │   ├── build_spral.sh      # Builds SPRAL library from source
-│   ├── build_spral.sh      # Builds SPRAL library from source
 │   ├── build_mumps.sh      # Builds MUMPS driver (requires libmumps-seq-dev)
 │   ├── spral_benchmark.f90 # SPRAL SSIDS benchmark driver (subprocess)
 │   ├── mumps_benchmark.f90 # MUMPS benchmark driver (subprocess)

@@ -517,12 +517,11 @@ pub fn print_solver_comparison_row(
 }
 
 /// Print a solver-only table header.
-pub fn print_solver_only_header(solver_name: &str) {
+pub fn print_solver_only_header() {
     eprintln!(
         "{:<35} {:>8} {:>10} {:>7} {:>7} {:>7} {:>9}",
         "Matrix", "n", "nnz", "ana_s", "fac_s", "slv_s", "bwd_err"
     );
-    let _ = solver_name; // used by caller for section title
     eprintln!("{}", "-".repeat(90));
 }
 

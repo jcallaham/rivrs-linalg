@@ -236,7 +236,7 @@ fn main() {
                 continue;
             }
             eprintln!("\n=== {} ===", cat);
-            common::print_solver_only_header("MUMPS");
+            common::print_solver_only_header();
             for rec in &in_cat {
                 if let Some(ref sr) = rec.solver {
                     common::print_solver_only_row(
