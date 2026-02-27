@@ -10,7 +10,7 @@ categories = ["science", "mathematics"]
 keywords = ["linear-algebra", "sparse-solver", "numerical-computing", "rust"]
 repository = "https://github.com/jcallaham/rivrs-linalg"
 readme = "README.md"
-exclude = ["comparisons/"]
+exclude = ["comparisons/", "dev/", "test-data/"]
 
 [dependencies]
 faer = "0.24"
