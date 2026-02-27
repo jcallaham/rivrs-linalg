@@ -31,6 +31,9 @@
 //! - Bunch & Kaufman (1977), "Some Stable Methods for Calculating Inertia and
 //!   Solving Symmetric Linear Systems", Math. Comp.
 
+// SPRAL Equivalent: `LDLT<T, BLOCK_SIZE, Backup>::factor()` in
+// `spral/src/ssids/cpu/kernels/ldlt_app.cxx` (BSD-3).
+
 use faer::Par;
 use faer::linalg::matmul::triangular::{self as tri_matmul, BlockStructure};
 use faer::linalg::triangular_solve;
@@ -103,7 +106,7 @@ pub struct AptpOptions {
     /// `nemin` eliminated columns may be merged with their parent. Default: 32.
     ///
     /// Setting `nemin = 1` disables amalgamation entirely.
-    ///
+    // SPRAL Equivalent: `options%nemin` (`datatypes.f90:21`).
     pub nemin: usize,
     /// Front-size threshold for small-leaf subtree fast path. Default: 256.
     /// Set to 0 to disable.
@@ -458,6 +461,7 @@ fn swap_symmetric(mut a: MatMut<'_, f64>, i: usize, j: usize) {
 /// and the "rows k > j" loop uses `row_limit` instead of `a.nrows()`. This limits the
 /// swap to the diagonal block being factored, leaving both previously-factored columns
 /// (0..col_start) and panel rows (row_limit..m) untouched.
+// SPRAL Equivalent: `swap_cols(p, t, BLOCK_SIZE, a, lda, ...)` in `block_ldlt.hxx:68` (BSD-3).
 fn swap_symmetric_block(
     mut a: MatMut<'_, f64>,
     i: usize,
@@ -610,6 +614,7 @@ fn extract_l(a: MatRef<'_, f64>, d: &MixedDiagonal, num_eliminated: usize) -> Ma
 /// - Columns 0..num_eliminated contain L entries (unit diagonal implicit)
 /// - D entries stored in returned MixedDiagonal
 /// - The Schur complement is updated in-place in the trailing submatrix
+// SPRAL Equivalent: `block_ldlt()` in `spral/src/ssids/cpu/kernels/ldlt_app.cxx` (BSD-3).
 #[cfg(test)]
 fn complete_pivoting_factor(mut a: MatMut<'_, f64>, small: f64) -> AptpFactorResult {
     let n = a.nrows();
@@ -882,6 +887,7 @@ fn complete_pivoting_factor(mut a: MatMut<'_, f64>, small: f64) -> AptpFactorRes
 /// - `nelim`: number of successfully eliminated columns (may be < block_size if singular)
 /// - `stats`: pivot statistics for this block
 /// - `pivot_log`: per-pivot diagnostic records
+// SPRAL Equivalent: `block_ldlt()` in `spral/src/ssids/cpu/kernels/block_ldlt.hxx` (BSD-3).
 fn factor_block_diagonal(
     mut a: MatMut<'_, f64>,
     col_start: usize,
@@ -1150,6 +1156,7 @@ fn factor_block_diagonal(
 ///
 /// If the last accepted pivot at position `effective_nelim - 1` is the first half
 /// of a 2×2 pair whose partner is beyond `effective_nelim`, decrement by 1.
+// SPRAL Equivalent: `Column::adjust()` in `spral/src/ssids/cpu/kernels/ldlt_app.cxx:112-127` (BSD-3).
 fn adjust_for_2x2_boundary(effective_nelim: usize, d: &MixedDiagonal) -> usize {
     if effective_nelim == 0 {
         return 0;
@@ -1169,6 +1176,7 @@ fn adjust_for_2x2_boundary(effective_nelim: usize, d: &MixedDiagonal) -> usize {
 /// Stores a copy of matrix entries for one outer block column,
 /// enabling restore when the a posteriori check reduces nelim.
 ///
+// SPRAL Equivalent: `CopyBackup<T>` in `spral/src/ssids/cpu/kernels/ldlt_app.cxx` (BSD-3).
 /// Used by the BLAS-3 `factor_inner` to save the block column before
 /// factoring, so it can be restored if the Apply step's threshold check
 /// reduces nelim.
@@ -1225,6 +1233,7 @@ impl<'a> BlockBackup<'a> {
     /// Restores two regions:
     /// 1. Diagonal block: a[k+e..k+bs, k+e..k+bs] — symmetric with perm
     /// 2. Panel below: a[k+bs..m, k+e..k+bs] — column perm only
+    // SPRAL Equivalent: `CopyBackup::restore_part_with_sym_perm` (`ldlt_app.cxx:562-574`) (BSD-3).
     fn restore_diagonal_with_perm(
         &self,
         mut a: MatMut<'_, f64>,
@@ -1522,6 +1531,7 @@ fn update_trailing(
 /// For 2×2 pivots: W[i, col] = L[i,col]*D[col,col] + L[i,col+1]*D[col+1,col]
 ///                 W[i, col+1] = L[i,col]*D[col,col+1] + L[i,col+1]*D[col+1,col+1]
 ///
+// SPRAL Equivalent: `calcLD<OP_N>` in `spral/src/ssids/cpu/kernels/calc_ld.hxx:41+` (BSD-3).
 /// Writes into `dst[0..nrows, 0..nelim]`. The destination is overwritten, not zeroed first.
 fn compute_ld_into(l: MatRef<'_, f64>, d: &MixedDiagonal, nelim: usize, mut dst: MatMut<'_, f64>) {
     let nrows = l.nrows();
@@ -1571,6 +1581,7 @@ fn compute_ld_into(l: MatRef<'_, f64>, d: &MixedDiagonal, nelim: usize, mut dst:
 /// - `nfs == 0`: no contribution (root or fully eliminated), returns immediately
 /// - `ne == 0`: no rank update (copy only — all columns were delayed)
 ///
+// SPRAL Equivalent: `host_gemm` writing to `node.contrib` in `factor.hxx:92-103` (BSD-3).
 /// # References
 ///
 /// - Duff, Hogg & Lopez (2020), Section 3: deferred Schur complement
@@ -1653,6 +1664,7 @@ pub(crate) fn compute_contribution_gemm(
 /// - L_panel = a[ts..m, k..k+e] (panel L below diagonal block)
 /// - W = L * D (LD product)
 /// - ts = k + bs (trailing start)
+// SPRAL Equivalent: `Block::update` with rfrom/cfrom skip (`ldlt_app.cxx:1082-1153`) (BSD-3).
 #[allow(clippy::too_many_arguments)]
 fn update_cross_terms(
     mut a: MatMut<'_, f64>,
@@ -2252,6 +2264,7 @@ fn two_level_factor(
 ///    |D^{-1}_{12}|*maxt + |D^{-1}_{22}|*maxp) < 1
 ///
 /// Returns `Some((a11, a21, a22))` (D values, NOT D^{-1}) on success.
+// SPRAL Equivalent: `test_2x2()` in `spral/src/ssids/cpu/kernels/ldlt_tpp.cxx` (BSD-3).
 fn tpp_test_2x2(
     a: MatRef<'_, f64>,
     t: usize,
@@ -2504,6 +2517,7 @@ fn tpp_factor(
 ///
 /// Unlike `swap_symmetric` which operates on an m×m square matrix, this limits
 /// column operations to 0..n. Row swaps span the full column range 0..n.
+// SPRAL Equivalent: `swap_cols(col1, col2, m, n, ...)` in `ldlt_tpp.cxx:44-72` (BSD-3).
 fn swap_rect(mut a: MatMut<'_, f64>, i: usize, j: usize) {
     if i == j {
         return;
@@ -2652,6 +2666,7 @@ fn tpp_apply_2x2(mut a: MatMut<'_, f64>, nelim: usize, m: usize, num_fully_summe
 /// Check if all entries in row/column `idx` within the uneliminated region are
 /// smaller than `small` in absolute value. Works with both square (m×m) and
 /// rectangular (m×n, m ≥ n) matrices.
+// SPRAL Equivalent: `check_col_small()` in `spral/src/ssids/cpu/kernels/ldlt_tpp.cxx` (BSD-3).
 fn tpp_is_col_small(a: MatRef<'_, f64>, idx: usize, from: usize, to: usize, small: f64) -> bool {
     let n = a.ncols();
     // Row entries: a[(idx, c)] for c < idx (lower triangle: idx > c), limited to ncols
@@ -2673,6 +2688,7 @@ fn tpp_is_col_small(a: MatRef<'_, f64>, idx: usize, from: usize, to: usize, smal
 
 /// Find the column index with largest absolute entry in row `p`, scanning
 /// columns `from..to`. Works with both square and rectangular storage.
+// SPRAL Equivalent: `find_row_abs_max()` in `spral/src/ssids/cpu/kernels/ldlt_tpp.cxx` (BSD-3).
 fn tpp_find_row_abs_max(a: MatRef<'_, f64>, p: usize, from: usize, to: usize) -> usize {
     if from >= to {
         return from;
@@ -2691,6 +2707,7 @@ fn tpp_find_row_abs_max(a: MatRef<'_, f64>, p: usize, from: usize, to: usize) ->
 
 /// Find max absolute value in row/column `col` among uneliminated positions,
 /// excluding one index and the diagonal. Works with both square and rectangular storage.
+// SPRAL Equivalent: `find_rc_abs_max_exclude()` in `spral/src/ssids/cpu/kernels/ldlt_tpp.cxx` (BSD-3).
 fn tpp_find_rc_abs_max_exclude(
     a: MatRef<'_, f64>,
     col: usize,
@@ -2739,6 +2756,8 @@ fn tpp_find_rc_abs_max_exclude(
 /// # Returns
 ///
 /// `AptpFactorResult` with D, permutation, elimination count, and diagnostics.
+// SPRAL Equivalent: `ldlt_tpp_factor(m, n, perm, lcol, ldl, d, ld, ...)`
+// in `spral/src/ssids/cpu/kernels/ldlt_tpp.cxx` (BSD-3).
 pub(super) fn tpp_factor_rect(
     mut a: MatMut<'_, f64>,
     num_fully_summed: usize,

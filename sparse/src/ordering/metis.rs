@@ -114,6 +114,7 @@ pub struct MatchOrderResult {
 /// - Duff & Koster (2001), Algorithm MPD — MC64 matching
 /// - Duff & Pralet (2005) — MC64SYM symmetric scaling
 /// - SPRAL `match_order.f90` (BSD-3) — reference implementation
+// SPRAL Equivalent: `spral_match_order::match_order_metis` with `options%ordering = 2` in SSIDS.
 pub fn match_order_metis(
     matrix: &SparseColMat<usize, f64>,
 ) -> Result<MatchOrderResult, SparseError> {

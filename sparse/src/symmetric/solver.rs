@@ -10,6 +10,9 @@
 //!   Threshold Pivoting", SIAM J. Sci. Comput. 42(4)
 //! - Liu (1992), "The Multifrontal Method for Sparse Matrix Solution"
 
+// SPRAL Equivalent: `ssids_akeep` (symbolic) + `ssids_fkeep` (numeric)
+// and the `ssids_analyse`, `ssids_factor`, `ssids_solve` subroutines.
+
 use faer::Col;
 use faer::Par;
 use faer::dyn_stack::{MemBuffer, MemStack, StackReq};
@@ -34,6 +37,7 @@ use crate::ordering::{match_order_metis, metis_ordering};
 ///   quantum chemistry): use [`Metis`](Self::Metis) (the default).
 /// - **Hard indefinite** (KKT/saddle-point, optimal control, power networks,
 ///   mixed FEM / Stokes): use [`MatchOrderMetis`](Self::MatchOrderMetis).
+// SPRAL Equivalent: `options%ordering` (1=METIS default, 2=matching+METIS).
 #[derive(Debug, Clone)]
 pub enum OrderingStrategy {
     /// AMD ordering (faer built-in).
@@ -149,6 +153,8 @@ impl Default for SolverOptions {
 /// three-stage API: analyze → factor → solve. The symbolic analysis
 /// is reusable across factorizations with the same sparsity pattern.
 ///
+// SPRAL Equivalent: `ssids_akeep` (symbolic) + `ssids_fkeep` (numeric)
+// and `ssids_analyse`, `ssids_factor`, `ssids_solve` subroutines.
 /// # Examples
 ///
 /// ```
