@@ -1,0 +1,19 @@
+[package]
+name = "rivrs"
+version = "0.1.0"
+authors = ["Jared Callaham"]
+edition = "2024"
+rust-version = "1.87"
+description = "Scientific computing framework for Rust"
+license = "Apache-2.0"
+repository = "https://github.com/jcallaham/rivrs-linalg"
+readme = "README.md"
+categories = ["science", "mathematics"]
+keywords = ["scientific-computing", "numerical-computing", "linear-algebra", "rust"]
+
+[features]
+default = ["linalg"]
+linalg = ["dep:rivrs-linalg"]
+
+[dependencies]
+rivrs-linalg = { version = "0.1.0", optional = true }

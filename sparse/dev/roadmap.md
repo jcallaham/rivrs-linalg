@@ -1,0 +1,477 @@
+# Sparse Module Roadmap & Design
+
+**Date**: 2026-02-25 (updated 2026-02-26)
+**Status**: Living design document
+**Context**: The `sparse` crate contains a symmetric indefinite direct solver (SSIDS-style multifrontal LDL^T with APTP pivoting) and general-purpose ordering infrastructure (METIS, MC64). This document identifies high-value gaps in the Rust sparse LA ecosystem, assesses the effort required for future work, and sketches a longer-term module structure for when additional solvers are added.
+
+---
+
+## 1. Current Module Structure & Future Evolution
+
+### Current structure (as of Phase 9.3a)
+
+The initial restructure extracted `ordering/` as a top-level module and renamed
+`aptp/` to `symmetric/`. This is the current state:
+
+```
+sparse/src/
+├── lib.rs
+├── error.rs                    # General
+├── validate.rs                 # General
+│
+├── io/                         # General infrastructure
+│   ├── mtx.rs                  # MatrixMarket reader (currently symmetric-only)
+│   └── registry.rs             # Test matrix registry
+│
+├── ordering/                   # General: fill-reducing orderings (solver-independent)
+│   ├── metis.rs                # metis_ordering(), match_order_metis()
+│   ├── matching.rs             # mc64_matching() — weighted bipartite matching & scaling
+│   └── perm.rs                 # perm_from_forward()
+│
+├── symmetric/                  # Symmetric indefinite solver (APTP)
+│   ├── solver.rs               # SparseLDLT (public API)
+│   ├── factor.rs               # Dense APTP kernel + multifrontal numeric (AptpNumeric)
+│   ├── solve.rs                # Per-supernode solve
+│   ├── symbolic.rs             # AptpSymbolic (wraps faer SymbolicCholesky)
+│   ├── pivot.rs                # PivotType, Block2x2
+│   ├── diagonal.rs             # MixedDiagonal
+│   ├── inertia.rs              # Inertia
+│   ├── numeric.rs              # Multifrontal factorization loop
+│   └── amalgamation.rs         # Supernode merge (internal)
+│
+├── profiling/                  # General
+├── debug/                      # General
+├── testing/                    # General
+└── benchmarking/               # General
+```
+
+### Notional future structure (pending second consumer)
+
+When a second solver is added (e.g., unsymmetric multifrontal LU, iterative
+solvers), the generic multifrontal machinery currently inside `symmetric/` could
+be extracted into its own module. **This extraction should not happen until a
+concrete second consumer exists** — premature extraction risks designing the
+wrong abstractions. See "extract on the second consumer" principle in Section 5.
+
+```
+sparse/src/
+│   ...
+├── multifrontal/               # Generic multifrontal machinery (extract when needed)
+│   ├── workspace.rs            # FactorizationWorkspace (parameterized by factor type)
+│   ├── assembly.rs             # AssemblyMaps, extend_add, scatter_original
+│   ├── symbolic.rs             # Symbolic analysis wrapping faer
+│   ├── amalgamation.rs         # Supernode merge
+│   └── tree.rs                 # Tree traversal, parallelism, small-leaf fast path
+│
+├── symmetric/                  # Thinner: solver + APTP-specific code only
+│   ├── solver.rs               # SparseLDLT (public API)
+│   ├── factor.rs               # Dense APTP kernel
+│   ├── solve.rs                # Per-supernode solve
+│   ├── pivot.rs                # PivotType, Block2x2
+│   ├── diagonal.rs             # MixedDiagonal
+│   └── inertia.rs              # Inertia
+│   ...
+```
+
+The candidate reusable components within `symmetric/` today are:
+
+| Component | What's reusable | Where it lives now |
+|-----------|-----------------|-------------------|
+| `FactorizationWorkspace` | Pre-allocated buffer reuse across supernodes | `numeric.rs` |
+| `AssemblyMaps`, extend-add scatter | Core multifrontal assembly pattern | `numeric.rs` |
+| Tree traversal + parallelism | Postorder traversal, rayon scheduling, small-leaf fast path | `numeric.rs` |
+| Supernode amalgamation | Merge predicates | `amalgamation.rs` |
+| `permute_symbolic_upper_triangle()` | Symbolic analysis helper | `symbolic.rs` |
+| Analyze/factor/solve API pattern | Three-phase pipeline with ordering dispatch | `solver.rs` |
+
+---
+
+## 2. Gaps: High-Value Functionality Beyond faer
+
+### What faer 0.22 provides in sparse
+
+- **Matrix types**: CSC and CSR (owned, ref, mut, symbolic)
+- **Symmetric factorization**: Simplicial + supernodal LL^T and LDL^T (with regularization, not APTP), supernodal intranode LBL^T (Bunch-Kaufman)
+- **Unsymmetric factorization**: LU (partial pivoting), QR (no pivoting)
+- **Ordering**: AMD, COLAMD
+- **Triangular solve**: Sparse forward/backward substitution
+- **Sparse matmul**: Symbolic + numeric sparse-sparse multiplication
+- **Parallelism**: `Par` enum for tree-level and intra-node BLAS
+
+### What faer does NOT have
+
+**High-value gaps (strong candidates for rivrs-sparse):**
+
+| Gap | Value | Notes |
+|-----|-------|-------|
+| MC64 matching + scaling | Very high | We already have this; benefits any solver, not just symmetric |
+| METIS ordering | Very high | We have this via metis-sys; faer only has AMD/COLAMD |
+| Robust indefinite symmetric solve | High | faer's LDL^T uses regularization, not APTP; ours handles genuinely indefinite systems |
+| Iterative solvers (CG, GMRES, BiCGStab) | Very high | Workhorse for large systems; nothing in faer or the Rust ecosystem |
+| Incomplete factorizations (ILU, ICC) | High | Preconditioners for iterative solvers; complements direct solvers |
+| Sparse eigenvalue solver (Lanczos, LOBPCG) | High | Extremely common need; nothing in faer |
+| Block-structured solvers (saddle point, KKT) | Medium | Common in optimization, PDE, coupled physics |
+
+**Medium-value gaps:**
+
+| Gap | Value | Notes |
+|-----|-------|-------|
+| Graph partitioning interface | Medium | Our METIS wrapper could be generalized |
+| Sparse backward error | Medium | Our `sparse_backward_error()` is a useful diagnostic |
+| Solver profiling infrastructure | Medium | Chrome Trace export for sparse solvers |
+
+---
+
+## 3. Unsymmetric Multifrontal (MUMPS-style) Reuse Assessment
+
+If we were to add an unsymmetric multifrontal LU solver:
+
+### Directly reusable (~40% of codebase)
+
+- **Ordering**: `metis_ordering()`, `mc64_matching()` — MC64 is even *more* important for unsymmetric matrices (diagonal dominance improvement)
+- **IO**: `registry.rs`, `mtx.rs` (with format generalization to accept `general` matrices)
+- **Infrastructure**: profiling, debug, testing, benchmarking — all algorithm-agnostic
+- **Validation**: `sparse_backward_error()`, `validate_permutation()`
+
+### Reusable with refactoring (~25%)
+
+- **`AssemblyMaps` and extend-add scatter**: Core multifrontal assembly pattern is identical, but frontal matrices are rectangular (m x n, m >= n) instead of square
+- **`FactorizationWorkspace`**: Same workspace-reuse pattern, different buffer shapes
+- **Tree traversal and parallelism**: Same postorder traversal, same rayon pattern
+- **Small-leaf fast path**: Same subtree classification algorithm
+- **Supernode amalgamation**: Similar merge predicates
+
+### Must be rewritten (~35%)
+
+- **Dense kernel**: LU with partial pivoting instead of APTP
+- **Factor storage**: L + U factors instead of L + D (no `MixedDiagonal`)
+- **Pivot tracking**: Row permutations instead of 1x1/2x2 block classification
+- **Solve**: Forward L, then backward U (no diagonal middle step)
+- **Symbolic**: Unsymmetric elimination tree (column etree), different fill estimates
+
+---
+
+## 4. Strategic Recommendations
+
+### Highest-impact next solvers
+
+1. **Iterative solvers + preconditioners** (CG + ICC for symmetric, GMRES + ILU for general) — These complement direct solvers perfectly, fill a large gap in the Rust ecosystem, and our direct solver could serve as a preconditioner for very large systems (domain decomposition, Schur complement).
+
+2. **Sparse eigenvalue solver** (Lanczos for symmetric, Arnoldi for general) — Extremely common need, requires sparse matrix-vector product and a direct solver for shift-invert mode (which we already have).
+
+3. **Unsymmetric multifrontal LU** — Significant reuse of ordering, assembly, and infrastructure code. Would validate the `multifrontal/` extraction and prove the architecture generalizes.
+
+### Principle: extract on the second consumer
+
+Don't prematurely generalize. The `ordering/` module has been extracted (Phase 9.3a) because it's clearly solver-independent. The `multifrontal/` machinery should be extracted when there's a concrete second consumer (e.g., unsymmetric LU) that exercises the interface — premature extraction risks designing the wrong abstractions.
+
+---
+
+## 5. Shared-Memory vs Distributed-Memory Parallelism
+
+### Summary
+
+Distributed memory mostly **layers on top** of node-level solvers rather than requiring fundamental redesign — but the layering point depends heavily on the solver class.
+
+### Direct solvers: distributed is a different beast
+
+For multifrontal direct solvers, there are two levels where distribution could happen:
+
+**Tree-level distribution** — assign subtrees of the elimination tree to different nodes. Independent subtrees factor in parallel, with communication only at merge points (extend-add across node boundaries). This is how MUMPS and PaStiX work at the coarse level. In principle our tree-level rayon parallelism could be replaced with MPI at this boundary, but...
+
+**Root-front distribution** — the real problem. In 3D PDEs, most of the FLOPs concentrate in the large supernodes near the root of the elimination tree. For a cube mesh with n^3 unknowns, the root separator is O(n^2) and its dense frontal matrix is O(n^4) to factor. You can't parallelize this by giving subtrees to different nodes — you need 2D block-cyclic distribution of the dense frontal matrix *itself* across nodes (ScaLAPACK-style). This is what makes MUMPS and SuperLU_DIST so complex. It's fundamentally different from shared-memory BLAS.
+
+A distributed multifrontal solver is a multi-year, multi-team effort (MUMPS has had 25+ years of development). It's not something to build into rivrs-sparse — it's a different project entirely.
+
+### Iterative solvers: distributed layers on naturally
+
+An iterative solver (CG, GMRES, BiCGStab) has a simple inner loop:
+
+```
+repeat:
+    w = A * v          # sparse matrix-vector product
+    z = M^{-1} * w     # preconditioner application
+    update solution + convergence check
+```
+
+**SpMV distributes trivially** — partition rows across nodes, each node owns its chunk of the matrix, halo exchange for off-node column entries. The communication pattern is fixed (determined by sparsity structure).
+
+**Preconditioner is the interesting part:**
+- Block Jacobi / additive Schwarz: each node applies a *local* direct solve on its subdomain. Our `SparseLDLT` is exactly the right tool for this — runs on each node independently.
+- Overlap Schwarz: same idea, slightly more communication.
+- ILU/ICC: inherently sequential in their global form, but block variants work per-subdomain.
+
+Key insight: **domain decomposition methods are designed so that the node-level work is a self-contained sparse direct solve**. Our shared-memory solver becomes a *component* inside a distributed framework, not something that needs to be distributed itself.
+
+### What actually needs distributed memory?
+
+**Clearly needs distributed:**
+- Large-scale 3D PDEs (CFD, structural mechanics, geophysics) — O(n^2) fill makes direct solvers hit memory walls fast, problem sizes routinely exceed single-node RAM
+- Coupled multiphysics (fluid-structure, thermo-mechanical) — very large saddle-point systems
+- Time-dependent 3D simulations — must solve repeatedly, problem must fit in aggregate memory
+
+**Usually fine on a single node:**
+- 2D PDEs — O(n log n) fill, direct solvers handle millions of unknowns on a workstation
+- Structural eigenproblems — shift-invert Lanczos with a direct solve
+- Optimization (interior point) — KKT systems are structured; Schur complement approaches keep subproblems manageable
+- Circuit simulation — large but very sparse, low fill
+
+**Distributed for throughput, not memory:**
+- Parametric studies / uncertainty quantification — many independent solves, embarrassingly parallel at the problem level
+- Graph analytics — distributed SpMV but rarely direct solvers
+
+The pattern: **distributed memory is compelling primarily when a single problem doesn't fit in a single node's RAM, which is mainly 3D discretizations.** Most other use cases either fit on a node or parallelize at a higher level.
+
+### Recommendation
+
+1. **Keep core solvers shared-memory** — the node-level solver is the building block.
+
+2. **Design for composability** — the key API property is that our solver can be used as a subdomain solver inside a distributed framework. Requirements:
+   - Accept matrices as input (don't own the mesh/discretization)
+   - Support repeated factorization with the same sparsity (analyze once, factor many times)
+   - Keep memory footprint predictable (so a distributed scheduler can plan)
+   - We already have all of this.
+
+3. **If we add iterative solvers**, the distributed extension point is clear: define a `LinearOperator` trait (matvec interface), implement distributed SpMV as one implementation, and let preconditioners use our local direct solver.
+
+4. **If someone needs distributed direct solves**, the pragmatic answer is domain decomposition: partition the mesh, use our solver per subdomain, iterate via Schwarz/FETI/BDDC. This gets 90% of the scalability of MUMPS with 10% of the implementation complexity.
+
+5. **Rust + MPI is still immature** — `rsmpi` exists but is a thin wrapper. The Rust ecosystem doesn't have a PETSc/Trilinos equivalent. Building that infrastructure is a separate project from building good solvers.
+
+---
+
+## 6. Release Readiness Assessment
+
+### Performance vs SPRAL
+
+- **41 out of 65 SuiteSparse matrices beat SPRAL** (63% win rate)
+- **Median ratio: 0.98x** (rivrs is 2% faster on median)
+- Flagship results: c-71 at 1.49x SPRAL, c-big at 1.37x SPRAL (improved from 2.16x and 2.30x respectively via Phase 9.1g column-oriented extend-add)
+- Best performers: thread (0.41x), cvxqp3 (0.54x), ncvxqp5 (0.61x)
+- Worst performers: a few matrices at 1.6-1.9x SPRAL (algorithm-level differences in pivoting strategy, not implementation quality)
+- **All 65 matrices pass correctness** (backward error < 5e-11, typically ~1e-17)
+- Remaining optimization targets (zeroing 8.8%, per-node storage ~9%) show diminishing returns
+
+### API Design
+
+**Strengths:**
+- Clean three-phase API: analyze (reusable) -> factor (repeatable) -> solve
+- Both allocating `solve()` and in-place `solve_in_place()` variants
+- Transparent workspace via faer's `MemStack`
+- `SparseLDLT` is a plain struct with no global state — multiple solvers can coexist
+- Permutation, inertia, and factorization stats all queryable
+- Parallelism controllable via `Par::Seq` / `Par::rayon(n)`
+- faer types at the boundary (not custom wrappers)
+
+**Gaps:**
+- Single-column RHS only — no batched multi-RHS solve via dense matrix
+- No condition number estimation
+- No iterative refinement
+- No serde support for solver options
+- `OrderingStrategy::UserSupplied` exists but could be more discoverable
+
+### Memory Efficiency
+
+- Aggressive workspace reuse: frontal matrix, contribution buffer, g2l mapping all pre-allocated and reused across supernodes
+- Swap-based contribution buffer protocol eliminates copy overhead
+- Thread-local workspaces via `Cell` for parallel path
+- Small-leaf fast path uses dedicated <=512KB workspace
+- Peak RSS dominated by max_front^2 (inherent to multifrontal method, unavoidable)
+
+### Code Quality
+
+- Zero TODOs/FIXMEs/HACKs in source
+- No `.unwrap()` in non-test code
+- Rich error types with `thiserror`, proper `Result` propagation
+- 401 unit tests, 65 SuiteSparse integration, 15 hand-constructed with analytical factorizations
+- Comprehensive doc comments with academic citations on all public types
+
+### Key Gaps for Release
+
+**Not blockers but worth considering:**
+
+| Feature | Impact | Effort | Notes |
+|---------|--------|--------|-------|
+| Multi-RHS solve | Medium | Low | `MatMut<'_, f64>` variant of solve; loop internally |
+| Iterative refinement | Medium | Medium | One Newton step on residual; common in production solvers |
+| Condition estimation | Low | Medium | Hager's 1-norm estimator; useful diagnostic |
+| Sparse residual utility | Low | Low | `A*x - b` computation; exists as test utility but not public |
+| Serde for options | Low | Low | Enables config-file-driven workflows |
+
+### Verdict
+
+The solver is production-ready. Performance is at parity with SPRAL, the API is clean and composable, memory is well-managed, and code quality is high. The missing features (multi-RHS, iterative refinement, condition estimation) are enhancements for post-1.0, not prerequisites. The most impactful pre-release work would be documentation polish and the multi-RHS solve variant.
+
+---
+
+## 7. Difficulty Assessment: Roadmap Items
+
+The SSIDS multifrontal solver (Phases 0-9) was by far the hardest piece. The remaining roadmap items are well-trodden algorithms with mature literature and clear pseudocode.
+
+### Item-by-item assessment
+
+**Krylov solvers (CG, GMRES, BiCGStab)** — Straightforward
+
+CG is ~50 lines of core math. GMRES with Arnoldi is ~200. The literature is very mature (Saad, *Iterative Methods for Sparse Linear Systems*; Greenbaum, *Iterative Methods for Solving Linear Systems*; the Templates book). The main design work is:
+- A `LinearOperator` trait (matvec interface)
+- Preconditioner trait
+- Convergence monitoring, restarts for GMRES(m)
+- Flexible preconditioning (left/right/variable)
+
+Infrastructure needed: sparse matvec (faer has `sparse_dense_matmul`), inner products and norms (faer), our direct solver as a preconditioner. Mostly composition, not invention.
+
+**Incomplete factorizations (ILU, ICC)** — Medium
+
+ILU(0) is simple: run LU but drop fill outside the original sparsity pattern. ILUT (threshold-based dropping) is more involved but well-documented. One real stumbling block: ILU can break down on indefinite or highly unsymmetric systems (zero pivots, instability). Modified ILU (MILU) and pivot perturbation strategies help but need care. Still dramatically simpler than full multifrontal factorization.
+
+**LOBPCG / Lanczos** — Moderate
+
+LOBPCG is in Knyazev (2001), ~200-300 lines of core algorithm. Needs sparse matvec + preconditioner + dense eigensolve for small projected problems (faer has this) + orthogonalization (faer has this). Tricky parts are numerical: stability of the three-term recurrence, locking converged eigenvectors, near-linear-dependence. Known problems with known solutions. Lanczos (symmetric) is simpler still.
+
+**Unsymmetric multifrontal LU** — Substantial but infrastructure-heavy
+
+~35% rewrite (LU kernel, factor storage, symbolic analysis) but the infrastructure wins are real — ordering, assembly maps, tree traversal, parallelism, workspace reuse, profiling all transfer. Estimated ~40% of the calendar time the symmetric solver took, most of it in the dense kernel and testing.
+
+**Re-exporting faer** — Near-free
+
+faer's sparse LU and QR could be wrapped with our ordering infrastructure (METIS, MC64) to provide better-than-faer-default solvers with minimal new code. The value-add is the preprocessing pipeline, not reimplementing factorization.
+
+### Relative effort summary
+
+| Item | Effort | Key risk |
+|------|--------|----------|
+| Multifrontal LDL^T (DONE) | 10x | Novel algorithm, subtle correctness traps |
+| Unsymmetric multifrontal LU | 4x | Dense kernel rewrite, but framework reuse |
+| Block-sparse storage (BCSR) | 2x | Lots of infrastructure, no algorithmic risk |
+| ILU/ICC preconditioners | 1.5x | ILU breakdown on hard systems |
+| Krylov solvers | 1x | Well-documented, mostly composition |
+| Eigensolvers (Lanczos/LOBPCG) | 1.5x | Numerical stability in edge cases |
+| faer wrapper with METIS+MC64 | 0.3x | API design only |
+
+---
+
+## 8. Case Study: AMR Euler Solver (Cart3D-style)
+
+To ground the roadmap in a concrete application, consider building an AMR-based compressible Euler solver similar to NASA's Cart3D. What sparse LA would it need?
+
+### Explicit time stepping (Cart3D's primary approach)
+
+Essentially **no sparse linear algebra at all**. Runge-Kutta with local time stepping is point-wise flux evaluation and array updates. The "solver" is embarrassingly parallel array operations. This is why Cart3D is fast — it avoids linear solves entirely for the flow solve, using adjoint-based methods only for mesh adaptation.
+
+### Implicit / Newton-Krylov (for steady-state acceleration or stiff problems)
+
+At each pseudo-time step, solve `J * δu = -R(u)` where J is the flux Jacobian:
+
+| Component | Why | Source |
+|-----------|-----|--------|
+| Sparse matvec | GMRES inner loop | faer `sparse_dense_matmul` |
+| GMRES or BiCGStab | Outer Krylov solver | Build (straightforward) |
+| ILU(0) preconditioner | Convergence acceleration | Build (moderate) |
+| Block-sparse storage | 5x5 blocks per cell (ρ, ρu, ρv, ρw, E) | Build (see Section 9) |
+
+What it does NOT need:
+- Direct solver for the global system (too expensive for 3D CFD)
+- Symmetric solver (Euler Jacobian is unsymmetric)
+- Eigenvalue solver (unless doing stability analysis or POD)
+
+### Where our direct solver helps
+
+As a **coarse-grid solver in a multigrid preconditioner**. AMR gives a natural grid hierarchy — the coarsest level is small enough for a direct solve, and that direct solve is the most expensive part of the multigrid V-cycle. This is exactly the "solver as component" story from Section 5.
+
+### Adjoint solve for mesh adaptation
+
+Cart3D uses adjoint-based error estimation: solve `J^T * λ = -∂f/∂u`. The solver needs to support both `J*x` and `J^T*x`. Natural for GMRES (transpose the operator). The ILU preconditioner also needs transpose mode — applying L and U factors in reverse order, which is free if both are stored.
+
+### The real bottleneck: block-sparse storage
+
+For CFD with 5 conserved variables per cell, the Jacobian has 5x5 dense blocks at each nonzero position. Scalar CSC/CSR treats these as 25 separate entries with 25 index lookups. Block-sparse CSR stores blocks contiguously, giving 3-5x faster SpMV. This is the most important missing infrastructure piece for this class of application — more so than any solver algorithm. See Section 9 for the full format analysis.
+
+### Summary
+
+The sparse LA needs for a Cart3D-like solver are modest: GMRES + ILU + block-sparse matvec. The hard part of that project is entirely in the AMR mesh management and flux discretization. Our direct solver contributes as a coarse-grid component inside multigrid.
+
+---
+
+## 9. Sparse Matrix Storage Formats
+
+### CSC vs CSR: not just convention
+
+The analogy to Fortran column-major vs C row-major is useful but the efficiency implications are **more significant** for sparse than dense, because sparse access patterns are inherently irregular and indirect.
+
+**CSC (Compressed Sparse Column)**: each column stores its row indices and values contiguously.
+
+Natural for:
+- Column-by-column elimination (Cholesky, LDL^T, LU left-looking)
+- Scatter-based SpMV: for each column j, scatter `a[:,j] * x[j]` into y
+- MATLAB, CHOLMOD, UMFPACK, SPRAL, SuperLU — the direct solver ecosystem
+
+**CSR (Compressed Sparse Row)**: each row stores its column indices and values contiguously.
+
+Natural for:
+- Row-by-row operations (ILU, Gauss-Seidel, right-looking)
+- Dot-product SpMV: for each row i, compute `y[i] = dot(a[i,:], x)`
+- PETSc, Trilinos, Eigen — the iterative solver ecosystem
+
+**SpMV performance difference**: CSR dot-product SpMV is generally faster because each row produces exactly one output element (sequential writes to y, good spatial locality). CSC scatter SpMV writes to random positions in y (poor write locality). This is a real performance difference — typically 1.3-2x on modern hardware — not just convention.
+
+**The heritage split**: CSC dominates in direct solver libraries (Fortran tradition: MATLAB, CHOLMOD, UMFPACK, SPRAL). CSR dominates in iterative solver frameworks (C/C++ tradition: PETSc, Trilinos). But it's not purely cultural — the underlying algorithms genuinely favor one or the other.
+
+### Other important formats
+
+**COO (Coordinate / Triplet)**: `(row, col, value)` triples.
+- Good for: matrix assembly (FEM naturally produces triplets), format conversion, I/O (MatrixMarket is COO)
+- Bad for: any computation (no structure to exploit)
+- Role: input/construction format, always convert before solving. faer's `SparseColMat::try_new_from_triplets` does this.
+
+**BCSR / BCSC (Block Compressed Sparse Row/Column)**: stores dense r x c blocks at each nonzero position.
+- Good for: FEM with multiple DOFs per node (structural: 3-6, CFD: 4-5, electromagnetics: edge elements)
+- Why it matters: small dense matmul per block vectorizes well (SIMD), r x c fewer indirect memory accesses, r x c fewer index comparisons. Typically 3-5x faster SpMV for natural block sizes.
+- Used by: PETSc (BAIJ format), many FEM codes
+- Neither faer nor rivrs-sparse has this currently; it would be the most impactful format addition for PDE applications.
+
+**DIA (Diagonal)**: stores diagonals explicitly as dense arrays with offset indices.
+- Good for: banded matrices from structured grids (FD stencils). Extremely efficient SpMV — just offset array access, fully vectorizable.
+- Bad for: unstructured problems (wastes memory on empty diagonals)
+- Role: niche but perfect for its niche. 1D/2D structured-grid PDE solvers can be dramatically faster with DIA.
+
+**ELL (ELLPACK)**: fixed number of nonzeros per row, stored as dense 2D array (nrows x max_nnz_per_row).
+- Good for: GPU computation (uniform memory access, no warp divergence), structured grids with fixed stencil width
+- Bad for: highly variable row lengths (wastes memory on padding)
+- Role: GPU-oriented format. Variants like Sliced ELLPACK (Sell-C-σ) improve on padding waste by sorting and slicing rows into chunks.
+
+**HYB (Hybrid ELL+COO)**: ELL for the regular part of the matrix, COO for overflow rows. NVIDIA's compromise format for heterogeneous sparsity patterns.
+
+### What matters for scientific computing
+
+In practice, three formats cover ~95% of needs:
+
+1. **CSR** — lingua franca for iterative solvers. SpMV is the dominant operation, and CSR SpMV is simple, fast, and cache-friendly for output.
+2. **CSC** — standard for direct solvers. Column elimination is the natural algorithm for Cholesky/LDL^T/LU.
+3. **BCSR** — essential for multi-DOF-per-node FEM/CFD. Converts indirect addressing into small dense BLAS, giving 3-5x SpMV improvement on block-structured problems.
+
+COO/Triplet is the universal assembly/interchange format. DIA and ELL are niche optimizations for structured grids and GPUs respectively.
+
+### Recommendation for rivrs-sparse
+
+**CSC as primary internal format** (status quo). Reasons:
+1. Our direct solver is column-oriented, matching SPRAL/CHOLMOD/UMFPACK tradition
+2. faer uses CSC as its primary format — transparent composition
+3. CSC <-> CSR conversion is a transpose, O(nnz) — cheap enough to do at boundaries
+
+**When adding iterative solvers**, two options:
+- Convert to CSR at construction time for SpMV (the dominant iterative operation) — slight API friction but better SpMV performance
+- Use CSC scatter SpMV — avoids format proliferation at the cost of ~1.5x slower SpMV
+
+Recommendation: **provide CSR conversion and let the iterative solver use CSR internally**. faer already has `.to_row_major()`. The format choice should be an internal implementation detail hidden behind a `LinearOperator` trait, not a user-facing decision.
+
+**Block-sparse (BCSR)** should be a separate, opt-in type when needed for PDE applications. It's not a replacement for scalar CSR/CSC — it's an optimization for block-structured problems. Implementing it means: block-aware storage, block SpMV, block ILU, and block triangular solve. Significant infrastructure but no algorithmic novelty.
+
+### Format choice principle
+
+Format should follow algorithm, not the other way around:
+- Direct solvers use CSC (column elimination)
+- Iterative solvers use CSR (row-oriented SpMV)
+- Block-structured PDE applications use BCSR (dense blocks at stencil entries)
+- Assembly always uses COO/Triplet, then converts
+
+Users should not need to think about storage format. The solver accepts a matrix (in whatever format is natural for the user), converts internally if needed, and returns results. Format choice is an implementation detail behind the API.

@@ -1,7 +1,7 @@
 # Quickstart Guide: Sylvester Equation Solver
 
 **Feature**: 001-sylvester-solver
-**Audience**: Users and developers getting started with the rivrs-linalg Sylvester solver
+**Audience**: Users and developers getting started with the rivrs-control Sylvester solver
 
 ---
 
@@ -25,11 +25,11 @@ Where A, B, and C are known matrices, and X is the unknown matrix to solve for.
 
 ## Installation
 
-Add rivrs-linalg to your `Cargo.toml`:
+Add rivrs-control to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-rivrs_linalg = "0.1"  # Check for latest version
+rivrs_control = "0.1"  # Check for latest version
 faer = "0.19"
 ```
 
@@ -40,7 +40,7 @@ faer = "0.19"
 ### Continuous-Time Equation (AX + XB = C)
 
 ```rust
-use rivrs_linalg::sylvester::solve_continuous;
+use rivrs_control::sylvester::solve_continuous;
 use faer::prelude::*;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -85,7 +85,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ### Discrete-Time Equation (AXB + X = C)
 
 ```rust
-use rivrs_linalg::sylvester::{solve_discrete, Sign};
+use rivrs_control::sylvester::{solve_discrete, Sign};
 use faer::prelude::*;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -129,7 +129,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 The solver returns `Result<SylvesterSolution<T>, SylvesterError>`. Always handle errors:
 
 ```rust
-use rivrs_linalg::sylvester::{solve_continuous, SylvesterError};
+use rivrs_control::sylvester::{solve_continuous, SylvesterError};
 
 match solve_continuous(&a, &b, &c) {
     Ok(result) => {
@@ -268,7 +268,7 @@ let a = Mat::from_fn(2, 2, |i, j| data[j * 2 + i]);
 Always verify your solution for critical applications:
 
 ```rust
-use rivrs_linalg::sylvester::{solve_continuous, compute_residual, EquationType};
+use rivrs_control::sylvester::{solve_continuous, compute_residual, EquationType};
 
 let result = solve_continuous(&a, &b, &c)?;
 let x = &result.solution / result.scale;
@@ -292,7 +292,7 @@ if residual < 1e-10 {
 When solving many equations AX₁ + X₁B₁ = C₁, AX₂ + X₂B₂ = C₂, ... with the same A matrix:
 
 ```rust
-use rivrs_linalg::sylvester::{solve_continuous_schur};
+use rivrs_control::sylvester::{solve_continuous_schur};
 use faer::linalg::evd::schur::real_schur;
 
 // Pre-compute Schur decomposition of A (expensive, done once)
@@ -314,7 +314,7 @@ for (b, c) in equations {
 ### Working with f32 (Single Precision)
 
 ```rust
-use rivrs_linalg::sylvester::solve_continuous;
+use rivrs_control::sylvester::solve_continuous;
 use faer::prelude::*;
 
 let a: Mat<f32> = mat![
@@ -439,7 +439,7 @@ let residual = compute_residual(&a, &b, &c, &x_correct, ...);  // Matches
 ### Imports
 
 ```rust
-use rivrs_linalg::sylvester::{
+use rivrs_control::sylvester::{
     solve_continuous,
     solve_discrete,
     solve_continuous_schur,
@@ -479,9 +479,9 @@ match solve_continuous(&a, &b, &c) {
 
 ## Support
 
-- **Documentation**: https://docs.rs/rivrs_linalg
-- **Repository**: https://github.com/yourusername/rivrs_linalg
-- **Issues**: https://github.com/yourusername/rivrs_linalg/issues
+- **Documentation**: https://docs.rs/rivrs_control
+- **Repository**: https://github.com/yourusername/rivrs_control
+- **Issues**: https://github.com/yourusername/rivrs_control/issues
 - **Academic References**: See `research.md` for algorithm citations
 
 ---

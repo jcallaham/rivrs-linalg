@@ -3,161 +3,81 @@
 A scientific computing library providing numerical linear algebra implementations
 for the [Rivrs](https://github.com/jcallaham/rivrs) symbolic-numeric framework.
 
-**Current Status**: Phase 1 - Modular development structure
 **License**: Apache-2.0
 
-## Project Structure
+## Crates
 
-This repository is organized as a monorepo with isolated project directories for different algorithm domains. This Phase 1 structure enables independent development of distinct numerical algorithms before eventual integration into a unified Cargo workspace.
+| Crate | Description | Status |
+|-------|-------------|--------|
+| [`rivrs-sparse`](sparse/) | Sparse symmetric indefinite direct solver (SSIDS) | Feature-complete, preparing for 0.1.0 release |
+| [`rivrs-linalg`](crates/rivrs-linalg/) | Facade re-exporting domain crates as modules | Planned (0.1.0 alongside rivrs-sparse) |
+| [`rivrs`](crates/rivrs/) | Umbrella re-exporting rivrs-linalg and future siblings | Planned (0.1.0 alongside rivrs-sparse) |
+
+Users can depend on whichever level they prefer:
+- `rivrs-sparse` for just the sparse solver
+- `rivrs-linalg` for `rivrs_linalg::sparse`, `rivrs_linalg::control`, etc.
+- `rivrs` for `rivrs::linalg`, `rivrs::ode`, `rivrs::optimize`, etc. (future)
+
+## Repository Structure
 
 ```
-rivrs-linalg/
-├── control/          # Control systems algorithms (Sylvester, Lyapunov, Riccati)
-├── sparse/           # Sparse direct solvers
-├── references/       # Shared reference implementations (LAPACK, SPRAL, faer-rs)
-├── NOTICE            # Attribution and licensing information
-└── LICENSE           # Apache-2.0 license
+rivrs-linalg/                 # Repository root
+├── sparse/                   # rivrs-sparse crate (standalone Rust project)
+├── control/                  # rivrs-control crate (standalone, not yet published)
+├── crates/
+│   ├── rivrs-linalg/         # Facade crate
+│   └── rivrs/                # Umbrella crate
+├── references/               # Shared reference implementations (LAPACK, SPRAL, faer-rs)
+├── NOTICE                    # Attribution and licensing
+└── LICENSE                   # Apache-2.0
 ```
 
-Each project directory (`control/`, `sparse/`) is a complete, standalone Rust project with:
-- Own `Cargo.toml` (immediately buildable with `cargo build`)
-- Own `CLAUDE.md` (domain-specific development guidance)
-- Own `README.md` (algorithm descriptions and status)
-- Own `Dockerfile` and `.devcontainer/` (isolated development environment)
-- Own `.claude/` and `.specify/` (coding agent and spec-kit configuration)
-- Own `specs/` (feature specifications and research)
+### rivrs-sparse
 
-## Current Projects
+Feature-complete sparse symmetric indefinite direct solver (SSIDS). Parallel
+multifrontal LDL^T with APTP pivoting. 65/65 SuiteSparse matrices passing,
+competitive with SPRAL and MUMPS. See [sparse/README.md](sparse/README.md) for
+API, benchmarks, and usage.
 
-### [control/](control/) - Control Systems Algorithms
+### rivrs-control (not yet published)
 
-**Status**: Active development
-**Algorithms**: Sylvester equations (continuous/discrete)
-
-Clean room implementations of control systems algorithms similar to SLICOT, using modern Rust with `faer` for high-performance linear algebra.
-
-**Completed:**
-- ✅ Continuous Sylvester solver (AX + XB = C) - Bartels-Stewart algorithm
-- ✅ Discrete Sylvester solver (AXB + X = C)
-- ✅ Blocked Level-3 BLAS variant for continuous case
-- ✅ Overflow prevention and condition estimation
-
-**Roadmap:**
-- 📋 Lyapunov equation solvers
-- 📋 Algebraic Riccati equation solvers
-
+Clean room implementations of control systems algorithms (SLICOT-inspired), using
+`faer` for dense linear algebra. Sylvester equation solvers (continuous/discrete)
+complete. Lyapunov and Riccati solvers planned.
 See [control/README.md](control/README.md) for details.
 
-## Development Workflow
+## Development
 
-### Working on a Specific Domain
+Each domain crate is a standalone Rust project:
 
 ```bash
-# Control systems work
-cd control/
-cargo build
-cargo test
-cargo bench
-
-# Sparse solvers work
-cd sparse/
+cd sparse/   # or control/
 cargo build
 cargo test
 ```
 
-Each directory is isolated and can be developed independently.
+See the crate-level CLAUDE.md for detailed development guidance:
+- [sparse/CLAUDE.md](sparse/CLAUDE.md)
+- [control/CLAUDE.md](control/CLAUDE.md)
 
-### Docker Development Environments
+## Release Plan
 
-Each domain has its own Docker environment with domain-specific reference materials:
-
-```bash
-cd control/docker/
-./build.sh
-./run.sh
-
-# Or for sparse solvers
-cd sparse/docker/
-./build.sh
-./run.sh
-```
-
-### Shared References
-
-Reference implementations are stored in `references/` and are accessible to all projects:
-- **faer-rs/**: Pure Rust linear algebra library
-- **lapack/**: Reference LAPACK (BSD-licensed)
-- **SLICOT-Reference/**: BSD-3-licensed SLICOT implementation
-- **slicot/**: GPL SLICOT (documentation and test cases only)
-- **spral/**: SPRAL sparse library (to be added, BSD-3-licensed)
+1. **Publish** `rivrs-sparse` 0.1.0 on crates.io (the existing `sparse/` project, as-is).
+2. **Publish** `rivrs-linalg` 0.1.0 as a facade that re-exports `rivrs-sparse` as `rivrs_linalg::sparse`.
+3. **Publish** `rivrs` 0.1.0 as an umbrella that re-exports `rivrs-linalg` as `rivrs::linalg`.
+4. **Add domain crates** over time (`rivrs-control`, then `rivrs-ode`, `rivrs-optimize`, etc.) and wire them into the facades.
+5. **Optionally consolidate** into a monolithic `rivrs-linalg` later if the facade indirection becomes undesirable.
 
 ## Clean Room Implementation
 
-**Critical**: All implementations are clean room to maintain Apache-2.0 licensing.
+All implementations are clean room to maintain Apache-2.0 licensing.
 
-### Permitted Sources
-- ✅ Academic papers and textbooks
-- ✅ Permissively-licensed reference code (LAPACK, SLICOT-Reference, SPRAL)
-- ✅ Documentation and test cases from any library
+- **Permitted**: Academic papers/textbooks, permissively-licensed reference code
+  (LAPACK, SLICOT-Reference, SPRAL), documentation and test cases from any library
+- **Prohibited**: GPL source code (SLICOT `src/*.f`), proprietary HSL source code
 
-### Prohibited Sources
-- ❌ GPL SLICOT Fortran source code (slicot/src/*.f)
-- ❌ Proprietary HSL library source code
-- ❌ Any GPL-licensed implementation source code
-
-See [NOTICE](NOTICE) for complete attribution and licensing information.
-
-## Migration Path: Phase 1 → Workspace
-
-**Phase 1 (Current)**: Isolated projects for independent experimentation
-- Each domain is a complete standalone project
-- Enables rapid iteration and easy pivoting
-- Simple Docker isolation per domain
-- Can abandon or restructure without affecting others
-
-**Phase 2 (Future)**: Cargo workspace with shared utilities
-```
-rivrs-linalg/
-├── Cargo.toml          # Workspace manifest
-├── rivrs-core/         # Shared utilities, traits, errors
-├── rivrs-control/      # Control systems (renamed from control/)
-├── rivrs-sparse/       # Sparse solvers (renamed from sparse/)
-└── references/         # Shared references
-```
-
-Migration will be straightforward:
-1. Create `rivrs-core/` with shared code
-2. Move `control/` → `rivrs-control/`, update dependencies
-3. Move `sparse/` → `rivrs-sparse/`, update dependencies
-4. Add workspace `Cargo.toml`
-5. Git history preserved via file moves
-
-**Phase 3 (Integration)**: Rivrs dependency
-
-Eventually, rivrs-linalg will be used by the main Rivrs symbolic-numeric framework via path dependency or published crates.
-
-## Contributing
-
-See individual project CLAUDE.md files for domain-specific development guidance:
-- [control/CLAUDE.md](control/CLAUDE.md) - Control systems algorithms
-- [sparse/CLAUDE.md](sparse/CLAUDE.md) - Sparse solvers
-
-**Key Requirements:**
-- Maintain clean room status (cite academic sources, avoid GPL code)
-- Write comprehensive tests
-- Document numerical stability characteristics
-- Benchmark against reference implementations
+See [NOTICE](NOTICE) for complete attribution.
 
 ## License
 
-Licensed under Apache License, Version 2.0 ([LICENSE](LICENSE))
-
-## Attribution
-
-See [NOTICE](NOTICE) for complete attribution to academic sources and reference implementations:
-- LAPACK (BSD-3-Clause)
-- SLICOT-Reference (BSD-3-Clause)
-- SPRAL (BSD-3-Clause, planned)
-- Academic papers and textbooks
-
-Each implementation cites the specific sources used.
+Apache-2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).

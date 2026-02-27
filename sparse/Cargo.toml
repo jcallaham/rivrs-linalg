@@ -1,0 +1,67 @@
+[package]
+name = "rivrs-sparse"
+version = "0.1.0"
+authors = ["Jared Callaham"]
+edition = "2024"
+rust-version = "1.87"
+description = "Sparse linear algebra solvers for the Rivrs symbolic-numeric framework"
+license = "Apache-2.0"
+categories = ["science", "mathematics"]
+keywords = ["linear-algebra", "sparse-solver", "numerical-computing", "rust"]
+repository = "https://github.com/jcallaham/rivrs-linalg"
+readme = "README.md"
+exclude = ["comparisons/"]
+
+[dependencies]
+faer = "0.24"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+metis-sys = "0.3"
+rayon = "1"
+proptest = { version = "1.4", optional = true }
+rand = { version = "0.8", optional = true }
+rand_distr = { version = "0.4", optional = true }
+
+[features]
+test-util = ["rand", "rand_distr", "proptest"]
+diagnostic = []
+
+[dev-dependencies]
+approx = "0.5"
+criterion = "0.5"
+rand = "0.8"
+rand_distr = "0.4"
+tempfile = "3"
+# Self-referential dev-dependency to enable the test-util feature in tests and
+# benchmarks. This is a standard Cargo pattern for activating optional features
+# during testing without making them default.
+rivrs-sparse = { path = ".", features = ["test-util"] }
+
+[[example]]
+name = "baseline_collection"
+required-features = ["diagnostic"]
+
+[[example]]
+name = "profile_matrix"
+required-features = ["diagnostic"]
+
+[[bin]]
+name = "spral-comparison"
+path = "comparisons/src/spral_benchmark.rs"
+
+[[bin]]
+name = "mumps-comparison"
+path = "comparisons/src/mumps_benchmark.rs"
+
+[[bench]]
+name = "solver_benchmarks"
+harness = false
+
+[profile.dev]
+opt-level = 3
+
+[profile.test]
+opt-level = 3
+
+[profile.bench]
+opt-level = 3

@@ -1,0 +1,42 @@
+{
+  "matrix_name": "zero-diagonal-3",
+  "permutation": [
+    0,
+    1,
+    2
+  ],
+  "l_entries": [
+    {
+      "row": 2,
+      "col": 1,
+      "value": 0.5
+    }
+  ],
+  "d_blocks": [
+    {
+      "size": 2,
+      "values": [
+        [
+          0.0,
+          2.0
+        ],
+        [
+          2.0,
+          0.0
+        ]
+      ]
+    },
+    {
+      "size": 1,
+      "values": [
+        3.0
+      ]
+    }
+  ],
+  "inertia": {
+    "positive": 2,
+    "negative": 1,
+    "zero": 0
+  },
+  "notes": "Adapted from SPRAL simple_mat_zero_diag. Requires 2x2 pivoting."
+}

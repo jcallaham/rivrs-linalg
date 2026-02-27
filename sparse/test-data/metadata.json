@@ -1,0 +1,1659 @@
+{
+    "schema_version": "1.0",
+    "generated": "2026-02-06T17:13:14Z",
+    "total_count": 80,
+    "matrices": [
+        {
+            "name": "arrow-10-indef",
+            "source": "hand-constructed",
+            "category": "hand-constructed",
+            "path": "hand-constructed/arrow-10-indef.mtx",
+            "size": 10,
+            "nnz": 19,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "trivial",
+                "structure": "arrow"
+            },
+            "paper_references": [],
+            "reference_results": {},
+            "factorization_path": "hand-constructed/arrow-10-indef.json"
+        },
+        {
+            "name": "arrow-15-indef",
+            "source": "hand-constructed",
+            "category": "hand-constructed",
+            "path": "hand-constructed/arrow-15-indef.mtx",
+            "size": 15,
+            "nnz": 29,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "trivial",
+                "structure": "arrow"
+            },
+            "paper_references": [],
+            "reference_results": {},
+            "factorization_path": "hand-constructed/arrow-15-indef.json"
+        },
+        {
+            "name": "arrow-5-pd",
+            "source": "hand-constructed",
+            "category": "hand-constructed",
+            "path": "hand-constructed/arrow-5-pd.mtx",
+            "size": 5,
+            "nnz": 9,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": true,
+                "indefinite": false,
+                "difficulty": "trivial",
+                "structure": "arrow"
+            },
+            "paper_references": [],
+            "reference_results": {},
+            "factorization_path": "hand-constructed/arrow-5-pd.json"
+        },
+        {
+            "name": "block-diag-15",
+            "source": "hand-constructed",
+            "category": "hand-constructed",
+            "path": "hand-constructed/block-diag-15.mtx",
+            "size": 15,
+            "nnz": 21,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "trivial",
+                "structure": "block-diagonal"
+            },
+            "paper_references": [],
+            "reference_results": {},
+            "factorization_path": "hand-constructed/block-diag-15.json"
+        },
+        {
+            "name": "bordered-block-20",
+            "source": "hand-constructed",
+            "category": "hand-constructed",
+            "path": "hand-constructed/bordered-block-20.mtx",
+            "size": 20,
+            "nnz": 47,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": true,
+                "indefinite": false,
+                "difficulty": "trivial",
+                "structure": "bordered-block"
+            },
+            "paper_references": [],
+            "reference_results": {},
+            "factorization_path": "hand-constructed/bordered-block-20.json"
+        },
+        {
+            "name": "singular-3",
+            "source": "hand-constructed",
+            "category": "hand-constructed",
+            "path": "hand-constructed/singular-3.mtx",
+            "size": 3,
+            "nnz": 4,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "trivial",
+                "structure": "general"
+            },
+            "paper_references": [],
+            "reference_results": {},
+            "factorization_path": "hand-constructed/singular-3.json"
+        },
+        {
+            "name": "stress-delayed-pivots",
+            "source": "hand-constructed",
+            "category": "hand-constructed",
+            "path": "hand-constructed/stress-delayed-pivots.mtx",
+            "size": 10,
+            "nnz": 5,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "trivial",
+                "structure": "general",
+                "expected_delayed_pivots": "high"
+            },
+            "paper_references": [],
+            "reference_results": {},
+            "factorization_path": "hand-constructed/stress-delayed-pivots.json"
+        },
+        {
+            "name": "stress-fill-in",
+            "source": "hand-constructed",
+            "category": "hand-constructed",
+            "path": "hand-constructed/stress-fill-in.mtx",
+            "size": 10,
+            "nnz": 19,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "trivial",
+                "structure": "general"
+            },
+            "paper_references": [],
+            "reference_results": {},
+            "factorization_path": "hand-constructed/stress-fill-in.json"
+        },
+        {
+            "name": "stress-ill-cond",
+            "source": "hand-constructed",
+            "category": "hand-constructed",
+            "path": "hand-constructed/stress-ill-cond.mtx",
+            "size": 10,
+            "nnz": 10,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "trivial",
+                "structure": "general",
+                "condition_info": "ill-conditioned, cond ~ 1e12"
+            },
+            "paper_references": [],
+            "reference_results": {},
+            "factorization_path": "hand-constructed/stress-ill-cond.json"
+        },
+        {
+            "name": "tridiag-10-indef",
+            "source": "hand-constructed",
+            "category": "hand-constructed",
+            "path": "hand-constructed/tridiag-10-indef.mtx",
+            "size": 10,
+            "nnz": 19,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "trivial",
+                "structure": "tridiagonal"
+            },
+            "paper_references": [],
+            "reference_results": {},
+            "factorization_path": "hand-constructed/tridiag-10-indef.json"
+        },
+        {
+            "name": "tridiag-20-indef",
+            "source": "hand-constructed",
+            "category": "hand-constructed",
+            "path": "hand-constructed/tridiag-20-indef.mtx",
+            "size": 20,
+            "nnz": 39,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "trivial",
+                "structure": "tridiagonal"
+            },
+            "paper_references": [],
+            "reference_results": {},
+            "factorization_path": "hand-constructed/tridiag-20-indef.json"
+        },
+        {
+            "name": "tridiag-5-pd",
+            "source": "hand-constructed",
+            "category": "hand-constructed",
+            "path": "hand-constructed/tridiag-5-pd.mtx",
+            "size": 5,
+            "nnz": 9,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": true,
+                "indefinite": false,
+                "difficulty": "trivial",
+                "structure": "tridiagonal"
+            },
+            "paper_references": [],
+            "reference_results": {},
+            "factorization_path": "hand-constructed/tridiag-5-pd.json"
+        },
+        {
+            "name": "trivial-1x1",
+            "source": "hand-constructed",
+            "category": "hand-constructed",
+            "path": "hand-constructed/trivial-1x1.mtx",
+            "size": 1,
+            "nnz": 1,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": true,
+                "indefinite": false,
+                "difficulty": "trivial",
+                "structure": "general"
+            },
+            "paper_references": [],
+            "reference_results": {},
+            "factorization_path": "hand-constructed/trivial-1x1.json"
+        },
+        {
+            "name": "trivial-2x2",
+            "source": "hand-constructed",
+            "category": "hand-constructed",
+            "path": "hand-constructed/trivial-2x2.mtx",
+            "size": 2,
+            "nnz": 1,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "trivial",
+                "structure": "general",
+                "expected_delayed_pivots": "high"
+            },
+            "paper_references": [],
+            "reference_results": {},
+            "factorization_path": "hand-constructed/trivial-2x2.json"
+        },
+        {
+            "name": "zero-diagonal-3",
+            "source": "hand-constructed",
+            "category": "hand-constructed",
+            "path": "hand-constructed/zero-diagonal-3.mtx",
+            "size": 3,
+            "nnz": 3,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "trivial",
+                "structure": "general",
+                "expected_delayed_pivots": "high"
+            },
+            "paper_references": [],
+            "reference_results": {},
+            "factorization_path": "hand-constructed/zero-diagonal-3.json"
+        },
+        {
+            "name": "BenElechi/BenElechi1",
+            "source": "suitesparse",
+            "category": "easy-indefinite",
+            "path": "suitesparse/easy-indefinite/BenElechi1/BenElechi1.mtx",
+            "size": 245874,
+            "nnz": 6698185,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "easy",
+                "kind": "structural problem",
+                "expected_delayed_pivots": "low"
+            },
+            "paper_references": [
+                "Duff, Hogg, Lopez (2020) Table 1"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "Koutsovasilis/F2",
+            "source": "suitesparse",
+            "category": "easy-indefinite",
+            "path": "suitesparse/easy-indefinite/F2/F2.mtx",
+            "size": 71505,
+            "nnz": 2682895,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "easy",
+                "kind": "structural problem",
+                "expected_delayed_pivots": "low"
+            },
+            "paper_references": [
+                "Duff, Hogg, Lopez (2020) Table 1"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "PARSEC/H2O",
+            "source": "suitesparse",
+            "category": "easy-indefinite",
+            "path": "suitesparse/easy-indefinite/H2O/H2O.mtx",
+            "size": 67024,
+            "nnz": 1141880,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "easy",
+                "kind": "quantum chemistry problem",
+                "expected_delayed_pivots": "low"
+            },
+            "paper_references": [
+                "Duff, Hogg, Lopez (2020) Table 1"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "PARSEC/Si10H16",
+            "source": "suitesparse",
+            "category": "easy-indefinite",
+            "path": "suitesparse/easy-indefinite/Si10H16/Si10H16.mtx",
+            "size": 17077,
+            "nnz": 446500,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "easy",
+                "kind": "quantum chemistry problem",
+                "expected_delayed_pivots": "low"
+            },
+            "paper_references": [
+                "Duff, Hogg, Lopez (2020) Table 1"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "PARSEC/Si5H12",
+            "source": "suitesparse",
+            "category": "easy-indefinite",
+            "path": "suitesparse/easy-indefinite/Si5H12/Si5H12.mtx",
+            "size": 19896,
+            "nnz": 379247,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "easy",
+                "kind": "quantum chemistry problem",
+                "expected_delayed_pivots": "low"
+            },
+            "paper_references": [
+                "Duff, Hogg, Lopez (2020) Table 1"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "PARSEC/SiNa",
+            "source": "suitesparse",
+            "category": "easy-indefinite",
+            "path": "suitesparse/easy-indefinite/SiNa/SiNa.mtx",
+            "size": 5743,
+            "nnz": 102265,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "easy",
+                "kind": "quantum chemistry problem",
+                "expected_delayed_pivots": "low"
+            },
+            "paper_references": [
+                "Hogg, Ovtchinnikov, Scott (2016) Table III"
+            ],
+            "reference_results": {},
+            "ci_subset": true
+        },
+        {
+            "name": "Newman/astro-ph",
+            "source": "suitesparse",
+            "category": "easy-indefinite",
+            "path": "suitesparse/easy-indefinite/astro-ph/astro-ph.mtx",
+            "size": 16706,
+            "nnz": 121251,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "easy",
+                "kind": "undirected graph",
+                "expected_delayed_pivots": "low"
+            },
+            "paper_references": [
+                "Hogg, Ovtchinnikov, Scott (2016) Table III"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "Boeing/bcsstk39",
+            "source": "suitesparse",
+            "category": "easy-indefinite",
+            "path": "suitesparse/easy-indefinite/bcsstk39/bcsstk39.mtx",
+            "size": 46772,
+            "nnz": 1068033,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "easy",
+                "kind": "structural problem",
+                "expected_delayed_pivots": "none"
+            },
+            "paper_references": [
+                "Duff, Hogg, Lopez (2020) Table 1"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "GHS_indef/bloweybq",
+            "source": "suitesparse",
+            "category": "easy-indefinite",
+            "path": "suitesparse/easy-indefinite/bloweybq/bloweybq.mtx",
+            "size": 10001,
+            "nnz": 39996,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "easy",
+                "kind": "subsequent optimization problem",
+                "expected_delayed_pivots": "low"
+            },
+            "paper_references": [
+                "Duff, Pralet (2005) Table 3.1"
+            ],
+            "reference_results": {},
+            "ci_subset": true
+        },
+        {
+            "name": "GHS_indef/copter2",
+            "source": "suitesparse",
+            "category": "easy-indefinite",
+            "path": "suitesparse/easy-indefinite/copter2/copter2.mtx",
+            "size": 55476,
+            "nnz": 407714,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "easy",
+                "kind": "computational fluid dynamics problem",
+                "expected_delayed_pivots": "low"
+            },
+            "paper_references": [
+                "Duff, Hogg, Lopez (2020) Table 1"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "Boeing/crystk02",
+            "source": "suitesparse",
+            "category": "easy-indefinite",
+            "path": "suitesparse/easy-indefinite/crystk02/crystk02.mtx",
+            "size": 13965,
+            "nnz": 491274,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "easy",
+                "kind": "structural problem",
+                "expected_delayed_pivots": "none"
+            },
+            "paper_references": [
+                "Duff, Hogg, Lopez (2020) Table 1"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "Boeing/crystk03",
+            "source": "suitesparse",
+            "category": "easy-indefinite",
+            "path": "suitesparse/easy-indefinite/crystk03/crystk03.mtx",
+            "size": 24696,
+            "nnz": 887937,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "easy",
+                "kind": "structural problem",
+                "expected_delayed_pivots": "none"
+            },
+            "paper_references": [
+                "Duff, Hogg, Lopez (2020) Table 1"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "GHS_indef/dawson5",
+            "source": "suitesparse",
+            "category": "easy-indefinite",
+            "path": "suitesparse/easy-indefinite/dawson5/dawson5.mtx",
+            "size": 51537,
+            "nnz": 531157,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "easy",
+                "kind": "structural problem",
+                "expected_delayed_pivots": "low"
+            },
+            "paper_references": [
+                "Duff, Hogg, Lopez (2020) Table 1"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "GHS_indef/dixmaanl",
+            "source": "suitesparse",
+            "category": "easy-indefinite",
+            "path": "suitesparse/easy-indefinite/dixmaanl/dixmaanl.mtx",
+            "size": 60000,
+            "nnz": 179999,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "easy",
+                "kind": "optimization problem",
+                "expected_delayed_pivots": "low"
+            },
+            "paper_references": [
+                "Duff, Hogg, Lopez (2020) Table 1"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "Oberwolfach/filter3D",
+            "source": "suitesparse",
+            "category": "easy-indefinite",
+            "path": "suitesparse/easy-indefinite/filter3D/filter3D.mtx",
+            "size": 106437,
+            "nnz": 1406808,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "easy",
+                "kind": "model reduction problem",
+                "expected_delayed_pivots": "none"
+            },
+            "paper_references": [
+                "Duff, Hogg, Lopez (2020) Table 1"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "Oberwolfach/gas_sensor",
+            "source": "suitesparse",
+            "category": "easy-indefinite",
+            "path": "suitesparse/easy-indefinite/gas_sensor/gas_sensor.mtx",
+            "size": 66917,
+            "nnz": 885141,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "easy",
+                "kind": "model reduction problem",
+                "expected_delayed_pivots": "none"
+            },
+            "paper_references": [
+                "Duff, Hogg, Lopez (2020) Table 1"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "GHS_indef/helm3d01",
+            "source": "suitesparse",
+            "category": "easy-indefinite",
+            "path": "suitesparse/easy-indefinite/helm3d01/helm3d01.mtx",
+            "size": 32226,
+            "nnz": 230335,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "easy",
+                "kind": "computational fluid dynamics problem",
+                "expected_delayed_pivots": "low"
+            },
+            "paper_references": [
+                "Duff, Pralet (2005) Table 3.1"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "GHS_indef/linverse",
+            "source": "suitesparse",
+            "category": "easy-indefinite",
+            "path": "suitesparse/easy-indefinite/linverse/linverse.mtx",
+            "size": 11999,
+            "nnz": 53988,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "easy",
+                "kind": "inverse problem",
+                "expected_delayed_pivots": "low"
+            },
+            "paper_references": [
+                "Duff, Pralet (2005) Table 3.1"
+            ],
+            "reference_results": {},
+            "ci_subset": true
+        },
+        {
+            "name": "INPRO/msdoor",
+            "source": "suitesparse",
+            "category": "easy-indefinite",
+            "path": "suitesparse/easy-indefinite/msdoor/msdoor.mtx",
+            "size": 415863,
+            "nnz": 10328399,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "easy",
+                "kind": "structural problem",
+                "expected_delayed_pivots": "none"
+            },
+            "paper_references": [
+                "Duff, Hogg, Lopez (2020) Table 1"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "ND/nd3k",
+            "source": "suitesparse",
+            "category": "easy-indefinite",
+            "path": "suitesparse/easy-indefinite/nd3k/nd3k.mtx",
+            "size": 9000,
+            "nnz": 1644345,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "easy",
+                "kind": "2D/3D problem",
+                "expected_delayed_pivots": "low"
+            },
+            "paper_references": [
+                "Hogg, Ovtchinnikov, Scott (2016) Table III"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "Boeing/pwtk",
+            "source": "suitesparse",
+            "category": "easy-indefinite",
+            "path": "suitesparse/easy-indefinite/pwtk/pwtk.mtx",
+            "size": 217918,
+            "nnz": 5926171,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "easy",
+                "kind": "structural problem",
+                "expected_delayed_pivots": "none"
+            },
+            "paper_references": [
+                "Duff, Hogg, Lopez (2020) Table 1"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "Cunningham/qa8fk",
+            "source": "suitesparse",
+            "category": "easy-indefinite",
+            "path": "suitesparse/easy-indefinite/qa8fk/qa8fk.mtx",
+            "size": 66127,
+            "nnz": 863353,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "easy",
+                "kind": "acoustics problem",
+                "expected_delayed_pivots": "none"
+            },
+            "paper_references": [
+                "Duff, Hogg, Lopez (2020) Table 1"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "Oberwolfach/rail_79841",
+            "source": "suitesparse",
+            "category": "easy-indefinite",
+            "path": "suitesparse/easy-indefinite/rail_79841/rail_79841.mtx",
+            "size": 79841,
+            "nnz": 316881,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "easy",
+                "kind": "model reduction problem",
+                "expected_delayed_pivots": "none"
+            },
+            "paper_references": [
+                "Duff, Hogg, Lopez (2020) Table 1"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "GHS_indef/sparsine",
+            "source": "suitesparse",
+            "category": "easy-indefinite",
+            "path": "suitesparse/easy-indefinite/sparsine/sparsine.mtx",
+            "size": 50000,
+            "nnz": 799494,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "easy",
+                "kind": "synthetic problem",
+                "expected_delayed_pivots": "low"
+            },
+            "paper_references": [
+                "Duff, Hogg, Lopez (2020) Table 1"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "GHS_indef/spmsrtls",
+            "source": "suitesparse",
+            "category": "easy-indefinite",
+            "path": "suitesparse/easy-indefinite/spmsrtls/spmsrtls.mtx",
+            "size": 29995,
+            "nnz": 129971,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "easy",
+                "kind": "least squares problem",
+                "expected_delayed_pivots": "low"
+            },
+            "paper_references": [
+                "Duff, Pralet (2005) Table 3.1"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "Oberwolfach/t2dal",
+            "source": "suitesparse",
+            "category": "easy-indefinite",
+            "path": "suitesparse/easy-indefinite/t2dal/t2dal.mtx",
+            "size": 4257,
+            "nnz": 20861,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "easy",
+                "kind": "model reduction problem",
+                "expected_delayed_pivots": "none"
+            },
+            "paper_references": [
+                "Duff, Hogg, Lopez (2020) Table 1"
+            ],
+            "reference_results": {},
+            "ci_subset": true
+        },
+        {
+            "name": "Oberwolfach/t3dh",
+            "source": "suitesparse",
+            "category": "easy-indefinite",
+            "path": "suitesparse/easy-indefinite/t3dh/t3dh.mtx",
+            "size": 79171,
+            "nnz": 2215638,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "easy",
+                "kind": "model reduction problem",
+                "expected_delayed_pivots": "none"
+            },
+            "paper_references": [
+                "Duff, Hogg, Lopez (2020) Table 1"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "Cote/vibrobox",
+            "source": "suitesparse",
+            "category": "easy-indefinite",
+            "path": "suitesparse/easy-indefinite/vibrobox/vibrobox.mtx",
+            "size": 12328,
+            "nnz": 177578,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "easy",
+                "kind": "structural problem",
+                "expected_delayed_pivots": "low"
+            },
+            "paper_references": [
+                "Duff, Pralet (2005) Table 3.1"
+            ],
+            "reference_results": {},
+            "ci_subset": true
+        },
+        {
+            "name": "TSOPF/TSOPF_FS_b162_c1",
+            "source": "suitesparse",
+            "category": "hard-indefinite",
+            "path": "suitesparse/hard-indefinite/TSOPF_FS_b162_c1/TSOPF_FS_b162_c1.mtx",
+            "size": 10798,
+            "nnz": 305732,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "hard",
+                "kind": "power network problem",
+                "expected_delayed_pivots": "medium"
+            },
+            "paper_references": [
+                "Duff, Hogg, Lopez (2020) Table 2"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "TSOPF/TSOPF_FS_b39_c7",
+            "source": "suitesparse",
+            "category": "hard-indefinite",
+            "path": "suitesparse/hard-indefinite/TSOPF_FS_b39_c7/TSOPF_FS_b39_c7.mtx",
+            "size": 28216,
+            "nnz": 368599,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "hard",
+                "kind": "power network problem",
+                "expected_delayed_pivots": "medium"
+            },
+            "paper_references": [
+                "Duff, Hogg, Lopez (2020) Table 2"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "GHS_indef/aug3dcqp",
+            "source": "suitesparse",
+            "category": "hard-indefinite",
+            "path": "suitesparse/hard-indefinite/aug3dcqp/aug3dcqp.mtx",
+            "size": 35543,
+            "nnz": 77829,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "hard",
+                "kind": "optimization problem",
+                "expected_delayed_pivots": "medium"
+            },
+            "paper_references": [
+                "Duff, Pralet (2005) Table 3.2"
+            ],
+            "reference_results": {},
+            "ci_subset": true
+        },
+        {
+            "name": "GHS_indef/blockqp1",
+            "source": "suitesparse",
+            "category": "hard-indefinite",
+            "path": "suitesparse/hard-indefinite/blockqp1/blockqp1.mtx",
+            "size": 60012,
+            "nnz": 340022,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "hard",
+                "kind": "optimization problem",
+                "expected_delayed_pivots": "medium"
+            },
+            "paper_references": [
+                "Duff, Pralet (2005) Table 3.2"
+            ],
+            "reference_results": {},
+            "ci_subset": true
+        },
+        {
+            "name": "GHS_indef/bratu3d",
+            "source": "suitesparse",
+            "category": "hard-indefinite",
+            "path": "suitesparse/hard-indefinite/bratu3d/bratu3d.mtx",
+            "size": 27792,
+            "nnz": 88627,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "hard",
+                "kind": "nonlinear PDE problem",
+                "expected_delayed_pivots": "medium"
+            },
+            "paper_references": [
+                "Duff, Hogg, Lopez (2020) Table 2"
+            ],
+            "reference_results": {},
+            "ci_subset": true
+        },
+        {
+            "name": "GHS_indef/c-71",
+            "source": "suitesparse",
+            "category": "hard-indefinite",
+            "path": "suitesparse/hard-indefinite/c-71/c-71.mtx",
+            "size": 76638,
+            "nnz": 468096,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "hard",
+                "kind": "optimization problem",
+                "expected_delayed_pivots": "high",
+                "killer_case": true
+            },
+            "paper_references": [
+                "Hogg, Ovtchinnikov, Scott (2016) Table III",
+                "Duff, Hogg, Lopez (2020) Table 2"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "Schenk_IBMNA/c-big",
+            "source": "suitesparse",
+            "category": "hard-indefinite",
+            "path": "suitesparse/hard-indefinite/c-big/c-big.mtx",
+            "size": 345241,
+            "nnz": 1343126,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "hard",
+                "kind": "optimization problem",
+                "expected_delayed_pivots": "high",
+                "killer_case": true
+            },
+            "paper_references": [
+                "Duff, Hogg, Lopez (2020) Table 2"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "GHS_indef/cont-201",
+            "source": "suitesparse",
+            "category": "hard-indefinite",
+            "path": "suitesparse/hard-indefinite/cont-201/cont-201.mtx",
+            "size": 80595,
+            "nnz": 239596,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "hard",
+                "kind": "optimization problem",
+                "expected_delayed_pivots": "high",
+                "killer_case": true
+            },
+            "paper_references": [
+                "Duff, Hogg, Lopez (2020) Table 2"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "GHS_indef/cont-300",
+            "source": "suitesparse",
+            "category": "hard-indefinite",
+            "path": "suitesparse/hard-indefinite/cont-300/cont-300.mtx",
+            "size": 180895,
+            "nnz": 539396,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "hard",
+                "kind": "optimization problem",
+                "expected_delayed_pivots": "high"
+            },
+            "paper_references": [
+                "Duff, Hogg, Lopez (2020) Table 2"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "GHS_indef/cvxqp3",
+            "source": "suitesparse",
+            "category": "hard-indefinite",
+            "path": "suitesparse/hard-indefinite/cvxqp3/cvxqp3.mtx",
+            "size": 17500,
+            "nnz": 69981,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "hard",
+                "kind": "optimization problem",
+                "expected_delayed_pivots": "medium"
+            },
+            "paper_references": [
+                "Duff, Hogg, Lopez (2020) Table 2"
+            ],
+            "reference_results": {},
+            "ci_subset": true
+        },
+        {
+            "name": "GHS_indef/d_pretok",
+            "source": "suitesparse",
+            "category": "hard-indefinite",
+            "path": "suitesparse/hard-indefinite/d_pretok/d_pretok.mtx",
+            "size": 182730,
+            "nnz": 885416,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "hard",
+                "kind": "optimization problem",
+                "expected_delayed_pivots": "medium"
+            },
+            "paper_references": [
+                "Duff, Hogg, Lopez (2020) Table 2"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "GHS_indef/mario001",
+            "source": "suitesparse",
+            "category": "hard-indefinite",
+            "path": "suitesparse/hard-indefinite/mario001/mario001.mtx",
+            "size": 38434,
+            "nnz": 114643,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "hard",
+                "kind": "computational fluid dynamics problem",
+                "expected_delayed_pivots": "medium"
+            },
+            "paper_references": [
+                "Duff, Pralet (2005) Table 3.2"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "GHS_indef/ncvxqp1",
+            "source": "suitesparse",
+            "category": "hard-indefinite",
+            "path": "suitesparse/hard-indefinite/ncvxqp1/ncvxqp1.mtx",
+            "size": 12111,
+            "nnz": 40537,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "hard",
+                "kind": "optimization problem",
+                "expected_delayed_pivots": "medium"
+            },
+            "paper_references": [
+                "Duff, Hogg, Lopez (2020) Table 2"
+            ],
+            "reference_results": {},
+            "ci_subset": true
+        },
+        {
+            "name": "GHS_indef/ncvxqp3",
+            "source": "suitesparse",
+            "category": "hard-indefinite",
+            "path": "suitesparse/hard-indefinite/ncvxqp3/ncvxqp3.mtx",
+            "size": 75000,
+            "nnz": 274982,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "hard",
+                "kind": "optimization problem",
+                "expected_delayed_pivots": "high",
+                "killer_case": true
+            },
+            "paper_references": [
+                "Hogg, Ovtchinnikov, Scott (2016) Table III",
+                "Duff, Hogg, Lopez (2020) Table 2"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "GHS_indef/ncvxqp5",
+            "source": "suitesparse",
+            "category": "hard-indefinite",
+            "path": "suitesparse/hard-indefinite/ncvxqp5/ncvxqp5.mtx",
+            "size": 62500,
+            "nnz": 237483,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "hard",
+                "kind": "optimization problem",
+                "expected_delayed_pivots": "medium"
+            },
+            "paper_references": [
+                "Duff, Hogg, Lopez (2020) Table 2"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "GHS_indef/ncvxqp7",
+            "source": "suitesparse",
+            "category": "hard-indefinite",
+            "path": "suitesparse/hard-indefinite/ncvxqp7/ncvxqp7.mtx",
+            "size": 87500,
+            "nnz": 312481,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "hard",
+                "kind": "optimization problem",
+                "expected_delayed_pivots": "medium"
+            },
+            "paper_references": [
+                "Duff, Hogg, Lopez (2020) Table 2"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "GHS_indef/stokes128",
+            "source": "suitesparse",
+            "category": "hard-indefinite",
+            "path": "suitesparse/hard-indefinite/stokes128/stokes128.mtx",
+            "size": 49666,
+            "nnz": 295938,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "hard",
+                "kind": "computational fluid dynamics problem",
+                "expected_delayed_pivots": "high",
+                "killer_case": true
+            },
+            "paper_references": [
+                "Duff, Hogg, Lopez (2020) Table 2"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "GHS_indef/turon_m",
+            "source": "suitesparse",
+            "category": "hard-indefinite",
+            "path": "suitesparse/hard-indefinite/turon_m/turon_m.mtx",
+            "size": 189924,
+            "nnz": 912345,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": false,
+                "indefinite": true,
+                "difficulty": "hard",
+                "kind": "optimization problem",
+                "expected_delayed_pivots": "medium"
+            },
+            "paper_references": [
+                "Duff, Hogg, Lopez (2020) Table 2"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "AMD/G3_circuit",
+            "source": "suitesparse",
+            "category": "positive-definite",
+            "path": "suitesparse/positive-definite/G3_circuit/G3_circuit.mtx",
+            "size": 1585478,
+            "nnz": 4623152,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": true,
+                "indefinite": false,
+                "difficulty": "easy",
+                "kind": "circuit simulation problem"
+            },
+            "paper_references": [
+                "Hogg, Ovtchinnikov, Scott (2016) Table III"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "Schenk_AFE/af_0_k101",
+            "source": "suitesparse",
+            "category": "positive-definite",
+            "path": "suitesparse/positive-definite/af_0_k101/af_0_k101.mtx",
+            "size": 503625,
+            "nnz": 9027150,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": true,
+                "indefinite": false,
+                "difficulty": "easy",
+                "kind": "structural problem"
+            },
+            "paper_references": [
+                "Hogg, Ovtchinnikov, Scott (2016) Table III"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "Schenk_AFE/af_shell7",
+            "source": "suitesparse",
+            "category": "positive-definite",
+            "path": "suitesparse/positive-definite/af_shell7/af_shell7.mtx",
+            "size": 504855,
+            "nnz": 9046865,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": true,
+                "indefinite": false,
+                "difficulty": "easy",
+                "kind": "structural problem"
+            },
+            "paper_references": [
+                "Hogg, Ovtchinnikov, Scott (2016) Table III"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "GHS_psdef/apache2",
+            "source": "suitesparse",
+            "category": "positive-definite",
+            "path": "suitesparse/positive-definite/apache2/apache2.mtx",
+            "size": 715176,
+            "nnz": 2766523,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": true,
+                "indefinite": false,
+                "difficulty": "easy",
+                "kind": "structural problem"
+            },
+            "paper_references": [
+                "Hogg, Ovtchinnikov, Scott (2016) Table III"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "GHS_psdef/bmwcra_1",
+            "source": "suitesparse",
+            "category": "positive-definite",
+            "path": "suitesparse/positive-definite/bmwcra_1/bmwcra_1.mtx",
+            "size": 148770,
+            "nnz": 5396386,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": true,
+                "indefinite": false,
+                "difficulty": "easy",
+                "kind": "structural problem"
+            },
+            "paper_references": [
+                "Hogg, Ovtchinnikov, Scott (2016) Table III"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "Oberwolfach/boneS01",
+            "source": "suitesparse",
+            "category": "positive-definite",
+            "path": "suitesparse/positive-definite/boneS01/boneS01.mtx",
+            "size": 127224,
+            "nnz": 3421188,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": true,
+                "indefinite": false,
+                "difficulty": "easy",
+                "kind": "model reduction problem"
+            },
+            "paper_references": [
+                "Hogg, Ovtchinnikov, Scott (2016) Table III"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "Rothberg/cfd2",
+            "source": "suitesparse",
+            "category": "positive-definite",
+            "path": "suitesparse/positive-definite/cfd2/cfd2.mtx",
+            "size": 123440,
+            "nnz": 1605669,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": true,
+                "indefinite": false,
+                "difficulty": "easy",
+                "kind": "computational fluid dynamics problem"
+            },
+            "paper_references": [
+                "Hogg, Ovtchinnikov, Scott (2016) Table III"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "GHS_psdef/crankseg_1",
+            "source": "suitesparse",
+            "category": "positive-definite",
+            "path": "suitesparse/positive-definite/crankseg_1/crankseg_1.mtx",
+            "size": 52804,
+            "nnz": 5333507,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": true,
+                "indefinite": false,
+                "difficulty": "easy",
+                "kind": "structural problem"
+            },
+            "paper_references": [
+                "Hogg, Ovtchinnikov, Scott (2016) Table III"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "GHS_psdef/crankseg_2",
+            "source": "suitesparse",
+            "category": "positive-definite",
+            "path": "suitesparse/positive-definite/crankseg_2/crankseg_2.mtx",
+            "size": 63838,
+            "nnz": 7106348,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": true,
+                "indefinite": false,
+                "difficulty": "easy",
+                "kind": "structural problem"
+            },
+            "paper_references": [
+                "Hogg, Ovtchinnikov, Scott (2016) Table III"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "GHS_psdef/inline_1",
+            "source": "suitesparse",
+            "category": "positive-definite",
+            "path": "suitesparse/positive-definite/inline_1/inline_1.mtx",
+            "size": 503712,
+            "nnz": 18660027,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": true,
+                "indefinite": false,
+                "difficulty": "easy",
+                "kind": "structural problem"
+            },
+            "paper_references": [
+                "Hogg, Ovtchinnikov, Scott (2016) Table III"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "GHS_psdef/ldoor",
+            "source": "suitesparse",
+            "category": "positive-definite",
+            "path": "suitesparse/positive-definite/ldoor/ldoor.mtx",
+            "size": 952203,
+            "nnz": 23737339,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": true,
+                "indefinite": false,
+                "difficulty": "easy",
+                "kind": "structural problem"
+            },
+            "paper_references": [
+                "Hogg, Ovtchinnikov, Scott (2016) Table III"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "ND/nd12k",
+            "source": "suitesparse",
+            "category": "positive-definite",
+            "path": "suitesparse/positive-definite/nd12k/nd12k.mtx",
+            "size": 36000,
+            "nnz": 7128473,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": true,
+                "indefinite": false,
+                "difficulty": "easy",
+                "kind": "2D/3D problem"
+            },
+            "paper_references": [
+                "Hogg, Ovtchinnikov, Scott (2016) Table III"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "ND/nd6k",
+            "source": "suitesparse",
+            "category": "positive-definite",
+            "path": "suitesparse/positive-definite/nd6k/nd6k.mtx",
+            "size": 18000,
+            "nnz": 3457658,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": true,
+                "indefinite": false,
+                "difficulty": "easy",
+                "kind": "2D/3D problem"
+            },
+            "paper_references": [
+                "Hogg, Ovtchinnikov, Scott (2016) Table III"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "Um/offshore",
+            "source": "suitesparse",
+            "category": "positive-definite",
+            "path": "suitesparse/positive-definite/offshore/offshore.mtx",
+            "size": 259789,
+            "nnz": 2251231,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": true,
+                "indefinite": false,
+                "difficulty": "easy",
+                "kind": "electromagnetics problem"
+            },
+            "paper_references": [
+                "Hogg, Ovtchinnikov, Scott (2016) Table III"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "DNVS/ship_003",
+            "source": "suitesparse",
+            "category": "positive-definite",
+            "path": "suitesparse/positive-definite/ship_003/ship_003.mtx",
+            "size": 121728,
+            "nnz": 4103881,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": true,
+                "indefinite": false,
+                "difficulty": "easy",
+                "kind": "structural problem"
+            },
+            "paper_references": [
+                "Hogg, Ovtchinnikov, Scott (2016) Table III"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "DNVS/shipsec1",
+            "source": "suitesparse",
+            "category": "positive-definite",
+            "path": "suitesparse/positive-definite/shipsec1/shipsec1.mtx",
+            "size": 140874,
+            "nnz": 3977139,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": true,
+                "indefinite": false,
+                "difficulty": "easy",
+                "kind": "structural problem"
+            },
+            "paper_references": [
+                "Hogg, Ovtchinnikov, Scott (2016) Table III"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "DNVS/shipsec5",
+            "source": "suitesparse",
+            "category": "positive-definite",
+            "path": "suitesparse/positive-definite/shipsec5/shipsec5.mtx",
+            "size": 179860,
+            "nnz": 5146478,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": true,
+                "indefinite": false,
+                "difficulty": "easy",
+                "kind": "structural problem"
+            },
+            "paper_references": [
+                "Hogg, Ovtchinnikov, Scott (2016) Table III"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "DNVS/shipsec8",
+            "source": "suitesparse",
+            "category": "positive-definite",
+            "path": "suitesparse/positive-definite/shipsec8/shipsec8.mtx",
+            "size": 114919,
+            "nnz": 3384159,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": true,
+                "indefinite": false,
+                "difficulty": "easy",
+                "kind": "structural problem"
+            },
+            "paper_references": [
+                "Hogg, Ovtchinnikov, Scott (2016) Table III"
+            ],
+            "reference_results": {}
+        },
+        {
+            "name": "DNVS/thread",
+            "source": "suitesparse",
+            "category": "positive-definite",
+            "path": "suitesparse/positive-definite/thread/thread.mtx",
+            "size": 29736,
+            "nnz": 2249892,
+            "in_repo": true,
+            "properties": {
+                "symmetric": true,
+                "positive_definite": true,
+                "indefinite": false,
+                "difficulty": "easy",
+                "kind": "structural problem"
+            },
+            "paper_references": [
+                "Hogg, Ovtchinnikov, Scott (2016) Table III"
+            ],
+            "reference_results": {}
+        }
+    ]
+}

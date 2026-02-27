@@ -7,7 +7,7 @@
 # Rust code with strong type safety.
 
 version: "1.0.0"
-module: rivrs_linalg::sylvester
+module: rivrs_control::sylvester
 
 # ==============================================================================
 # Public Functions
@@ -466,7 +466,7 @@ complete_examples:
   basic_solve:
     description: "Solve a simple 2×2 continuous-time Sylvester equation"
     code: |
-      use rivrs_linalg::sylvester::solve_continuous;
+      use rivrs_control::sylvester::solve_continuous;
       use faer::prelude::*;
 
       fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -495,7 +495,7 @@ complete_examples:
   discrete_time:
     description: "Solve a discrete-time Sylvester equation"
     code: |
-      use rivrs_linalg::sylvester::{solve_discrete, Sign};
+      use rivrs_control::sylvester::{solve_discrete, Sign};
       use faer::prelude::*;
 
       let a = mat![[0.5, 0.0], [0.0, 0.8]];
@@ -509,7 +509,7 @@ complete_examples:
   error_handling:
     description: "Comprehensive error handling"
     code: |
-      use rivrs_linalg::sylvester::{solve_continuous, SylvesterError};
+      use rivrs_control::sylvester::{solve_continuous, SylvesterError};
 
       match solve_continuous(&a, &b, &c) {
           Ok(result) => {
@@ -536,7 +536,7 @@ complete_examples:
   validation:
     description: "Validate solution accuracy"
     code: |
-      use rivrs_linalg::sylvester::{solve_continuous, compute_residual, EquationType};
+      use rivrs_control::sylvester::{solve_continuous, compute_residual, EquationType};
 
       let result = solve_continuous(&a, &b, &c)?;
       let x = &result.solution / result.scale;
@@ -554,7 +554,7 @@ complete_examples:
 migration_from_slicot:
   SB04MD:
     description: "Continuous-time Sylvester solver"
-    equivalent: "rivrs_linalg::sylvester::solve_continuous"
+    equivalent: "rivrs_control::sylvester::solve_continuous"
     parameter_mapping:
       DICO: "Not needed (always 'C' for this function)"
       N: "Inferred from a.nrows()"
@@ -570,23 +570,23 @@ migration_from_slicot:
 
   SB04QD:
     description: "Discrete-time Sylvester solver"
-    equivalent: "rivrs_linalg::sylvester::solve_discrete"
+    equivalent: "rivrs_control::sylvester::solve_discrete"
     differences:
-      - "rivrs-linalg uses Sign parameter instead of implicit equation form"
+      - "rivrs-control uses Sign parameter instead of implicit equation form"
       - "Residual norm computed automatically"
       - "Type-safe MatRef prevents dimension errors at compile time (when possible)"
 
 migration_from_scipy:
   solve_sylvester:
     description: "SciPy continuous-time solver"
-    equivalent: "rivrs_linalg::sylvester::solve_continuous"
+    equivalent: "rivrs_control::sylvester::solve_continuous"
     code_comparison: |
       # SciPy (Python)
       from scipy.linalg import solve_sylvester
       x = solve_sylvester(a, b, c)
 
-      // rivrs-linalg (Rust)
-      use rivrs_linalg::sylvester::solve_continuous;
+      // rivrs-control (Rust)
+      use rivrs_control::sylvester::solve_continuous;
       let result = solve_continuous(&a, &b, &c)?;
       let x = &result.solution / result.scale;
 

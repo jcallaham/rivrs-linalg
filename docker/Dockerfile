@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y \
 	ca-certificates \
 	git \
 	build-essential \
+	linux-perf \
 	gcc \
 	g++ \
 	gfortran \
@@ -78,17 +79,77 @@ RUN git config --global user.name "${GIT_USER_NAME}" && \
 
 USER root
 
+# Install Git LFS
+RUN curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.deb.sh | bash \
+	&& apt-get install -y git-lfs && git lfs install --system
+
 # Stage 2: Reference materials (separate for caching)
 
 FROM scratch AS references
 # Copy the entire references directory
 COPY references /references
 
+# =============================================================================
+# Stage: SPRAL Build (optional - for validation and benchmarking only)
+#
+# Builds the SPRAL sparse linear algebra library (BSD-3) from source as a
+# reference implementation for SSIDS and other sparse solvers.
+# See: https://github.com/ralna/spral
+#
+# To create a leaner development image without SPRAL, remove:
+#   - This entire stage (FROM debian:bookworm-slim AS spral-builder ... meson install)
+#   - The "SPRAL installation" block in the development stage below
+# =============================================================================
+FROM debian:bookworm-slim AS spral-builder
+
+# Install build dependencies for SPRAL
+RUN apt-get update && apt-get install -y \
+	build-essential \
+	gfortran \
+	meson \
+	ninja-build \
+	python3 \
+	pkg-config \
+	git \
+	libopenblas-dev \
+	libmetis-dev \
+	libhwloc-dev \
+	&& rm -rf /var/lib/apt/lists/*
+
+# Clone SPRAL source
+RUN git clone --depth=1 https://github.com/ralna/spral.git /opt/spral-src
+
+# Build and install SPRAL with examples and tests enabled
+RUN meson setup /opt/spral-src/builddir /opt/spral-src \
+	-Dexamples=true \
+	-Dtests=true \
+	-Dlibblas=openblas \
+	-Dliblapack=openblas \
+	--prefix=/opt/spral \
+	&& meson compile -C /opt/spral-src/builddir \
+	&& meson install -C /opt/spral-src/builddir
+
 # Stage 3: Development environment
 FROM base-builder AS development
 
 # Copy reference materials to /opt/references (permanent location)
 COPY --from=references /references/ /opt/references/
+
+# =============================================================================
+# SPRAL installation (optional - for validation and benchmarking only)
+# Remove this block and the spral-builder stage above for a leaner image
+# =============================================================================
+
+# Install SPRAL runtime dependencies + MUMPS sequential library
+RUN apt-get update && apt-get install -y \
+	libopenblas-dev \
+	libmetis-dev \
+	libhwloc-dev \
+	libmumps-seq-dev \
+	&& rm -rf /var/lib/apt/lists/*
+
+# Copy SPRAL build artifacts from spral-builder stage
+COPY --from=spral-builder /opt/spral /opt/spral
 
 # Create workspace and config directories with proper ownership
 RUN mkdir -p /workspace /opt/references /home/node/.claude /home/node/.cargo \
@@ -126,7 +187,7 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 # Create welcome script
 RUN echo '#!/bin/bash' > /usr/local/bin/welcome.sh && \
 	echo 'echo "======================================"' >> /usr/local/bin/welcome.sh && \
-	echo 'echo "rivrs-linalg Monorepo Development Environment (ARM64)"' >> /usr/local/bin/welcome.sh && \
+	echo 'echo "rivrs-linalg Monorepo Development Environment ($(uname -m))"' >> /usr/local/bin/welcome.sh && \
 	echo 'echo "======================================"' >> /usr/local/bin/welcome.sh && \
 	echo 'echo ""' >> /usr/local/bin/welcome.sh && \
 	echo 'echo "Rust:        $(rustc --version)"' >> /usr/local/bin/welcome.sh && \

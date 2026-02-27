@@ -7,7 +7,7 @@ mod common;
 
 use common::{compute_schur, schur_has_2x2_blocks};
 use faer::prelude::*;
-use rivrs_linalg::sylvester::{
+use rivrs_control::sylvester::{
     EquationType, compute_residual, solve_discrete, solve_discrete_schur,
 };
 

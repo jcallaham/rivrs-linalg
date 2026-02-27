@@ -1,0 +1,84 @@
+{
+  "matrix_name": "stress-ill-cond",
+  "permutation": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9
+  ],
+  "l_entries": [],
+  "d_blocks": [
+    {
+      "size": 1,
+      "values": [
+        1.0
+      ]
+    },
+    {
+      "size": 1,
+      "values": [
+        -0.046415888336127795
+      ]
+    },
+    {
+      "size": 1,
+      "values": [
+        0.0021544346900318843
+      ]
+    },
+    {
+      "size": 1,
+      "values": [
+        -0.0001
+      ]
+    },
+    {
+      "size": 1,
+      "values": [
+        4.641588833612782e-06
+      ]
+    },
+    {
+      "size": 1,
+      "values": [
+        -2.1544346900318867e-07
+      ]
+    },
+    {
+      "size": 1,
+      "values": [
+        1e-08
+      ]
+    },
+    {
+      "size": 1,
+      "values": [
+        -4.6415888336127913e-10
+      ]
+    },
+    {
+      "size": 1,
+      "values": [
+        2.1544346900318868e-11
+      ]
+    },
+    {
+      "size": 1,
+      "values": [
+        -1e-12
+      ]
+    }
+  ],
+  "inertia": {
+    "positive": 5,
+    "negative": 5,
+    "zero": 0
+  },
+  "notes": "Diagonal with geometrically spaced eigenvalues, alternating signs."
+}

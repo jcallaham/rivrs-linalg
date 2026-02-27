@@ -1,6 +1,6 @@
-//! rivrs-linalg — Numerical Linear Algebra for Rivrs
+//! rivrs-control — Numerical Control Algorithms for Rivrs
 //!
-//! A scientific computing library providing numerical linear algebra implementations
+//! A scientific computing library providing numerical control implementations
 //! for the Rivrs symbolic-numeric framework.
 //!
 //! # Sylvester Equation Solvers
@@ -17,7 +17,7 @@
 //! # Example
 //!
 //! ```
-//! use rivrs_linalg::sylvester::solve_continuous;
+//! use rivrs_control::sylvester::solve_continuous;
 //! use faer::mat;
 //!
 //! let a = mat![[1.0, 0.0], [0.0, 2.0f64]];

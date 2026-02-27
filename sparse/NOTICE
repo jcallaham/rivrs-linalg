@@ -1,0 +1,139 @@
+NOTICE
+======
+
+rivrs-sparse — Sparse Linear Algebra for Rivrs
+Copyright (c) 2026 Jared Callaham
+
+This software is licensed under the Apache License 2.0
+(see LICENSE).
+
+ACADEMIC AND REFERENCE SOURCES
+===============================
+
+Sparse Symmetric Indefinite Direct Solver (SSIDS)
+--------------------------------------------------
+
+Implementation based on:
+
+1. Academic Publications:
+   - Hogg, J.D., Duff, I.S., & Lopez, F. (2020). "A New Sparse LDL^T Solver
+     Using A Posteriori Threshold Pivoting". SIAM Journal on Scientific Computing.
+
+   - Duff, I.S. & Reid, J.K. (1983). "The multifrontal solution of indefinite
+     sparse symmetric linear equations". ACM Transactions on Mathematical Software,
+     9(3), 302-325.
+
+   - Liu, J.W.H. (1992). "The Multifrontal Method for Sparse Matrix Solution:
+     Theory and Practice". SIAM Review, 34(1), 82-109.
+
+   - Jonsson, I. & Kågström, B. (2002). "Recursive blocked algorithms for solving
+     triangular systems—Part I: one-sided and coupled Sylvester-type matrix equations".
+     ACM Transactions on Mathematical Software, 28(4), 392-415.
+
+   - Schenk, O. & Gärtner, K. (2006). "On fast factorization pivoting methods
+     for sparse symmetric indefinite systems". Electronic Transactions on Numerical
+     Analysis, 23, 158-179.
+
+2. Reference Implementation:
+   - SPRAL (Sparse Parallel Robust Algorithms Library)
+     Copyright (c) 2014-2025, The Science and Technology Facilities Council (STFC)
+     Licensed under BSD-3-Clause
+     Available at: https://github.com/ralna/spral
+
+     Used as reference for: sparse symmetric indefinite factorization patterns,
+     APTP pivoting strategy, multifrontal algorithm structure.
+
+   - LAPACK (Linear Algebra Package)
+     Copyright (c) 1992-2023 The University of Tennessee and The University
+     of Tennessee Research Foundation. All rights reserved.
+     Licensed under BSD-3-Clause
+     Available at: https://netlib.org/lapack/
+
+     Used as reference for: dense kernel patterns used within sparse factorization.
+
+3. faer Infrastructure:
+   faer (Rust linear algebra library)
+   Licensed under Apache-2.0 OR MIT
+   Available at: https://github.com/sarah-ek/faer-rs
+
+   Used for: CSC storage, elimination trees, AMD ordering, dense linear algebra
+   operations, workspace management.
+
+SPRAL LICENSE (BSD-3-Clause)
+============================
+
+Copyright (c) 2014-2025, The Science and Technology Facilities Council (STFC)
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+LAPACK LICENSE (BSD-3-Clause)
+==============================
+
+Copyright (c) 1992-2023
+The University of Tennessee and The University of Tennessee Research Foundation.
+All rights reserved.
+
+Copyright (c) 2000-2023
+The University of California Berkeley. All rights reserved.
+
+Copyright (c) 2006-2023
+The University of Colorado Denver.  All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+* Redistributions of source code must retain the above copyright notice, this
+  list of conditions and the following disclaimer.
+
+* Redistributions in binary form must reproduce the above copyright notice,
+  this list of conditions and the following disclaimer in the documentation
+  and/or other materials provided with the distribution.
+
+* Neither the name of the copyright holder nor the names of its contributors
+  may be used to endorse or promote products derived from this software
+  without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+DEPENDENCIES
+============
+
+This library depends on other open-source Rust crates, each with their own licenses:
+- faer (Apache-2.0 OR MIT)
+- approx (Apache-2.0 OR MIT, dev dependency)
+- criterion (Apache-2.0 OR MIT, dev dependency)
+
+See Cargo.toml and the respective crate documentation for complete dependency licensing.

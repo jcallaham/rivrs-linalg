@@ -39,6 +39,7 @@ if [ "$(id -u)" = "0" ]; then
     su - node -c 'cd /workspace/rivrs-linalg && git config --local safe.directory /workspace/rivrs-linalg'
     su - node -c 'cd /workspace/rivrs-linalg && git config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*"'
     su - node -c 'cd /workspace/rivrs-linalg && git fetch --all --quiet'
+    su - node -c 'cd /workspace/rivrs-linalg && git lfs pull'
 
     # Symlink reference materials
     ln -sf /opt/references /workspace/rivrs-linalg/references
@@ -62,6 +63,21 @@ if [ "$(id -u)" = "0" ]; then
       fi
     fi
   fi
+
+  # Extract SuiteSparse test matrices from reference archive (if available and not already extracted)
+  SUITESPARSE_ARCHIVE="/opt/references/ssids/suitesparse.tar.gz"
+  SUITESPARSE_DEST="/workspace/rivrs-linalg/sparse/test-data/suitesparse"
+  if [ -f "$SUITESPARSE_ARCHIVE" ] && [ ! -f "$SUITESPARSE_DEST/.extracted" ]; then
+    echo "Extracting SuiteSparse test matrices..."
+    su - node -c "mkdir -p '$SUITESPARSE_DEST'"
+    su - node -c "tar xzf '$SUITESPARSE_ARCHIVE' -C '$SUITESPARSE_DEST'" 2>/dev/null && \
+      su - node -c "touch '$SUITESPARSE_DEST/.extracted'" && \
+      echo "SuiteSparse matrices extracted ($(du -sh "$SUITESPARSE_DEST" | awk '{print $1}'))" || \
+      echo "WARNING: Failed to extract SuiteSparse matrices (non-fatal)"
+  fi
+
+  # Enable hardware performance counters for perf stat/record
+  sysctl -w kernel.perf_event_paranoid=-1 2>/dev/null || true
 
   # Ensure ownership is correct for volumes (may have been created with wrong permissions)
   chown -R node:node /home/node/.claude 2>/dev/null || true

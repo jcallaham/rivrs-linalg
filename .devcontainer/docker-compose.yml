@@ -10,7 +10,8 @@ services:
         CLAUDE_CODE_VERSION: "latest"
         GIT_USER_NAME: "${GIT_USER_NAME:-Claude Code}"
         GIT_USER_EMAIL: "${GIT_USER_EMAIL:-claude@example.com}"
-    platform: linux/arm64
+    # platform: not set — Docker Compose defaults to the host's native architecture
+    # (linux/arm64 on macOS, linux/amd64 on Linux). Override via DOCKER_DEFAULT_PLATFORM if needed.
     image: rivrs-linalg-dev:latest
     container_name: rivrs-linalg-dev
 
@@ -32,6 +33,13 @@ services:
       - GH_TOKEN=${GH_TOKEN:-}
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
       - TERM=${TERM:-xterm-256color}
+
+    # CAP_PERFMON + unconfined seccomp allow perf stat/record inside the
+    # container for hardware performance counter profiling.
+    cap_add:
+      - PERFMON
+    security_opt:
+      - seccomp:unconfined
 
     deploy:
       resources:
