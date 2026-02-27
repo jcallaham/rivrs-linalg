@@ -6,6 +6,7 @@
 
 set -euo pipefail
 
+SPRAL_TOOLS="$(cd "$(dirname "$0")" && pwd)"
 SPRAL=/opt/references/spral
 SRC=$SPRAL/src
 OUT=/tmp/spral_ssids
@@ -90,7 +91,6 @@ echo "=== Building static library ==="
 ar rcs libspral.a *.o
 
 echo "=== Compiling SPRAL driver binaries ==="
-SPRAL_TOOLS="$(cd "$(dirname "$0")" && pwd)"
 
 # Benchmark driver (SPRAL does its own ordering)
 gfortran -O2 -fopenmp -I $OUT -o /tmp/spral_benchmark \

@@ -1,5 +1,219 @@
 # SSIDS Development Log
 
+## Phase 9.3b: Benchmarking and Performance Comparisons
+
+```bash
+comparisons/drivers/build_spral.sh
+cargo run --bin spral-comparison --release -- --rivrs --threads 1
+```
+
+```
+=== Comparison: SPRAL vs rivrs (threads=1) ===
+Matrix                                     n  spral_fac  rivrs_fac   ratio   spral_be   rivrs_be  sl_st  sl_nd
+------------------------------------------------------------------------------------------------------------------
+BenElechi/BenElechi1                  245874      1.068      1.276    1.19    6.2e-19    5.9e-19    778   4762
+Koutsovasilis/F2                       71505      0.384      0.376    0.98    9.7e-19    9.4e-19    241   1065
+PARSEC/H2O                             67024     28.259     26.685    0.94    1.5e-18    1.3e-18      0      0
+PARSEC/Si10H16                         17077      2.102      1.681    0.80    4.5e-17    4.5e-17      0      0
+PARSEC/Si5H12                          19896      3.164      3.401    1.07    1.8e-17    2.6e-18      0      0
+PARSEC/SiNa                             5743      0.210      0.160    0.76    7.5e-18    4.2e-18      0      0
+Newman/astro-ph                        16706      0.698      0.361    0.52     8.9e-9    8.0e-18     53    229
+Boeing/bcsstk39                        46772      0.129      0.131    1.02    2.6e-18    2.3e-18    126   1172
+GHS_indef/bloweybq                     10001      0.002      0.003    1.50    1.6e-18    1.7e-18      1    293
+GHS_indef/copter2                      55476      0.465      0.372    0.80    1.2e-15    2.6e-16    207   1092
+Boeing/crystk02                        13965      0.086      0.080    0.93    1.9e-18    1.8e-18     62    184
+Boeing/crystk03                        24696      0.205      0.179    0.87    1.4e-18    1.4e-18     45    102
+GHS_indef/dawson5                      51537      0.120      0.117    0.97    3.8e-16    1.5e-16    103   1337
+GHS_indef/dixmaanl                     60000      0.014      0.024    1.70    3.0e-18    5.8e-18      1   1605
+Oberwolfach/filter3D                  106437      0.355      0.351    0.99    6.2e-19    6.2e-19    356   2491
+Oberwolfach/gas_sensor                 66917      0.572      0.520    0.91    8.0e-19    7.0e-19    335   1727
+GHS_indef/helm3d01                     32226      0.173      0.203    1.17    6.3e-16    3.6e-16    117    852
+GHS_indef/linverse                     11999      0.003      0.005    1.65    7.4e-18    6.9e-18      1    327
+INPRO/msdoor                          415863      0.934      1.159    1.24    6.7e-19    6.5e-19    680  10268
+ND/nd3k                                 9000      0.741      0.663    0.90    5.4e-18    2.8e-18      0      0
+Boeing/pwtk                           217918      0.944      0.957    1.01    4.4e-19    4.4e-19    727   4404
+Cunningham/qa8fk                       66127      0.563      0.555    0.99    8.1e-19    7.8e-19    326   1528
+Oberwolfach/rail_79841                 79841      0.037      0.068    1.85    5.9e-19    6.3e-19     12   2188
+GHS_indef/sparsine                     50000     32.626     27.435    0.84    8.4e-15    3.0e-15      0      0
+GHS_indef/spmsrtls                     29995      0.007      0.012    1.79    1.0e-17    2.0e-17      1    825
+Oberwolfach/t2dal                       4257      0.002      0.004    1.55    1.8e-18    2.1e-18      1    110
+Oberwolfach/t3dh                       79171      1.597      1.667    1.04    8.8e-19    7.4e-19    346   1298
+Cote/vibrobox                          12328      0.053      0.042    0.79    3.1e-18    2.7e-18     52    287
+TSOPF/TSOPF_FS_b162_c1                 10798      0.028      0.036    1.28    3.6e-17    5.4e-17     14    790
+TSOPF/TSOPF_FS_b39_c7                  28216      0.025      0.034    1.35    1.2e-16    1.6e-16      1   2123
+GHS_indef/aug3dcqp                     35543      0.070      0.065    0.94    8.4e-19    1.2e-18     36   1495
+GHS_indef/blockqp1                     60012      0.034      0.051    1.48    9.0e-14    9.3e-14      1  19991
+GHS_indef/bratu3d                      27792      0.178      0.137    0.77    7.3e-18    1.3e-18    101    750
+GHS_indef/c-71                         76638      2.435      3.622    1.49    8.3e-19    1.0e-18    243   2497
+Schenk_IBMNA/c-big                    345241      8.533     11.657    1.37    1.3e-17    5.1e-18    904  18712
+GHS_indef/cont-201                     80595      0.074      0.081    1.10    2.3e-18    1.9e-18     51   2248
+GHS_indef/cont-300                    180895      0.205      0.205    1.00    1.9e-18    1.1e-18    113   5039
+GHS_indef/cvxqp3                       17500      0.259      0.139    0.54    1.5e-13    2.0e-14     64    332
+GHS_indef/d_pretok                    182730      0.348      0.333    0.96    1.0e-18    9.3e-19    238   4779
+GHS_indef/mario001                     38434      0.017      0.032    1.91    1.8e-18    2.0e-18      1   1061
+GHS_indef/ncvxqp1                      12111      0.100      0.065    0.65    5.9e-16    1.5e-16     33    243
+GHS_indef/ncvxqp3                      75000      2.312      1.493    0.65    1.5e-13    3.3e-14    251   1442
+GHS_indef/ncvxqp5                      62500      0.916      0.562    0.61    1.2e-15    2.4e-16    219   1342
+GHS_indef/ncvxqp7                      87500      3.256      2.342    0.72    8.7e-14    4.9e-14    277   1651
+GHS_indef/stokes128                    49666      0.070      0.074    1.06    9.8e-19    2.2e-18     46   1452
+GHS_indef/turon_m                     189924      0.297      0.313    1.05    1.1e-18    2.7e-18    214   4970
+AMD/G3_circuit                       1585478      2.310      3.794    1.64    2.7e-19    3.0e-19   1582  48225
+Schenk_AFE/af_0_k101                  503625      2.125      2.151    1.01    3.5e-19    3.3e-19   1172  11569
+Schenk_AFE/af_shell7                  504855      1.917      1.990    1.04    3.2e-19    3.3e-19   1209  11639
+GHS_psdef/apache2                     715176      5.061      5.186    1.02    1.7e-19    2.0e-19   1736  20965
+GHS_psdef/bmwcra_1                    148770      1.731      1.589    0.92    6.4e-19    6.0e-19    368    962
+Oberwolfach/boneS01                   127224      1.168      1.099    0.94    6.9e-19    6.7e-19    451   3446
+Rothberg/cfd2                         123440      0.909      0.883    0.97    5.7e-19    5.5e-19    539   3359
+GHS_psdef/crankseg_1                   52804      0.923      0.834    0.90    1.7e-17    2.6e-17     56    145
+GHS_psdef/crankseg_2                   63838      1.304      1.158    0.89    3.6e-18    1.0e-17     58    143
+GHS_psdef/inline_1                    503712      4.372      4.513    1.03    6.1e-19    4.2e-19   2059   6888
+GHS_psdef/ldoor                       952203      2.814      3.351    1.19    4.4e-19    3.8e-19   1654  23174
+ND/nd12k                               36000     13.256     10.594    0.80    2.9e-18    1.6e-18      0      0
+ND/nd6k                                18000      3.130      2.381    0.76    3.9e-18    2.2e-18      0      0
+Um/offshore                           259789      2.375      2.144    0.90    9.0e-19    7.2e-19   1065   5591
+DNVS/ship_003                         121728      2.376      2.024    0.85    5.3e-19    5.3e-19    461   1584
+DNVS/shipsec1                         140874      1.110      1.079    0.97    7.7e-19    7.4e-19    679   3480
+DNVS/shipsec5                         179860      1.936      1.573    0.81    6.3e-19    5.9e-19    859   5009
+DNVS/shipsec8                         114919      1.325      0.988    0.75    9.3e-19    8.2e-19    496   2586
+DNVS/thread                            29736      3.688      1.530    0.41    1.7e-18    1.4e-18     21     78
+
+65/65 completed successfully
+```
+
+```
+=== Comparison: SPRAL vs rivrs (threads=8) ===
+Matrix                                     n  spral_fac  rivrs_fac   ratio   spral_be   rivrs_be  sl_st  sl_nd
+------------------------------------------------------------------------------------------------------------------
+BenElechi/BenElechi1                  245874      0.825      0.801    0.97    6.2e-19    5.8e-19    778   4762
+Koutsovasilis/F2                       71505      0.287      0.220    0.77    9.8e-19    9.3e-19    241   1065
+PARSEC/H2O                             67024     13.067     10.245    0.78    1.6e-18    1.1e-18      0      0
+PARSEC/Si10H16                         17077      1.009      0.998    0.99    3.0e-17    5.3e-17      0      0
+PARSEC/Si5H12                          19896      1.495      1.920    1.28    8.5e-18    2.2e-18      0      0
+PARSEC/SiNa                             5743      0.109      0.097    0.89    1.3e-17    4.0e-18      0      0
+Newman/astro-ph                        16706      0.497      0.262    0.53     1.3e-6    1.8e-18     53    229
+Boeing/bcsstk39                        46772      0.102      0.100    0.98    2.6e-18    2.3e-18    126   1172
+GHS_indef/bloweybq                     10001      0.002      0.004    1.45    1.6e-18    1.7e-18      1    293
+GHS_indef/copter2                      55476      0.284      0.204    0.72    9.6e-16    2.4e-16    207   1092
+Boeing/crystk02                        13965      0.060      0.044    0.73    2.0e-18    1.8e-18     62    184
+Boeing/crystk03                        24696      0.137      0.085    0.62    1.5e-18    1.3e-18     45    102
+GHS_indef/dawson5                      51537      0.098      0.087    0.89    2.3e-16    1.5e-16    103   1337
+GHS_indef/dixmaanl                     60000      0.014      0.025    1.74    3.0e-18    5.8e-18      1   1605
+Oberwolfach/filter3D                  106437      0.256      0.221    0.86    6.3e-19    6.2e-19    356   2491
+Oberwolfach/gas_sensor                 66917      0.347      0.258    0.75    8.1e-19    7.0e-19    335   1727
+GHS_indef/helm3d01                     32226      0.116      0.091    0.78    7.7e-16    3.8e-16    117    852
+GHS_indef/linverse                     11999      0.003      0.005    1.64    7.4e-18    6.9e-18      1    327
+INPRO/msdoor                          415863      0.790      0.861    1.09    6.8e-19    6.4e-19    680  10268
+ND/nd3k                                 9000      0.359      0.402    1.12    5.5e-18    2.8e-18      0      0
+Boeing/pwtk                           217918      0.658      0.562    0.85    4.3e-19    4.3e-19    727   4404
+Cunningham/qa8fk                       66127      0.326      0.345    1.06    8.0e-19    7.8e-19    326   1528
+Oberwolfach/rail_79841                 79841      0.039      0.068    1.76    5.9e-19    6.3e-19     12   2188
+GHS_indef/sparsine                     50000     14.219     11.549    0.81    6.8e-15    3.2e-15      0      0
+GHS_indef/spmsrtls                     29995      0.007      0.013    1.82    1.0e-17    2.0e-17      1    825
+Oberwolfach/t2dal                       4257      0.003      0.004    1.48    1.8e-18    2.1e-18      1    110
+Oberwolfach/t3dh                       79171      0.763      0.789    1.03    8.9e-19    7.7e-19    346   1298
+Cote/vibrobox                          12328      0.039      0.030    0.77    3.0e-18    2.6e-18     52    287
+TSOPF/TSOPF_FS_b162_c1                 10798      0.031      0.031    0.99    3.9e-17    5.4e-17     14    790
+TSOPF/TSOPF_FS_b39_c7                  28216      0.025      0.034    1.35    1.2e-16    1.6e-16      1   2123
+GHS_indef/aug3dcqp                     35543      0.055      0.047    0.85    8.4e-19    1.2e-18     36   1495
+GHS_indef/blockqp1                     60012      0.033      0.050    1.54    9.0e-14    9.3e-14      1  19991
+GHS_indef/bratu3d                      27792      0.122      0.090    0.74    1.2e-17    1.2e-18    101    750
+GHS_indef/c-71                         76638      1.402      2.478    1.77    8.3e-19    9.7e-19    243   2497
+Schenk_IBMNA/c-big                    345241      4.502      7.858    1.75    1.3e-17    5.2e-18    904  18712
+GHS_indef/cont-201                     80595      0.069      0.072    1.04    2.5e-18    1.7e-18     51   2248
+GHS_indef/cont-300                    180895      0.174      0.168    0.96    1.8e-18    8.8e-19    113   5039
+GHS_indef/cvxqp3                       17500      0.160      0.085    0.53    8.1e-14    3.5e-14     64    332
+GHS_indef/d_pretok                    182730      0.273      0.233    0.85    1.0e-18    9.1e-19    238   4779
+GHS_indef/mario001                     38434      0.017      0.032    1.84    1.8e-18    2.0e-18      1   1061
+GHS_indef/ncvxqp1                      12111      0.067      0.044    0.65    2.9e-16    9.0e-17     33    243
+GHS_indef/ncvxqp3                      75000      1.293      0.781    0.60    1.4e-13    3.4e-14    251   1442
+GHS_indef/ncvxqp5                      62500      0.521      0.305    0.58    8.0e-16    2.1e-16    219   1342
+GHS_indef/ncvxqp7                      87500      1.886      1.197    0.63    9.2e-14    1.8e-14    277   1651
+GHS_indef/stokes128                    49666      0.063      0.063    1.00    9.8e-19    2.3e-18     46   1452
+GHS_indef/turon_m                     189924      0.251      0.229    0.91    1.1e-18    1.9e-18    214   4970
+AMD/G3_circuit                       1585478      1.730      2.876    1.66    2.6e-19    2.2e-19   1582  48225
+Schenk_AFE/af_0_k101                  503625      1.418      1.406    0.99    3.5e-19    3.3e-19   1172  11569
+Schenk_AFE/af_shell7                  504855      1.351      1.218    0.90    3.2e-19    3.3e-19   1209  11639
+GHS_psdef/apache2                     715176      2.841      2.625    0.92    1.7e-19    2.0e-19   1736  20965
+GHS_psdef/bmwcra_1                    148770      0.997      0.668    0.67    6.3e-19    6.0e-19    368    962
+Oberwolfach/boneS01                   127224      0.698      0.599    0.86    6.9e-19    6.7e-19    451   3446
+Rothberg/cfd2                         123440      0.535      0.455    0.85    5.7e-19    5.5e-19    539   3359
+GHS_psdef/crankseg_1                   52804      0.522      0.394    0.76    1.8e-17    2.5e-17     56    145
+GHS_psdef/crankseg_2                   63838      0.694      0.581    0.84    3.3e-19    6.1e-18     58    143
+GHS_psdef/inline_1                    503712      2.579      2.067    0.80    5.9e-19    4.3e-19   2059   6888
+GHS_psdef/ldoor                       952203      2.133      2.426    1.14    4.5e-19    3.7e-19   1654  23174
+ND/nd12k                               36000      5.767      4.789    0.83    3.0e-18    1.6e-18      0      0
+ND/nd6k                                18000      1.505      1.335    0.89    4.1e-18    2.2e-18      0      0
+Um/offshore                           259789      1.347      1.220    0.91    9.0e-19    6.9e-19   1065   5591
+DNVS/ship_003                         121728      1.200      1.046    0.87    5.3e-19    5.2e-19    461   1584
+DNVS/shipsec1                         140874      0.627      0.518    0.83    7.6e-19    6.6e-19    679   3480
+DNVS/shipsec5                         179860      1.046      0.905    0.87    6.3e-19    5.5e-19    859   5009
+DNVS/shipsec8                         114919      0.745      0.538    0.72    9.2e-19    7.3e-19    496   2586
+DNVS/thread                            29736      1.808      0.900    0.50    1.7e-18    1.4e-18     21     78
+
+65/65 completed successfully
+```
+
+### Summary Statistics
+
+Generated by `comparisons/analyze_results.py`.
+
+**T1 (threads=1) — 65 matrices:**
+
+| Statistic | Value |
+|-----------|-------|
+| Median ratio | 0.97× |
+| Mean ratio | 1.04× |
+| 25th percentile | 0.84× |
+| 75th percentile | 1.17× |
+| Time-weighted ratio | 0.93× |
+| Rivrs faster (<0.90×) | 20/65 (30%) |
+| Comparable (0.90–1.10×) | 28/65 (43%) |
+| SPRAL faster (>1.10×) | 17/65 (26%) |
+
+Top rivrs wins: thread 0.41×, astro-ph 0.52×, cvxqp3 0.54×, ncvxqp5 0.61×, ncvxqp1 0.65×.
+Top SPRAL wins: mario001 1.91×, rail_79841 1.85×, spmsrtls 1.79×, dixmaanl 1.70×, linverse 1.65×.
+
+**T8 (threads=8) — 65 matrices:**
+
+| Statistic | Value |
+|-----------|-------|
+| Median ratio | 0.89× |
+| Mean ratio | 0.99× |
+| 25th percentile | 0.77× |
+| 75th percentile | 1.06× |
+| Time-weighted ratio | 0.92× |
+| Rivrs faster (<0.90×) | 35/65 (53%) |
+| Comparable (0.90–1.10×) | 15/65 (23%) |
+| SPRAL faster (>1.10×) | 15/65 (23%) |
+
+Top rivrs wins: thread 0.50×, astro-ph 0.53×, cvxqp3 0.53×, ncvxqp5 0.58×, ncvxqp3 0.60×.
+Top SPRAL wins: mario001 1.84×, spmsrtls 1.82×, c-71 1.77×, rail_79841 1.76×, c-big 1.75×.
+
+**Parallel scaling (rivrs T1→T8):** Mean 1.61×, median 1.64×. Best: H2O 2.60×, bmwcra_1 2.38×, sparsine 2.38×, helm3d01 2.23×, nd12k 2.21×.
+
+**By category:**
+
+| Category | Count | T1 median | T1 time-wtd | T8 median | T8 time-wtd |
+|----------|------:|----------:|------------:|----------:|------------:|
+| Easy indefinite | 28 | 0.99× | 0.91× | 0.93× | 0.84× |
+| Hard indefinite | 18 | 1.02× | 1.11× | 0.94× | 1.26× |
+| Positive definite | 19 | 0.92× | 0.91× | 0.86× | 0.90× |
+
+**By application domain (T8):**
+
+| Domain | Count | Median | Time-wtd | Notes |
+|--------|------:|-------:|---------:|-------|
+| Graph/network | 1 | 0.53× | 0.53× | astro-ph only |
+| Structural | 22 | 0.84× | 0.84× | Largest category, consistent win |
+| CFD | 3 | 0.85× | 0.82× | Stokes, copter, cfd2 |
+| PDE | 11 | 0.89× | 0.86× | 2D/3D discretizations, ND set |
+| Acoustics | 2 | 0.92× | 1.03× | vibrobox, qa8fk |
+| Quantum chemistry | 4 | 0.94× | 0.85× | H2O dominates time-weighted |
+| Model reduction | 6 | 0.95× | 0.92× | Oberwolfach collection |
+| Optimization | 13 | 1.04× | 1.29× | c-71/c-big drag time-weighted |
+| Power systems | 2 | 1.17× | 1.16× | TSOPF matrices |
+| Circuit | 1 | 1.66× | 1.66× | G3_circuit only |
+
 ## Phase 9.3a: Module Restructure
 
 **Status**: Complete

@@ -21,7 +21,7 @@
 //! # Side-by-side comparison with rivrs
 //! cargo run --example spral_benchmark --release -- --ci-only --rivrs
 //!
-//! # Set OMP thread count for SPRAL
+//! # Set thread count for both SPRAL (OMP_NUM_THREADS) and rivrs (Par::rayon)
 //! cargo run --example spral_benchmark --release -- --ci-only --threads 4
 //!
 //! # Compare against a previously collected rivrs baseline
@@ -464,8 +464,17 @@ fn parse_spral_result(output: &std::process::Output) -> Result<SpralParsed, Stri
 // Rivrs solver
 // ---------------------------------------------------------------------------
 
-fn run_rivrs_solver(matrix: &SparseColMat<usize, f64>, name: &str) -> Result<RivrsResult, String> {
+fn run_rivrs_solver(
+    matrix: &SparseColMat<usize, f64>,
+    name: &str,
+    threads: Option<usize>,
+) -> Result<RivrsResult, String> {
     let n = matrix.nrows();
+
+    let par = match threads {
+        Some(t) if t > 1 => Par::rayon(t),
+        _ => Par::Seq,
+    };
 
     // Generate RHS: b = A * ones(n) (using full symmetric CSC)
     let symbolic = matrix.symbolic();
@@ -492,7 +501,10 @@ fn run_rivrs_solver(matrix: &SparseColMat<usize, f64>, name: &str) -> Result<Riv
 
     // Factor
     let t_factor = Instant::now();
-    let factor_opts = FactorOptions::default();
+    let factor_opts = FactorOptions {
+        par,
+        ..FactorOptions::default()
+    };
     solver
         .factor(matrix, &factor_opts)
         .map_err(|e| format!("factor: {e}"))?;
@@ -504,7 +516,7 @@ fn run_rivrs_solver(matrix: &SparseColMat<usize, f64>, name: &str) -> Result<Riv
     let mut mem = MemBuffer::new(scratch);
     let stack = MemStack::new(&mut mem);
     let x = solver
-        .solve(&b, stack, Par::Seq)
+        .solve(&b, stack, par)
         .map_err(|e| format!("solve: {e}"))?;
     let solve_s = t_solve.elapsed().as_secs_f64();
 
@@ -783,13 +795,41 @@ fn main() {
 
         // Run rivrs if requested
         let rivrs_result = if cli.rivrs {
-            match run_rivrs_solver(matrix, &meta.name) {
+            let r = match run_rivrs_solver(matrix, &meta.name, cli.threads) {
                 Ok(r) => Some(r),
                 Err(e) => {
                     eprintln!("{:<35} RIVRS FAILED: {}", meta.name, e);
                     None
                 }
+            };
+            // Ask glibc to return freed pages to OS when memory pressure is
+            // high. Without any trimming, glibc holds freed arena pages across
+            // iterations, which can cause OOM in memory-constrained containers
+            // (e.g., 16 GB cgroup limit with H2O's 3+ GB peak). But trimming
+            // unconditionally forces cold page allocation for the next matrix,
+            // costing ~10-50% on medium matrices. Compromise: only trim when
+            // the process is using more than 75% of the cgroup memory limit.
+            #[cfg(target_os = "linux")]
+            {
+                unsafe extern "C" {
+                    fn malloc_trim(pad: usize) -> i32;
+                }
+                let should_trim = std::fs::read_to_string("/sys/fs/cgroup/memory.current")
+                    .ok()
+                    .and_then(|c| c.trim().parse::<u64>().ok())
+                    .zip(
+                        std::fs::read_to_string("/sys/fs/cgroup/memory.max")
+                            .ok()
+                            .and_then(|m| m.trim().parse::<u64>().ok()),
+                    )
+                    .is_some_and(|(current, max)| current > max * 3 / 4);
+                if should_trim {
+                    unsafe {
+                        malloc_trim(0);
+                    }
+                }
             }
+            r
         } else {
             None
         };
