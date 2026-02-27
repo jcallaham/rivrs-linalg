@@ -1,8 +1,16 @@
 <!--
-Sync Impact Report - Constitution v1.1.0
+Sync Impact Report - Constitution v1.2.0
 ========================================
 
-Version Change: v1.0.0 → v1.1.0
+Version Change: v1.1.0 → v1.2.0
+
+Changes in v1.2.0:
+- Principle IV (Algorithm Documentation): Changed SPRAL cross-reference
+  guidance from doc comments (`///`) to plain code comments (`//`).
+  SPRAL Equivalent notes are developer-internal references, not part of
+  the public API documentation. Updated example to show the
+  `// SPRAL Equivalent:` pattern placed between the doc block and the
+  item declaration.
 
 Changes in v1.1.0:
 - Principle I (Correctness First): Updated validation language from
@@ -21,6 +29,7 @@ comparison and require no external infrastructure.
 
 Ratification: 2026-02-05 (initial adoption)
 Amendment: 2026-02-06 (v1.1.0 - reconstruction test primacy)
+Amendment: 2026-02-27 (v1.2.0 - SPRAL Equivalent as plain comments)
 -->
 
 # rivrs-sparse Constitution
@@ -166,8 +175,8 @@ tracing it to its academic origins.
 - Input/output specifications with dimension and sparsity requirements
 - Complexity analysis (time and space, in terms of matrix dimensions
   and nonzeros)
-- Cross-reference to equivalent SPRAL function names for users
-  migrating from Fortran
+- Cross-reference to equivalent SPRAL function names as plain code
+  comments (`//`, not doc comments) for developer reference
 
 **Example**:
 ```rust
@@ -179,9 +188,8 @@ tracing it to its academic origins.
 ///   A Posteriori Threshold Pivoting", SIAM J. Sci. Comput. 42(4)
 /// - Dense kernel pattern adapted from SPRAL ssids/cpu/kernels/ldlt_app.hxx
 ///   (BSD-3-Clause, commit abc1234)
-///
-/// # SPRAL Equivalent
-/// Corresponds to the inner loop of spral_ssids_factor_cpu.
+// SPRAL Equivalent: inner loop of `spral_ssids_factor_cpu` (BSD-3).
+fn aptp_factor(...) { ... }
 ```
 
 **Rationale**: Academic attribution establishes provenance for clean
@@ -403,4 +411,4 @@ rivrs-sparse is licensed under Apache-2.0. All contributions MUST be
 compatible with this licensing model. Use of GPL, LGPL, or proprietary
 dependencies is PROHIBITED.
 
-**Version**: 1.1.0 | **Ratified**: 2026-02-05 | **Last Amended**: 2026-02-06
+**Version**: 1.2.0 | **Ratified**: 2026-02-05 | **Last Amended**: 2026-02-27

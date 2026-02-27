@@ -36,7 +36,7 @@ Available in the parent `references/` directory (symlink to `/opt/references`, n
 - **faer-rs/**: Pure Rust linear algebra library — primary dependency
 - **lapack/**: Reference LAPACK implementation (BSD-licensed)
 - **ssids/**: Academic literature converted to Markdown format
-- **spral/**: SPRAL source code (BSD-3) — primary reference implementation
+- **spral/**: SPRAL source code (BSD-3) — primary reference implementation. Version 2025.09.18, commit `e8b4046`. All `// SPRAL Equivalent` comments in source reference this version.
 
 ## Technology Stack
 

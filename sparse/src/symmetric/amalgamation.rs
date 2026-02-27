@@ -109,13 +109,9 @@ fn sorted_union_excluding(a: &[usize], b: &[usize], exclude_range: Range<usize>)
 ///
 /// - `supernodes`: fundamental supernodes from `build_supernode_info()`
 /// - `nemin`: minimum supernode size threshold. `nemin = 1` disables amalgamation.
-///
-/// # SPRAL Equivalent
-///
-/// Corresponds to the amalgamation logic in `find_supernodes`
-/// (`core_analyse.f90:618-641`) with `do_merge` predicate
-/// (`core_analyse.f90:806-822`) and `merge_nodes` operation
-/// (`core_analyse.f90:827-853`).
+// SPRAL Equivalent: amalgamation logic in `find_supernodes` (`core_analyse.f90:618-641`)
+// with `do_merge` predicate (`core_analyse.f90:806-822`) and `merge_nodes` operation
+// (`core_analyse.f90:827-853`) (BSD-3).
 pub(crate) fn amalgamate(mut supernodes: Vec<SupernodeInfo>, nemin: usize) -> Vec<SupernodeInfo> {
     let n = supernodes.len();
     if n <= 1 {

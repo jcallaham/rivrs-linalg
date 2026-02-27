@@ -1557,10 +1557,7 @@ fn factor_single_supernode(
 /// # Returns
 ///
 /// Vec of (node_id, FrontFactors, PerSupernodeStats) for each node in the subtree.
-///
-/// # SPRAL Equivalent
-///
-/// `SmallLeafNumericSubtree::factor()` in `SmallLeafNumericSubtree.hxx:187-446` (BSD-3).
+// SPRAL Equivalent: `SmallLeafNumericSubtree::factor()` in `SmallLeafNumericSubtree.hxx:187-446` (BSD-3).
 #[allow(clippy::too_many_arguments)]
 fn factor_small_leaf_subtree(
     subtree: &SmallLeafSubtree,
