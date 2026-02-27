@@ -95,3 +95,21 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cd sparse && cargo bench --no-run
+
+  check-rivrs-linalg:
+    name: Check rivrs-linalg facade
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cd crates/rivrs-linalg && cargo check
+
+  check-rivrs:
+    name: Check rivrs umbrella
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cd crates/rivrs && cargo check

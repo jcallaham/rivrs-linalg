@@ -1,6 +1,7 @@
 [package]
 name = "rivrs-sparse"
 version = "0.1.0"
+authors = ["Jared Callaham"]
 edition = "2024"
 rust-version = "1.87"
 description = "Sparse linear algebra solvers for the Rivrs symbolic-numeric framework"

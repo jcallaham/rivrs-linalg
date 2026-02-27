@@ -1,0 +1,19 @@
+[package]
+name = "rivrs-linalg"
+version = "0.1.0"
+authors = ["Jared Callaham"]
+edition = "2024"
+rust-version = "1.87"
+description = "Numerical linear algebra for the Rivrs framework"
+license = "Apache-2.0"
+repository = "https://github.com/jcallaham/rivrs-linalg"
+readme = "README.md"
+categories = ["science", "mathematics"]
+keywords = ["linear-algebra", "numerical-computing", "sparse-solver", "rust"]
+
+[features]
+default = ["sparse"]
+sparse = ["dep:rivrs-sparse"]
+
+[dependencies]
+rivrs-sparse = { version = "0.1.0", optional = true }
