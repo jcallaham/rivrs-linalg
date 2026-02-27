@@ -2,6 +2,64 @@
 
 ## Phase 9.3b: Benchmarking and Performance Comparisons
 
+**Status**: Complete
+**Branch**: `ssids-performance-comparisons`
+**Date**: 2026-02-27
+
+### What Was Built
+
+Built comparison benchmarking infrastructure for MUMPS and SPRAL, ran the full
+65-matrix SuiteSparse collection against both solvers, and collected structured
+results.
+
+**Shared comparison infrastructure** (`comparisons/src/common.rs`)
+- Extracted from the SPRAL-only `spral_benchmark.rs` into a shared module
+- Subprocess protocol: sentinel-delimited key-value output parsing
+- Matrix format conversion: CSC (SPRAL) and COO (MUMPS) from full symmetric CSC
+- Rivrs solver invocation with configurable thread count (`Par::rayon`)
+- CLI argument parsing, table printing, JSON output envelope (`BenchmarkSuite`)
+- Baseline comparison (join external solver results with rivrs baseline JSON)
+- Conditional `malloc_trim` under cgroup memory pressure (>75%) to prevent OOM
+  in containers without regressing performance
+
+**MUMPS comparison** (`comparisons/drivers/mumps_benchmark.f90`, `comparisons/src/mumps_benchmark.rs`)
+- Fortran driver: sequential MUMPS (`SYM=2` indefinite, `ICNTL(7)=7` auto ordering)
+- Build script using system `libmumps-seq-dev`
+- 64/65 matrices pass (astro-ph fails — numerically singular, handled correctly by SPRAL + rivrs)
+
+**Analysis script** (`comparisons/analyze_results.py`)
+- Auto-detection for SPRAL, MUMPS, and rivrs baseline JSON schemas
+- Standalone solver analysis (absolute timings), baseline-joined ratios (`--baseline`)
+- Multi-solver side-by-side factor time tables
+- Breakdowns by matrix category (PD / easy-indefinite / hard-indefinite) and
+  application domain (10 SuiteSparse-based domains: structural, PDE, optimization, etc.)
+- Parallel scaling analysis, per-phase timing breakdown
+- Auto-discovery of newest result from each solver directory
+
+**Parallel workspace management fix** (`src/symmetric/numeric.rs`)
+- Split workspace into three modes: pre-allocated sequential, pool-with-drain
+  for single-node parallel batches, grow-on-demand pool for multi-node parallel
+- Eliminates OOM from eagerly pre-allocating `max_front²×8` bytes per thread
+  (PARSEC/H2O: 9258² × 8 = 685 MB per workspace)
+- Pool drains before large single-node supernodes near the tree root
+
+**MA27 comparison** (built, benchmarked, then removed)
+- Built and ran once to establish baseline; confirmed MA27 (minimum degree, no BLAS-3)
+  is two generations behind SPRAL/MUMPS. Results recorded below, code removed.
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `comparisons/src/common.rs` | New: shared comparison infrastructure (713 lines) |
+| `comparisons/src/mumps_benchmark.rs` | New: MUMPS orchestration binary |
+| `comparisons/drivers/mumps_benchmark.f90` | New: MUMPS Fortran driver |
+| `comparisons/drivers/build_mumps.sh` | New: MUMPS build script |
+| `comparisons/src/spral_benchmark.rs` | Refactored to use `common.rs` |
+| `comparisons/analyze_results.py` | New: multi-solver analysis script (1012 lines) |
+| `comparisons/README.md` | Full rewrite with all solver docs + collected results |
+| `src/symmetric/numeric.rs` | Workspace management fix (sequential/parallel split) |
+| `docker/Dockerfile` | Added `libmumps-seq-dev` |
 
 ### Summary Statistics
 
