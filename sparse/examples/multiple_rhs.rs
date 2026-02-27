@@ -49,8 +49,7 @@ fn main() {
     let analyze_opts = AnalyzeOptions {
         ordering: OrderingStrategy::Amd,
     };
-    let mut solver =
-        SparseLDLT::analyze_with_matrix(&a, &analyze_opts).expect("symbolic analysis");
+    let mut solver = SparseLDLT::analyze_with_matrix(&a, &analyze_opts).expect("symbolic analysis");
     solver
         .factor(&a, &FactorOptions::default())
         .expect("factorization");
@@ -69,7 +68,10 @@ fn main() {
         Col::from_fn(n, |i| [2.0, -1.0, 3.0, 0.5, -2.0][i]),
     ];
 
-    println!("Solving Ax = b for {} different right-hand sides\n", rhs_vectors.len());
+    println!(
+        "Solving Ax = b for {} different right-hand sides\n",
+        rhs_vectors.len()
+    );
 
     for (k, b) in rhs_vectors.iter().enumerate() {
         // Reuse the same MemStack for each solve.

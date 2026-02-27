@@ -54,7 +54,10 @@ fn main() {
         SparseLDLT::analyze_with_matrix(&a0, &analyze_opts).expect("symbolic analysis");
 
     println!("Symbolic analysis done (reused for all parameter values)\n");
-    println!("{:<8} {:>40}  {:>12}  {:>10}", "t", "solution", "bwd_err", "inertia");
+    println!(
+        "{:<8} {:>40}  {:>12}  {:>10}",
+        "t", "solution", "bwd_err", "inertia"
+    );
     println!("{}", "-".repeat(78));
 
     // -----------------------------------------------------------------------
@@ -79,10 +82,7 @@ fn main() {
 
         let inertia = solver.inertia().expect("inertia available");
 
-        let x_str = format!(
-            "[{:+.4}, {:+.4}, {:+.4}, {:+.4}]",
-            x[0], x[1], x[2], x[3]
-        );
+        let x_str = format!("[{:+.4}, {:+.4}, {:+.4}, {:+.4}]", x[0], x[1], x[2], x[3]);
         println!(
             "{:<8.1} {:>40}  {:>12.2e}  ({}, {}, {})",
             t, x_str, be, inertia.positive, inertia.negative, inertia.zero
