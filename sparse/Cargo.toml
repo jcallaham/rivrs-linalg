@@ -13,7 +13,7 @@ readme = "README.md"
 exclude = ["comparisons/"]
 
 [dependencies]
-faer = "0.22"
+faer = "0.24"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 metis-sys = "0.3"
