@@ -1,10 +1,11 @@
 #![warn(missing_docs)]
-//! rivrs-sparse — Sparse Linear Algebra for Rivrs
+//! rivrs-sparse — Sparse Linear Algebra
+//! 
+//! This library heavily relies on [`faer`](https://crates.io/crates/faer) for
+//! foundational data types (e.g., `SparseColMat`, `Triplet`, `Col`), dense
+//! solvers, and some sparse linear algebra routines (e.g., AMD ordering).
 //!
-//! A scientific computing library providing sparse linear algebra solvers
-//! for the Rivrs symbolic-numeric framework.
-//!
-//! # Sparse Symmetric Indefinite Solver (SSIDS)
+//! # Sparse Symmetric Indefinite Solver
 //!
 //! The library provides a sparse symmetric indefinite direct solver
 //! based on the A Posteriori Threshold Pivoting (APTP) algorithm:
@@ -13,10 +14,7 @@
 //! - **Numeric factorization**: LDL^T with APTP pivoting
 //! - **Triangular solve**: Forward/backward substitution
 //!
-//! # Clean Room Implementation
-//!
-//! This library is independently implemented from academic sources to maintain
-//! permissive licensing. The primary references are:
+//! The primary references are:
 //!
 //! - Hogg, Duff, & Lopez (2020), "A New Sparse LDL^T Solver Using
 //!   A Posteriori Threshold Pivoting", SIAM J. Sci. Comput.
@@ -49,10 +47,17 @@
 //! assert!((x[1] - 1.0).abs() < 1e-12);
 //! ```
 //!
-//! # Three-Phase API
+//! # Three-Step Solver API
 //!
-//! For repeated solves with the same sparsity pattern, use the three-phase API
-//! to reuse the symbolic analysis:
+//! For repeated solves with the same matrix or sparsity pattern, use the three-step
+//! solve API:
+//! 
+//! 1. Symbolic analysis (reusable for same sparsity pattern)
+//! 2. Numeric factorization (reusable for same matrix)
+//! 3. Triangular solve
+//! 
+//! For instance, with multiple right-hand side vectors but the same matrix,
+//! perform steps 1-2 once and then reuse the factorization for each vector.
 //!
 //! ```
 //! use faer::sparse::{SparseColMat, Triplet};
@@ -68,7 +73,7 @@
 //! ];
 //! let a = SparseColMat::try_new_from_triplets(2, 2, &triplets).unwrap();
 //!
-//! // Phase 1: Symbolic analysis (reusable for same sparsity pattern)
+//! // Phase 1: Symbolic analysis
 //! let mut solver = SparseLDLT::analyze_with_matrix(&a, &AnalyzeOptions::default())?;
 //!
 //! // Phase 2: Numeric factorization
@@ -88,8 +93,8 @@
 //!
 //! | Strategy | Best for | Notes |
 //! |----------|----------|-------|
-//! | [`MatchOrderMetis`](symmetric::OrderingStrategy::MatchOrderMetis) | Hard-indefinite (KKT, saddle-point) | Default. MC64 matching + METIS |
-//! | [`Metis`](symmetric::OrderingStrategy::Metis) | Easy-indefinite (FEM, thermal) | Pure METIS nested dissection |
+//! | [`MatchOrderMetis`](symmetric::OrderingStrategy::MatchOrderMetis) | Hard indefinite (KKT, saddle-point) | Default. MC64 matching + METIS |
+//! | [`Metis`](symmetric::OrderingStrategy::Metis) | Easy indefinite (FEM, thermal) | Pure METIS nested dissection |
 //! | [`Amd`](symmetric::OrderingStrategy::Amd) | Small matrices, unit tests | faer built-in AMD |
 //!
 //! # Feature Flags
@@ -137,13 +142,15 @@
 //!
 //! Factorization dominates total solve time for most matrices. On the
 //! 65-matrix SuiteSparse benchmark suite, rivrs-sparse is competitive with
-//! SPRAL (median 0.94x sequential, 0.89x at 8 threads). Tuning
+//! SPRAL (median 5% faster sequential, 10% faster at 8 threads). Tuning
 //! [`FactorOptions::threshold`](symmetric::FactorOptions::threshold) (default
 //! 0.01) trades off stability vs fill-in for specific problem classes.
+//! See the [repository](https://github.com/pinetreelabs/rivrs-linalg/sparse) for
+//! benchmarking details.
 //!
 //! # Examples
 //!
-//! See the [`examples/`](https://github.com/jcallaham/rivrs-linalg/tree/main/sparse/examples)
+//! See the [`examples/`](https://github.com/pinetreelabs/rivrs-linalg/tree/main/sparse/examples)
 //! directory for complete programs:
 //!
 //! - `basic_usage.rs` — Self-contained hello world
