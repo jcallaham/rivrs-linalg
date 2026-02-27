@@ -43,7 +43,7 @@ diagonal only, backward only). Scaling is applied and reversed around the
 solve. The solve phase is currently serial.
 
 **Sources:**
-`docs/Fortran/ssids.rst`,
+`dev/Fortran/ssids.rst`,
 `examples/Fortran/ssids.f90`,
 `src/ssids/ssids.f90`
 
@@ -658,7 +658,7 @@ Defined in `src/ssids/datatypes.f90`:
 `src/ssids/datatypes.f90` (ssids_options, lines 188-284),
 `src/ssids/cpu/kernels/wrappers.cxx`,
 `src/ssids/anal.F90` (subtree partition and assignment),
-`docs/Fortran/ssids.rst` (options documentation)
+`dev/Fortran/ssids.rst` (options documentation)
 
 ---
 
@@ -668,7 +668,7 @@ Every section of this document was produced by reading the following SPRAL
 source files (all paths relative to `references/spral/`):
 
 **Section 1 (Executive Summary):**
-- `docs/Fortran/ssids.rst` -- User documentation
+- `dev/Fortran/ssids.rst` -- User documentation
 - `examples/Fortran/ssids.f90` -- Usage example
 - `src/ssids/ssids.f90` -- Top-level API module
 
@@ -735,4 +735,4 @@ source files (all paths relative to `references/spral/`):
 - `src/ssids/datatypes.f90` (ssids_options)
 - `src/ssids/cpu/kernels/wrappers.cxx` (C++ BLAS wrappers)
 - `src/ssids/anal.F90` (subtree assignment)
-- `docs/Fortran/ssids.rst` (options documentation)
+- `dev/Fortran/ssids.rst` (options documentation)

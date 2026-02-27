@@ -158,5 +158,5 @@ SPRAL source code (BSD-3, freely consultable):
 - `BuddyAllocator.hxx` — Buddy system for contributions (out of scope)
 
 Internal references:
-- `docs/phase9/phase-9.1c-profiling-report.md` — Sub-phase profiling identifying contribution extraction as 40.1% of factor time
-- `docs/phase9/phase-9.1d-contrib-architecture-review.md` — Architecture comparison; pool-based reuse insufficient; SPRAL zero-copy analysis
+- `dev/phase9/phase-9.1c-profiling-report.md` — Sub-phase profiling identifying contribution extraction as 40.1% of factor time
+- `dev/phase9/phase-9.1d-contrib-architecture-review.md` — Architecture comparison; pool-based reuse insufficient; SPRAL zero-copy analysis

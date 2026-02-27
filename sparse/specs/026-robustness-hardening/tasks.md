@@ -47,10 +47,10 @@
 
 ### Implementation for User Story 1
 
-- [X] T009 [US1] Catalog all SPRAL `ldlt_app.cxx` test scenarios (48 deterministic in categories A–H + 2 torture suites) in `docs/spral-test-audit.md` — for each scenario: test name, what it tests, matrix size, key assertions, perturbation used. Reference `research.md` Decision 1 and `/opt/references/spral/tests/ssids/kernels/ldlt_app.cxx`.
-- [X] T010 [US1] Catalog all SPRAL `ldlt_tpp.cxx` test scenarios (23 deterministic in categories A–D + 2 torture suites) in `docs/spral-test-audit.md` — same format as T009. Reference `/opt/references/spral/tests/ssids/kernels/ldlt_tpp.cxx`.
-- [X] T011 [US1] Map each SPRAL scenario to rivrs-sparse coverage in `docs/spral-test-audit.md` — for each SPRAL test: status (Covered / N/A / Gap), rivrs-sparse test name or N/A rationale. Use `research.md` SPRAL-to-rivrs Architecture Mapping table. Note: `app_aggressive` maps to N/A (not implemented in rivrs).
-- [X] T012 [US1] Evaluate each existing rivrs-sparse test for independent value in `docs/spral-test-audit.md` — for each of the ~524 tests: status (Retain / Remove), brief rationale. Apply pruning criteria from `research.md` Decision 6. Tests covering meaningful scenarios not in SPRAL are explicitly retained.
+- [X] T009 [US1] Catalog all SPRAL `ldlt_app.cxx` test scenarios (48 deterministic in categories A–H + 2 torture suites) in `dev/spral-test-audit.md` — for each scenario: test name, what it tests, matrix size, key assertions, perturbation used. Reference `research.md` Decision 1 and `/opt/references/spral/tests/ssids/kernels/ldlt_app.cxx`.
+- [X] T010 [US1] Catalog all SPRAL `ldlt_tpp.cxx` test scenarios (23 deterministic in categories A–D + 2 torture suites) in `dev/spral-test-audit.md` — same format as T009. Reference `/opt/references/spral/tests/ssids/kernels/ldlt_tpp.cxx`.
+- [X] T011 [US1] Map each SPRAL scenario to rivrs-sparse coverage in `dev/spral-test-audit.md` — for each SPRAL test: status (Covered / N/A / Gap), rivrs-sparse test name or N/A rationale. Use `research.md` SPRAL-to-rivrs Architecture Mapping table. Note: `app_aggressive` maps to N/A (not implemented in rivrs).
+- [X] T012 [US1] Evaluate each existing rivrs-sparse test for independent value in `dev/spral-test-audit.md` — for each of the ~524 tests: status (Retain / Remove), brief rationale. Apply pruning criteria from `research.md` Decision 6. Tests covering meaningful scenarios not in SPRAL are explicitly retained.
 - [X] T013 [US1] Fill identified gaps: for each Gap entry in the SPRAL mapping, add a new test to the appropriate test file (e.g., `src/aptp/factor.rs` for kernel-level gaps, `tests/` for integration gaps). Update audit document to reflect gaps filled.
 - [X] T014 [US1] Remove or consolidate tests marked Remove in T012. For each removal: verify a neighboring test provides equivalent or broader coverage. Run `cargo test` after each batch of removals to ensure no regression.
 - [X] T015 [US1] Run full validation: `cargo test` (all non-ignored pass), `cargo test -- --ignored --test-threads=1` (SuiteSparse 65/65 pass), `cargo clippy --all-targets`. Update audit document with final test count and summary.
@@ -120,8 +120,8 @@
 **Purpose**: Final validation, documentation, cleanup
 
 - [X] T034 Run full validation suite: `cargo test` (non-ignored), `cargo test -- --ignored --test-threads=1` (SuiteSparse + torture), `cargo clippy --all-targets`, `cargo clippy --all-targets --features diagnostic`
-- [X] T035 [P] Update `docs/ssids-log.md` with Phase 9.2 entry: what was built, test counts before/after pruning, torture test results, property test results, adversarial findings and fixes
-- [X] T036 [P] Update `docs/ssids-plan.md` Phase 9.2 section with STATUS: COMPLETE and results summary
+- [X] T035 [P] Update `dev/ssids-log.md` with Phase 9.2 entry: what was built, test counts before/after pruning, torture test results, property test results, adversarial findings and fixes
+- [X] T036 [P] Update `dev/ssids-plan.md` Phase 9.2 section with STATUS: COMPLETE and results summary
 - [X] T037 [P] Update `CLAUDE.md` Current Implementation Status with Phase 9.2 completion summary
 - [X] T038 Verify success criteria: SC-001 (audit 100% coverage), SC-002 (torture 500+ zero panics), SC-003 (proptest 1000+ no violations), SC-004 (adversarial zero panics), SC-005 (SuiteSparse 65/65 pass), SC-006 (test suite leaner)
 
@@ -184,6 +184,6 @@ Across Phases: US3 (Phase 5) and US4 (Phase 6) are fully independent and can run
 - Torture tests use `#[ignore]` — they won't slow down normal `cargo test`
 - Property tests run with normal `cargo test` but are fast (256 cases default)
 - Adversarial tests may uncover panics → T032 fixes are expected, not bugs
-- Audit document is a reference artifact, not generated code — it lives in `docs/`
+- Audit document is a reference artifact, not generated code — it lives in `dev/`
 - All new test infrastructure code is behind `test-util` feature flag
 - Commit after each task or logical group; never accumulate large unverified changes

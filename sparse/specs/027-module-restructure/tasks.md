@@ -52,5 +52,5 @@
 ## Phase 7: Update Documentation
 
 - [x] T32: Update `sparse/CLAUDE.md` Source Code Layout and module references
-- [x] T33: Add restructure entry to `docs/ssids-log.md`
+- [x] T33: Add restructure entry to `dev/ssids-log.md`
 - [x] T34: Update any `aptp/` path references in other docs files

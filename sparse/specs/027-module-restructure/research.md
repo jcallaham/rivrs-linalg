@@ -77,7 +77,7 @@
 ### Documentation files that need updates
 
 - `sparse/CLAUDE.md` — Source Code Layout section, module references throughout
-- `docs/ssids-log.md` — Add restructure entry
-- `docs/ssids-plan.md` — Update if it references `aptp/` paths
-- `docs/commands.md` — Update if it references `aptp/` paths
+- `dev/ssids-log.md` — Add restructure entry
+- `dev/ssids-plan.md` — Update if it references `aptp/` paths
+- `dev/commands.md` — Update if it references `aptp/` paths
 - Root `CLAUDE.md` — May reference `aptp/` in sparse section

@@ -71,7 +71,7 @@ cargo run --example workload_analysis --features diagnostic --release
 
 ### Step 6: Produce performance report
 
-The workload analysis output, combined with baseline data, forms the performance report documented in `docs/phase-8.1g-report.md`.
+The workload analysis output, combined with baseline data, forms the performance report documented in `dev/phase-8.1g-report.md`.
 
 ## Key Files
 
@@ -83,7 +83,7 @@ The workload analysis output, combined with baseline data, forms the performance
 | `src/profiling/memory.rs` | Existing MemoryTracker API |
 | `examples/baseline_collection.rs` | New: systematic baseline collection tool |
 | `examples/workload_analysis.rs` | New: workload distribution analysis tool |
-| `docs/phase-8.1g-report.md` | New: performance analysis report |
+| `dev/phase-8.1g-report.md` | New: performance analysis report |
 
 ## Verification Checklist
 

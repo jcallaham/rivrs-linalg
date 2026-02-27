@@ -122,7 +122,7 @@ The following academic papers inform the parallelism strategy. Markdown versions
 
 ## Phase 8.1g Profiling Context
 
-The following findings from Phase 8.1g (see `docs/phase-8.1g-report.md`) directly inform the parallelism strategy:
+The following findings from Phase 8.1g (see `dev/phase-8.1g-report.md`) directly inform the parallelism strategy:
 
 **Workload Distribution** (65 SuiteSparse matrices, MatchOrderMetis ordering):
 - **IntraNode** (41 matrices, 63%): Top 10% of supernodes by front size account for >80% of factorization time. Max front sizes range from 577 to 11,125. These benefit most from parallel dense BLAS within large fronts.

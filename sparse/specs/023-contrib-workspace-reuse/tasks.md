@@ -131,7 +131,7 @@
 - [ ] T036 Run baseline comparison: `cargo run --example baseline_collection --features diagnostic --release -- --compare target/benchmarks/baselines/phase-9.1c-baseline.json` and verify no matrix regresses > 5%
 - [X] T037 Run `cargo clippy --all-targets --features diagnostic` and `cargo fmt --check` — fix any warnings
 - [X] T038 Run quickstart.md validation checklist (all 6 items) — items 1,3,4 pass; items 2,5,6 require full SuiteSparse dataset
-- [X] T039 Update `docs/ssids-log.md` with Phase 9.1d changelog entry documenting what was built, performance results, and any design decisions
+- [X] T039 Update `dev/ssids-log.md` with Phase 9.1d changelog entry documenting what was built, performance results, and any design decisions
 
 ---
 

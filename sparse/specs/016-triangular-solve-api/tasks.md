@@ -158,7 +158,7 @@
 - [X] T032 Run `cargo fmt --check` and `cargo clippy` on the full crate, fix any warnings
 - [X] T033 Run `cargo test` (all non-ignored tests pass) and `cargo test -- --ignored --test-threads=1` (full SuiteSparse suite)
 - [X] T034 Validate quickstart.md examples compile and run correctly (compile-test the code snippets from `specs/016-triangular-solve-api/quickstart.md`)
-- [X] T035 Update `docs/ssids-log.md` with Phase 7 completion entry and update `docs/ssids-plan.md` Phase 7 status
+- [X] T035 Update `dev/ssids-log.md` with Phase 7 completion entry and update `dev/ssids-plan.md` Phase 7 status
 
 ---
 

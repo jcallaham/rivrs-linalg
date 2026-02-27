@@ -69,7 +69,7 @@ Establish comprehensive understanding of algorithms, gather reference implementa
 
 **Deliverable Format:**
 ```
-/docs/references/
+/dev/references/
   ├── papers/
   │   ├── aptp/
   │   ├── multifrontal/
@@ -2269,7 +2269,7 @@ The following topics must be addressed during Phase 8.1 research/speccing:
 - **Dispatch**: `aptp_factor_in_place` dispatches to `two_level_factor` when `num_fully_summed > outer_block_size`, else to `factor_inner` directly
 - **Architecture**: `factor_inner` uses complete pivoting (Algorithm 4.1, Duff et al. 2020) within `factor_block_diagonal`. `two_level_factor` calls `factor_inner` on submatrix views and propagates row permutations to already-factored columns. `factor_inner` processes the entire tile as one block (matching SPRAL's `block_ldlt`), then calls `apply_and_check` (TRSM) for panel rows and `update_trailing` (GEMM) for the trailing matrix.
 - **Key finding**: Submatrix views in the outer loop require explicit row permutation propagation — `swap_symmetric` within a submatrix view doesn't reach previously-factored columns. Without this fix, reconstruction errors are O(1).
-- **Backward error fix**: Initial implementation broke the tile into `inner_block_size=32` sub-blocks, restricting pivot search to 32 rows. This caused severe backward error regressions on hard indefinite matrices (bratu3d: 8.32e-4 vs 1e-9 single-level). Fix: process the entire tile as one block (`block_size = end_pos - k`), matching SPRAL's `block_ldlt` which searches all tile rows. See `docs/two-level-backward-error-investigation.md` for full details.
+- **Backward error fix**: Initial implementation broke the tile into `inner_block_size=32` sub-blocks, restricting pivot search to 32 rows. This caused severe backward error regressions on hard indefinite matrices (bratu3d: 8.32e-4 vs 1e-9 single-level). Fix: process the entire tile as one block (`block_size = end_pos - k`), matching SPRAL's `block_ldlt` which searches all tile rows. See `dev/two-level-backward-error-investigation.md` for full details.
 - **BLAS-3 status**: `apply_and_check` (TRSM) and `update_trailing` (GEMM) are called in the hot path but use manual loops instead of faer's optimized BLAS-3 kernels. Replacing with `faer::linalg::triangular_solve` and `faer::linalg::matmul::matmul` is straightforward and planned as immediate follow-up.
 - **Accuracy**: All 336 lib tests pass. Reconstruction error < 1e-12 on all test matrices. Two-level produces equivalent backward error to single-level on all tested matrices (bratu3d 1e-9, stokes128 1.38e-9, bloweybq 4.27e-11).
 - **Single-level removal**: Old single-level main loop in `aptp_factor_in_place` removed. `factor_inner` is the new inner kernel (subsumes old single-level behavior for small fronts).
@@ -2279,7 +2279,7 @@ SPRAL uses `INNER_BLOCK_SIZE=32` within each tile for minor cache locality, but 
 search scope still covers all tile rows. Re-adding inner blocking to our `factor_inner`
 would require solving the backup/restore problem for cross-block swaps (when a pivot
 candidate is found beyond the current sub-block). The investigation in
-`docs/two-level-backward-error-investigation.md` documents the approaches tried and
+`dev/two-level-backward-error-investigation.md` documents the approaches tried and
 why they failed. The performance benefit is small compared to BLAS-3 dispatch for
 TRSM/GEMM. Consider revisiting after Phase 8.2 profiling identifies bottlenecks.
 
@@ -2287,7 +2287,7 @@ TRSM/GEMM. Consider revisiting after Phase 8.2 profiling identifies bottlenecks.
 
 **Post-8.1a sub-phases (8.1b-f):** After the initial two-level APTP implementation
 (8.1a), a series of debugging, validation, and pipeline-hardening sub-phases were
-carried out on branch `017-two-level-aptp`. These are documented in `docs/ssids-log.md`:
+carried out on branch `017-two-level-aptp`. These are documented in `dev/ssids-log.md`:
 
 - **8.1b**: BLAS-3 refactoring of `factor_inner` (factor_block_diagonal → apply_and_check
   → update_trailing) + comprehensive accuracy audit. Critical `extract_front_factors`
@@ -2381,7 +2381,7 @@ tree-level parallelism (many independent supernodes) or intra-node BLAS-3 parall
   by removing per-supernode guards; timing captured via `Instant::now()` instead.
 - **Workload analysis results**: IntraNode 41/65 (63%), Mixed 19/65 (29%),
   TreeLevel 5/65 (8%). Primary Phase 8.2 strategy: intra-node BLAS-3 parallelism.
-- **Report**: See `docs/phase-8.1g-report.md` for full analysis and Phase 8.2
+- **Report**: See `dev/phase-8.1g-report.md` for full analysis and Phase 8.2
   parallelism recommendations.
 
 #### 8.2: Parallel Factorization & Solve
@@ -2547,7 +2547,7 @@ production-grade solver.
 
 **Dropped (with rationale):**
 - **Iterative refinement**: SPRAL does NOT perform iterative refinement
-  (`docs/phase8/backward-error-investigation.md:153`). The accuracy gap attributed
+  (`dev/phase8/backward-error-investigation.md:153`). The accuracy gap attributed
   to iterative refinement was actually caused by factorization quality differences,
   which Phase 8.1's TPP-as-primary fix resolved (bratu3d: 5e-3 → 1.5e-18).
   All 65 SuiteSparse matrices now achieve backward error well below 5e-11.
@@ -2794,7 +2794,7 @@ traversal caused catastrophic pool buffer oversizing (2374× max oversize ratio,
 
 Root cause: the bottleneck is O(n²) data movement (copying the Schur complement
 out of the frontal workspace), not allocation. The pool addresses the wrong
-problem. See `docs/phase9/phase-9.1d-contrib-architecture-review.md` for the
+problem. See `dev/phase9/phase-9.1d-contrib-architecture-review.md` for the
 full investigation and SPRAL architecture comparison.
 
 All source code changes rolled back. Approach replaced by 9.1e below.
@@ -2891,7 +2891,7 @@ Original 9.1g scope (per-node storage feasibility) is addressed by the
 instrumentation findings. The column-oriented scatter (scope item 4) delivered
 the high-ROI optimization. Remaining scope items (arena allocators, ownership
 model changes, buddy allocator) are not justified given the 9% addressable
-budget. See `docs/ssids-log.md` Phase 9.1g entry for full profiling breakdown.
+budget. See `dev/ssids-log.md` Phase 9.1g entry for full profiling breakdown.
 
 **SPRAL references consulted:**
 - `assemble.hxx:27-38` — `asm_col` column-oriented scatter with 4× unrolling
@@ -2968,7 +2968,7 @@ SPRAL that deterministic tests missed.
 **Status:** COMPLETE (branch `026-robustness-hardening`)
 
 **Success Criteria:**
-- [X] SPRAL test parity audit complete (all scenarios covered or documented as N/A) — `docs/spral-test-audit.md`: 41 APP + 25 TPP scenarios mapped, 26 covered, 8 N/A, 32 gap→filled by torture tests
+- [X] SPRAL test parity audit complete (all scenarios covered or documented as N/A) — `dev/spral-test-audit.md`: 41 APP + 25 TPP scenarios mapped, 26 covered, 8 N/A, 32 gap→filled by torture tests
 - [X] Torture tests pass: 500+ random instances per configuration, no panics — 9 entry points × 500 = 4500 factorizations, zero panics, BE < 5e-11
 - [X] Property-based tests pass on random matrices (size 5-500) — 7 properties × 256 cases, all pass
 - [X] No panics on any invalid input (clean error returns) — 14 adversarial tests (0×0, NaN, Inf, near-overflow, disconnected, etc.), zero panics
@@ -3019,7 +3019,7 @@ These items were evaluated during Phase 8 exit review and found to be unnecessar
 for production readiness, but may be valuable later:
 
 - **Iterative refinement**: SPRAL does NOT perform iterative refinement
-  (`docs/phase8/backward-error-investigation.md:153`). All 65 SuiteSparse matrices
+  (`dev/phase8/backward-error-investigation.md:153`). All 65 SuiteSparse matrices
   achieve backward error well below 5e-11 without it. Add if a downstream use case
   (e.g., IP solver with ill-conditioned KKT systems) demands it.
 - **TPP fallback kernel**: MatchOrderMetis eliminates excessive delays. No matrices

@@ -108,8 +108,8 @@
 **Purpose**: Documentation, code quality, and final validation
 
 - [X] T020 [P] Run `cargo fmt --check` and `cargo clippy` on all modified/new files, fix any warnings
-- [X] T021 [P] Update docs/ssids-log.md with Phase 4.1 development entry: what was built (METIS ordering via metis-sys), key decisions (required dep, vendored, idx_t conversion), test results (fill comparison stats)
-- [X] T022 [P] Update docs/ssids-plan.md: mark Phase 4.1 as COMPLETE, add any lessons learned
+- [X] T021 [P] Update dev/ssids-log.md with Phase 4.1 development entry: what was built (METIS ordering via metis-sys), key decisions (required dep, vendored, idx_t conversion), test results (fill comparison stats)
+- [X] T022 [P] Update dev/ssids-plan.md: mark Phase 4.1 as COMPLETE, add any lessons learned
 - [X] T023 Run full test suite: `cargo test` (all unit + integration) and `cargo test -- --ignored --test-threads=1` (full SuiteSparse). Verify zero failures.
 - [X] T024 Validate quickstart.md example compiles and runs correctly (doc-test passes)
 

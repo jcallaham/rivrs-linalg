@@ -136,8 +136,8 @@
 - [ ] T044 Full SuiteSparse run deferred (requires test-data/suitesparse/ archive extraction). CI subset validates correctness.
 - [x] T045 Added kernel benchmarks to `benches/solver_benchmarks.rs`: `kernel/two_level` and `kernel/single_level` groups, sizes 128/256/512/1024, comparing nb=256 vs nb=usize::MAX.
 - [ ] T046 Crossover point documentation deferred — current two-level uses BLAS-2 (same as single-level). BLAS-3 refactoring needed for meaningful performance comparison.
-- [x] T047 Updated `docs/ssids-plan.md`: Phase 8 header marked "(8.1 COMPLETE)", success criteria checked, completion notes with block sizes, architecture, key finding (row permutation propagation).
-- [x] T048 Updated `docs/ssids-log.md`: Added Phase 8.1 entry with summary, what was built, key bug fix, architecture decision, test results, and what was not done.
+- [x] T047 Updated `dev/ssids-plan.md`: Phase 8 header marked "(8.1 COMPLETE)", success criteria checked, completion notes with block sizes, architecture, key finding (row permutation propagation).
+- [x] T048 Updated `dev/ssids-log.md`: Added Phase 8.1 entry with summary, what was built, key bug fix, architecture decision, test results, and what was not done.
 - [x] T049 `cargo fmt --check` passes (formatted during Phase 5).
 - [x] T050 Quickstart validation: `cargo test two_level` (5 pass), `cargo test` (all pass), `cargo clippy` (clean), `cargo fmt --check` (clean). Note: quickstart filter commands (`complete_pivoting`, `aptp_factor`) need updating to match current test names.
 

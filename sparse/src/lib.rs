@@ -1,6 +1,6 @@
 #![warn(missing_docs)]
 //! rivrs-sparse — Sparse Linear Algebra
-//! 
+//!
 //! This library heavily relies on [`faer`](https://crates.io/crates/faer) for
 //! foundational data types (e.g., `SparseColMat`, `Triplet`, `Col`), dense
 //! solvers, and some sparse linear algebra routines (e.g., AMD ordering).
@@ -51,11 +51,11 @@
 //!
 //! For repeated solves with the same matrix or sparsity pattern, use the three-step
 //! solve API:
-//! 
+//!
 //! 1. Symbolic analysis (reusable for same sparsity pattern)
 //! 2. Numeric factorization (reusable for same matrix)
 //! 3. Triangular solve
-//! 
+//!
 //! For instance, with multiple right-hand side vectors but the same matrix,
 //! perform steps 1-2 once and then reuse the factorization for each vector.
 //!

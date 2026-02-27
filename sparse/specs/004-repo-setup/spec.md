@@ -3,7 +3,7 @@
 **Feature Branch**: `004-repo-setup`
 **Created**: 2026-02-06
 **Status**: Draft
-**Input**: User description: "implement phase 0.4 in docs/ssids-plan.md"
+**Input**: User description: "implement phase 0.4 in dev/ssids-plan.md"
 
 ## User Scenarios & Testing *(mandatory)*
 

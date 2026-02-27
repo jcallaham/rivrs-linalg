@@ -1084,7 +1084,7 @@ fn duff_pralet_correction(
 /// For symmetric matrices, the optimal matching decomposes into singletons
 /// (σ(i)=i) and 2-cycles (σ(i)=j, σ(j)=i, i≠j). However, the asymmetric
 /// cost graph can produce longer cycles that are genuinely optimal (see
-/// `docs/mc64-scaling-notes.md`). Returns `(singletons, two_cycles, longer_cycles)`.
+/// `dev/mc64-scaling-notes.md`). Returns `(singletons, two_cycles, longer_cycles)`.
 pub fn count_cycles(matching: &[usize]) -> (usize, usize, usize) {
     let n = matching.len();
     let mut visited = vec![false; n];

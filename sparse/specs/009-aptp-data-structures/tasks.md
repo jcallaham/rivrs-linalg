@@ -116,7 +116,7 @@
 - [x] T027 Run `cargo fmt --check` and fix any formatting issues
 - [x] T028 Run `cargo doc --no-deps` with `RUSTDOCFLAGS="-D warnings"` and fix any doc warnings; verify all public items have rustdoc with academic citations per plan.md Traceability Requirement
 - [x] T029 Review quickstart.md examples against actual API — update if any signatures changed during implementation
-- [x] T030 Update `docs/ssids-log.md` with Phase 2 completion entry documenting what was built, design decisions made, and reference to this feature spec
+- [x] T030 Update `dev/ssids-log.md` with Phase 2 completion entry documenting what was built, design decisions made, and reference to this feature spec
 
 ---
 

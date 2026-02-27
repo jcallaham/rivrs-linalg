@@ -109,7 +109,7 @@
 
 - [ ] T025 [P] Add comprehensive rustdoc to `src/aptp/matching.rs`. Module-level doc with algorithm description, academic references (Duff & Koster 2001, Duff & Pralet 2005), SPRAL equivalents, complexity analysis. Function-level docs for `mc64_matching` with `# Arguments`, `# Returns`, `# Errors`, `# Algorithm`, `# References` sections. Document `Mc64Result` fields and `Mc64Job` variants.
 - [ ] T026 [P] Run `cargo fmt --check` and `cargo clippy` on the full crate. Fix any warnings or formatting issues in `src/aptp/matching.rs` and `tests/mc64_matching.rs`.
-- [ ] T027 Update `docs/ssids-log.md` with Phase 4.2 completion entry. Include: what was built, key decisions (independent MC64+METIS, Duff-Pralet singularity handling), test results summary (CI subset pass count, cycle structure statistics), and notes for future condensation work.
+- [ ] T027 Update `dev/ssids-log.md` with Phase 4.2 completion entry. Include: what was built, key decisions (independent MC64+METIS, Duff-Pralet singularity handling), test results summary (CI subset pass count, cycle structure statistics), and notes for future condensation work.
 - [ ] T028 Run full test suite (`cargo test` + `cargo test -- --ignored --test-threads=1`) and verify all tests pass. Final compilation check with no warnings.
 
 ---

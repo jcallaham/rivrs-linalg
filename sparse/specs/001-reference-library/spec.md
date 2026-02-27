@@ -82,9 +82,9 @@ A developer needs the core APTP algorithm pseudocode extracted from the academic
 - **FR-001**: Repository MUST contain every academic paper listed in Phase 0.1 of ssids-plan.md in both markdown and PDF format under `references/ssids/`.
 - **FR-002**: Repository MUST contain a paper index file (`references/ssids/INDEX.md`) mapping each file to its full bibliographic citation, category (Core APTP, Multifrontal, Pivoting, Ordering), and relevance summary.
 - **FR-003**: Index MUST document the status of "RAL Technical Reports on SSIDS version 2.0" — either including them or explaining that the Duff/Hogg/Lopez 2020 journal publication supersedes them.
-- **FR-004**: Repository MUST contain a SPRAL code review document (`docs/references/SPRAL-CODE-REVIEW.md`) covering SSIDS module structure, data flow, APTP implementation details, and key design decisions.
-- **FR-005**: Repository MUST contain a faer integration notes document (`docs/references/FAER-INTEGRATION-NOTES.md`) mapping each SSIDS solver need to a specific faer component with a reuse classification.
-- **FR-006**: Repository MUST contain an algorithm pseudocode document (`docs/references/APTP-ALGORITHM.md`) with implementation-ready pseudocode for APTP factorization, symbolic analysis, and pivoting logic, citing source papers for each section.
+- **FR-004**: Repository MUST contain a SPRAL code review document (`dev/references/SPRAL-CODE-REVIEW.md`) covering SSIDS module structure, data flow, APTP implementation details, and key design decisions.
+- **FR-005**: Repository MUST contain a faer integration notes document (`dev/references/FAER-INTEGRATION-NOTES.md`) mapping each SSIDS solver need to a specific faer component with a reuse classification.
+- **FR-006**: Repository MUST contain an algorithm pseudocode document (`dev/references/APTP-ALGORITHM.md`) with implementation-ready pseudocode for APTP factorization, symbolic analysis, and pivoting logic, citing source papers for each section.
 - **FR-007**: All documents MUST cite their sources (paper references, specific SPRAL files consulted, faer module paths) to maintain clean room audit trail.
 
 ### Key Entities

@@ -31,6 +31,6 @@
 
 ## Notes
 
-- The spec references specific file paths (e.g., `references/ssids/`, `docs/references/`) as these are deliverable locations, not implementation details. The spec describes *what* documents to produce, not *how* to produce them.
+- The spec references specific file paths (e.g., `references/ssids/`, `dev/references/`) as these are deliverable locations, not implementation details. The spec describes *what* documents to produce, not *how* to produce them.
 - The "Current State Assessment" section is included as domain context to help planners understand the gap between current state and requirements. This is informational, not prescriptive.
 - All checklist items pass. Spec is ready for `/speckit.clarify` or `/speckit.plan`.

@@ -180,7 +180,7 @@ This uses a single `memset`-equivalent per column instead of individual indexed 
 
 1. Run full SuiteSparse benchmark (65 matrices) — verify SC-001 through SC-007
 2. Run `profile_matrix` on c-71, c-big, ncvxqp7 — document phase breakdown changes
-3. Update docs/ssids-plan.md and docs/ssids-log.md with Phase 9.1c results
+3. Update dev/ssids-plan.md and dev/ssids-log.md with Phase 9.1c results
 4. Update CLAUDE.md with status
 
 ## Complexity Tracking

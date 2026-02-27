@@ -11,7 +11,7 @@ Complete the Phase 0.1 reference library by producing four synthesis documents f
 
 **Language/Version**: N/A (documentation-only feature; no code written)
 **Primary Dependencies**: N/A
-**Storage**: Markdown files in `references/ssids/` and `sparse/docs/references/`
+**Storage**: Markdown files in `references/ssids/` and `sparse/dev/references/`
 **Testing**: Manual review against spec acceptance criteria
 **Target Platform**: N/A
 **Project Type**: Documentation / research synthesis
@@ -55,13 +55,13 @@ sparse/specs/001-reference-library/
 references/ssids/
 ├── INDEX.md                          # NEW: Paper index with citations and categories
 
-sparse/docs/references/
+sparse/dev/references/
 ├── SPRAL-CODE-REVIEW.md              # NEW: Annotated SPRAL SSIDS architecture review
 ├── FAER-INTEGRATION-NOTES.md         # NEW: faer component reuse map
 └── APTP-ALGORITHM.md                 # NEW: Extracted pseudocode from papers
 ```
 
-**Structure Decision**: Documentation files only. INDEX.md goes in `references/ssids/` alongside the papers it indexes. The three synthesis documents go in `sparse/docs/references/` as they are specific to the sparse solver project.
+**Structure Decision**: Documentation files only. INDEX.md goes in `references/ssids/` alongside the papers it indexes. The three synthesis documents go in `sparse/dev/references/` as they are specific to the sparse solver project.
 
 ## Research Findings
 
@@ -130,7 +130,7 @@ From Gilbert et al. (1994):
 
 ### D2: SPRAL-CODE-REVIEW.md
 
-**Location**: `sparse/docs/references/SPRAL-CODE-REVIEW.md`
+**Location**: `sparse/dev/references/SPRAL-CODE-REVIEW.md`
 **Satisfies**: FR-004
 
 **Structure**:
@@ -144,11 +144,11 @@ From Gilbert et al. (1994):
 8. CPU vs GPU path separation
 9. Configuration options (`ssids_options` key fields)
 
-**Sources**: SPRAL BSD-3 source at `references/spral/src/ssids/`, SPRAL documentation at `references/spral/docs/Fortran/ssids.rst`, SPRAL examples.
+**Sources**: SPRAL BSD-3 source at `references/spral/src/ssids/`, SPRAL documentation at `references/spral/dev/Fortran/ssids.rst`, SPRAL examples.
 
 ### D3: FAER-INTEGRATION-NOTES.md
 
-**Location**: `sparse/docs/references/FAER-INTEGRATION-NOTES.md`
+**Location**: `sparse/dev/references/FAER-INTEGRATION-NOTES.md`
 **Satisfies**: FR-005
 
 **Structure**:
@@ -163,7 +163,7 @@ From Gilbert et al. (1994):
 
 ### D4: APTP-ALGORITHM.md
 
-**Location**: `sparse/docs/references/APTP-ALGORITHM.md`
+**Location**: `sparse/dev/references/APTP-ALGORITHM.md`
 **Satisfies**: FR-006
 
 **Structure**:

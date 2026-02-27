@@ -225,7 +225,7 @@ practical value.
 
 ### VI. Structured Development Discipline
 
-Development MUST follow the phased plan in `docs/ssids-plan.md`. This
+Development MUST follow the phased plan in `dev/ssids-plan.md`. This
 project is not on a deadline, and rushing phases creates compounding
 technical debt in a domain where correctness is paramount.
 
@@ -240,8 +240,8 @@ technical debt in a domain where correctness is paramount.
 - Shortcuts that sacrifice correctness for velocity are PROHIBITED.
   If a phase is taking longer than expected, the response is to
   understand why, not to skip validation steps
-- Progress is tracked in `docs/ssids-log.md`; the plan document
-  (`docs/ssids-plan.md`) is updated when decisions change the approach
+- Progress is tracked in `dev/ssids-log.md`; the plan document
+  (`dev/ssids-plan.md`) is updated when decisions change the approach
 - Commit frequently after logical units; never accumulate large amounts
   of unverified work
 

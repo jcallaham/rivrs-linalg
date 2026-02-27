@@ -114,7 +114,7 @@
 - [X] T029 Write unit tests for `export_csv`, `export_json`, and `generate_markdown_table` in `src/benchmarking/report.rs` using synthetic `BenchmarkSuiteResult` data: verify CSV column count, JSON round-trip, and Markdown table structure
 - [X] T030 Add rustdoc comments with `# Examples` sections to all public items in `src/benchmarking/` modules: trait, config builder, results, baseline, report, RSS
 - [X] T031 Run `cargo test` and `cargo bench` end-to-end to verify all modules integrate: tests pass, benchmarks produce output, no warnings from `cargo clippy`
-- [X] T032 Update `docs/ssids-log.md` with Phase 1.2 completion entry documenting what was built, key design decisions (separate `Benchmarkable` trait, whole-run RSS, Criterion group-per-phase), and any deviations from the original plan
+- [X] T032 Update `dev/ssids-log.md` with Phase 1.2 completion entry documenting what was built, key design decisions (separate `Benchmarkable` trait, whole-run RSS, Criterion group-per-phase), and any deviations from the original plan
 
 ---
 

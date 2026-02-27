@@ -134,8 +134,8 @@
 - [x] T031 Write integration test `tests/suitesparse_ci.rs`: load all 10 CI-subset matrices from registry (filter by path containing "suitesparse-ci"), verify dimensions and nnz match metadata, verify matrix is symmetric (row indices within bounds, all columns have valid entries). This validates the MTX parser against real-world SuiteSparse format.
 - [x] T032 [P] Ensure all public functions in `src/io/mtx.rs`, `src/io/reference.rs`, `src/io/registry.rs`, and `src/validate.rs` have rustdoc comments with `# Errors` sections. Run `cargo doc --no-deps` with `RUSTDOCFLAGS="-D warnings"` and fix any warnings.
 - [x] T033 [P] Run full validation suite: `cargo test --all-targets`, `cargo clippy --all-targets -- -D warnings`, `cargo fmt --check`, `cargo doc --no-deps`. All must pass with zero warnings. This validates SC-001 through SC-004.
-- [x] T034 Update `docs/ssids-log.md` with Phase 0.4 completion entry: what was built (IO modules, validation utilities, CI pipeline, benchmark scaffold), decisions made (custom MTX parser, faer-based validation, three-tier test data loading).
-- [x] T035 Update `docs/ssids-plan.md` to mark Phase 0.4 success criteria as checked and note completion status.
+- [x] T034 Update `dev/ssids-log.md` with Phase 0.4 completion entry: what was built (IO modules, validation utilities, CI pipeline, benchmark scaffold), decisions made (custom MTX parser, faer-based validation, three-tier test data loading).
+- [x] T035 Update `dev/ssids-plan.md` to mark Phase 0.4 success criteria as checked and note completion status.
 
 ---
 

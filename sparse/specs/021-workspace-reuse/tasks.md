@@ -102,8 +102,8 @@
 - [x] T026 Collected post-optimization baseline (CI subset). Factor speedup: median 1.16×, mean 1.12×. Assembly phase: 1.27×–2.81× speedup. RSS: 24% reduction.
 - [x] T027 SC-004 verified (all CI subset backward errors bit-exact identical). SC-005 verified (no correctness regressions). SC-006 verified (RSS reduced 24%). SC-001/SC-002/SC-003 require full SuiteSparse collection with SPRAL reference — deferred to full validation.
 - [x] T028 blockqp1 shows 0.74× regression on factor time (19,991 tiny supernodes, max_front=44). Absolute difference only 18.7ms. Likely measurement noise on very small kernel times. Not actionable.
-- [x] T029 Updated `docs/ssids-plan.md` Phase 9.1b section with implementation results.
-- [x] T030 Updated `docs/ssids-log.md` with Phase 9.1b changelog entry.
+- [x] T029 Updated `dev/ssids-plan.md` Phase 9.1b section with implementation results.
+- [x] T030 Updated `dev/ssids-log.md` with Phase 9.1b changelog entry.
 - [x] T031 [P] Updated `CLAUDE.md` with Phase 9.1b status.
 - [x] T032 [P] `cargo fmt` applied, `cargo doc --no-deps` compiles without warnings.
 - [x] T033 Full SuiteSparse validation running (`cargo test -- --ignored --test-threads=1`).

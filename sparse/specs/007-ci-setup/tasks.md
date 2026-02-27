@@ -58,8 +58,8 @@ Cross-cutting requirements FR-008 (caching), FR-009 (clear output), FR-010 (inde
 **Purpose**: Verification and documentation updates
 
 - [x] T002 Verify all existing CI jobs still pass by running local equivalents: `cd sparse && cargo test --all-targets && cargo fmt --check && cargo clippy --all-targets -- -D warnings && RUSTDOCFLAGS="-D warnings" cargo doc --no-deps && cargo bench --no-run`
-- [x] T003 Update `docs/ssids-plan.md` to mark Phase 1.3 success criteria as checked (matching the pattern used for Phases 0.1-0.4, 1.1-1.2)
-- [x] T004 Add Phase 1.3 entry to `docs/ssids-log.md` documenting what was built, key decisions, and issues encountered
+- [x] T003 Update `dev/ssids-plan.md` to mark Phase 1.3 success criteria as checked (matching the pattern used for Phases 0.1-0.4, 1.1-1.2)
+- [x] T004 Add Phase 1.3 entry to `dev/ssids-log.md` documenting what was built, key decisions, and issues encountered
 
 ---
 

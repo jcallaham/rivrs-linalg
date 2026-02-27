@@ -74,7 +74,7 @@ examples/
 ├── supernode_stats.rs      # UNCHANGED (existing reference)
 └── [other examples]        # UNCHANGED
 
-docs/
+dev/
 └── phase-8.1g-report.md   # NEW: performance analysis report with 8.2 recommendation
 
 tests/

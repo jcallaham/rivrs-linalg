@@ -3,7 +3,7 @@
 **Feature Branch**: `005-test-infrastructure`
 **Created**: 2026-02-06
 **Status**: Draft
-**Input**: User description: "implement phase 1.1 in docs/ssids-plan.md"
+**Input**: User description: "implement phase 1.1 in dev/ssids-plan.md"
 
 ## Clarifications
 

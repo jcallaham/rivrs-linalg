@@ -70,11 +70,11 @@ tests/
 ├── property.rs             # NEW: end-to-end property tests via SparseLDLT
 └── adversarial.rs          # NEW: edge case and malformed input tests
 
-docs/
+dev/
 └── spral-test-audit.md     # NEW: two-directional audit document
 ```
 
-**Structure Decision**: Follows existing project layout. New test modules in `src/testing/` behind `test-util` feature flag. New integration tests in `tests/`. Audit document in `docs/`.
+**Structure Decision**: Follows existing project layout. New test modules in `src/testing/` behind `test-util` feature flag. New integration tests in `tests/`. Audit document in `dev/`.
 
 ## Complexity Tracking
 

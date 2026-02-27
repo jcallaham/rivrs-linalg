@@ -50,7 +50,7 @@ A markdown document recording the two-directional audit.
 
 **Structure**:
 ```
-docs/spral-test-audit.md
+dev/spral-test-audit.md
 ├── SPRAL → rivrs mapping table
 │   ├── ldlt_app.cxx scenarios (48 deterministic + 2 torture)
 │   └── ldlt_tpp.cxx scenarios (23 deterministic + 2 torture)

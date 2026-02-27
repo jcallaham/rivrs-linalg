@@ -141,7 +141,7 @@ Re-adding inner blocking would require:
   plus panel rows (end_pos .. m)
 - Requires correct perm handling for extended search with ib-sized blocks
 
-This is captured in `docs/blas3-refactor.md` and deferred to a future optimization
+This is captured in `dev/blas3-refactor.md` and deferred to a future optimization
 phase. The current approach is correct and matches SPRAL's performance profile.
 
 ### `inner_block_size` Parameter

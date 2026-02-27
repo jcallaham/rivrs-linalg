@@ -140,7 +140,7 @@
 - [X] T041 [US4] Implement structured JSON output in `examples/parallel_scaling.rs` to `target/benchmarks/parallel/scaling-<timestamp>.json`: per-matrix records with name, n, nnz, class, and per-thread-count timing (factor_ms, solve_ms, backward_error, speedup, efficiency).
 - [X] T042 [US4] Implement human-readable summary table in `examples/parallel_scaling.rs`: per-class average speedup at each thread count, matrices meeting SC-001/SC-002/SC-003 targets, any regressions.
 - [X] T043 [US4] Add `[[example]]` entry for `parallel_scaling` with `required-features = ["diagnostic"]` in `Cargo.toml`
-- [X] T044 [US4] Run the benchmark tool on CI subset with `--ci-only --threads 1,2,4,8` and verify report is produced with expected fields. Document results in `docs/phase-8.2-report.md`.
+- [X] T044 [US4] Run the benchmark tool on CI subset with `--ci-only --threads 1,2,4,8` and verify report is produced with expected fields. Document results in `dev/phase-8.2-report.md`.
 
 **Checkpoint**: Parallel scaling report produced. SC-008 validated. Performance targets (SC-001 through SC-003) evaluated.
 
@@ -150,8 +150,8 @@
 
 **Purpose**: Documentation, cleanup, and final validation across all user stories.
 
-- [X] T045 Update `docs/ssids-log.md` with Phase 8.2 development log entry
-- [X] T046 Update `docs/ssids-plan.md` with Phase 8.2 completion status
+- [X] T045 Update `dev/ssids-log.md` with Phase 8.2 development log entry
+- [X] T046 Update `dev/ssids-plan.md` with Phase 8.2 completion status
 - [X] T047 Update `CLAUDE.md` (sparse) with Phase 8.2 status, Rayon dependency, parallelism API notes
 - [X] T048 [P] Add rustdoc documentation for all new/modified public APIs: `FactorOptions.par`, `SolverOptions.par`, `SparseLDLT::solve_in_place` `par` parameter, with `# Examples` sections showing parallel usage
 - [X] T049 [P] Add academic attribution comments to parallel factorization and solve code: cite Duff 2020 Sections 5-6, Hogg 2016 Section 2.5/3.5, and SPRAL `NumericSubtree.hxx` (BSD-3)

@@ -136,8 +136,8 @@ cargo run --bin spral-comparison --release -- --ci-only --rivrs --threads 4
 ## Documentation
 
 - [CLAUDE.md](CLAUDE.md) — Development guidance, algorithm architecture, code layout
-- [docs/ssids-plan.md](docs/ssids-plan.md) — Development plan and phase roadmap
-- [docs/ssids-log.md](docs/ssids-log.md) — Development changelog
+- [dev/ssids-plan.md](dev/ssids-plan.md) — Development plan and phase roadmap
+- [dev/ssids-log.md](dev/ssids-log.md) — Development changelog
 
 ## License
 

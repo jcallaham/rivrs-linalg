@@ -105,8 +105,8 @@
 
 **Purpose**: Documentation, plan updates, and final validation
 
-- [X] T019 Add Phase 4.3 section to `docs/ssids-plan.md`: document match-order condensation as a completed deliverable with algorithm reference (SPRAL `match_order.f90`), success criteria results, and lessons learned
-- [X] T020 Add Phase 4.3 entry to `docs/ssids-log.md`: summarize what was built (cycle splitting, condensed graph, METIS on condensed, expansion), key decisions (code in ordering.rs, marker-array dedup), and test results
+- [X] T019 Add Phase 4.3 section to `dev/ssids-plan.md`: document match-order condensation as a completed deliverable with algorithm reference (SPRAL `match_order.f90`), success criteria results, and lessons learned
+- [X] T020 Add Phase 4.3 entry to `dev/ssids-log.md`: summarize what was built (cycle splitting, condensed graph, METIS on condensed, expansion), key decisions (code in ordering.rs, marker-array dedup), and test results
 - [X] T021 Run quickstart.md validation checklist: verify all 7 success criteria (SC-001 through SC-007) pass, document results; run `cargo fmt --check` and `cargo clippy` for code quality
 
 ---

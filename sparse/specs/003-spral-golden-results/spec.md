@@ -3,7 +3,7 @@
 **Feature Branch**: `003-spral-golden-results`
 **Created**: 2026-02-06
 **Status**: Deferred (see decision.md)
-**Input**: User description: "implement phase 0.3 in docs/ssids-plan.md"
+**Input**: User description: "implement phase 0.3 in dev/ssids-plan.md"
 
 ## User Scenarios & Testing *(mandatory)*
 

@@ -32,7 +32,7 @@ Build a Criterion.rs-based benchmarking framework for the SSIDS sparse solver th
 | III. TDD | **PASS** | Framework will be developed test-first: data structures tested via unit tests, Criterion integration verified with mock solver. |
 | IV. Documentation | **PASS** | All benchmark modules will have rustdoc with usage examples. Academic attribution N/A (tooling, not algorithms). |
 | V. Numerical Stability | **N/A** | Framework does not perform numerical computation. |
-| VI. Structured Development | **PASS** | This is Phase 1.2 per `docs/ssids-plan.md`. Phase 0.5 (test infrastructure) is complete. |
+| VI. Structured Development | **PASS** | This is Phase 1.2 per `dev/ssids-plan.md`. Phase 0.5 (test infrastructure) is complete. |
 | VII. Code Quality | **PASS** | Will follow Rust idioms, use `Result` for fallible ops, feature-gate non-production code. |
 
 ### Post-Design Re-Check

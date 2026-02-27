@@ -141,9 +141,9 @@ The following academic references and code sources inform the solve algorithm de
 
 6. **Duff & Reid (1999)** — "The Design of MA57" (`/workspace/rivrs-linalg/references/ssids/duff1999.md`): MA57's solve phase is a direct antecedent to SSIDS and provides additional reference for the triangular solve mechanics.
 
-7. **SPRAL source code** (BSD-3): `spral/src/ssids/cpu/kernels/ldlt_app.cxx` (`ldlt_app_solve_fwd`, `ldlt_app_solve_bwd`) and `spral/src/ssids/cpu/subtree.hxx` (`solve()`) — per-supernode solve kernels and assembly-tree traversal reference. Documented in `/workspace/rivrs-linalg/sparse/docs/references/notes/SPRAL-CODE-REVIEW.md`.
+7. **SPRAL source code** (BSD-3): `spral/src/ssids/cpu/kernels/ldlt_app.cxx` (`ldlt_app_solve_fwd`, `ldlt_app_solve_bwd`) and `spral/src/ssids/cpu/subtree.hxx` (`solve()`) — per-supernode solve kernels and assembly-tree traversal reference. Documented in `/workspace/rivrs-linalg/sparse/dev/references/notes/SPRAL-CODE-REVIEW.md`.
 
-8. **faer integration notes** (`/workspace/rivrs-linalg/sparse/docs/references/notes/FAER-INTEGRATION-NOTES.md`): Section 3.5 covers faer's dense triangular solve API; Section 5 outlines the solve phase flow. Note: faer's sparse triangular solves operate on CSC matrices and are NOT directly applicable — our solve uses dense TRSV within each supernode.
+8. **faer integration notes** (`/workspace/rivrs-linalg/sparse/dev/references/notes/FAER-INTEGRATION-NOTES.md`): Section 3.5 covers faer's dense triangular solve API; Section 5 outlines the solve phase flow. Note: faer's sparse triangular solves operate on CSC matrices and are NOT directly applicable — our solve uses dense TRSV within each supernode.
 
 ### Open Design Questions
 

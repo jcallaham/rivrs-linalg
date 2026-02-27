@@ -156,8 +156,8 @@
 - [x] T047 Add symbolic analysis benchmark group in `benches/solver_benchmarks.rs`: benchmark `AptpSymbolic::analyze` on representative SuiteSparse matrices with AMD ordering, recording baseline timing for SC-006 (< 5% of future factor time)
 - [x] T048 Ensure all public items in `src/aptp/symbolic.rs` have complete rustdoc: `AptpSymbolic` struct, `SymbolicStatistics` struct, all public methods. Include `# Examples`, `# Errors`, `# Panics` sections where appropriate. Cite algorithm references in module-level doc comment.
 - [x] T049 Run full validation: `cargo test`, `cargo clippy`, `cargo fmt --check`, `cargo doc --no-deps`. All must pass with zero warnings.
-- [x] T050 Update `docs/ssids-log.md` with Phase 3 completion entry: what was built, key design decisions (two-call strategy, dual-variant handling, 10% buffer heuristic), test results, and next steps.
-- [x] T051 Update `docs/ssids-plan.md` Phase 3 success criteria checkboxes to reflect completion status.
+- [x] T050 Update `dev/ssids-log.md` with Phase 3 completion entry: what was built, key design decisions (two-call strategy, dual-variant handling, 10% buffer heuristic), test results, and next steps.
+- [x] T051 Update `dev/ssids-plan.md` Phase 3 success criteria checkboxes to reflect completion status.
 
 ---
 

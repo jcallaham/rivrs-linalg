@@ -41,8 +41,8 @@ Release documentation, new user-facing examples, and packaging finalization.
 - `examples/refactorization.rs` — New
 - `examples/README.md` — Reorganized into user/diagnostic sections
 - `CHANGELOG.md` — New
-- `docs/ssids-log.md` — This entry
-- `docs/ssids-plan.md` — Phase 9.3 criteria marked
+- `dev/ssids-log.md` — This entry
+- `dev/ssids-plan.md` — Phase 9.3 criteria marked
 - `CLAUDE.md` — Updated status
 
 ## Phase 9.3b: Benchmarking and Performance Comparisons
@@ -219,10 +219,10 @@ solver additions.
 **Updated all consumers**
 - 13 integration test files, 5 examples, 1 benchmark, 1 comparison driver
 - All doctests in src/ updated
-- `CLAUDE.md`, `README.md`, `docs/ssids-plan.md` documentation updated
+- `CLAUDE.md`, `README.md`, `dev/ssids-plan.md` documentation updated
 
 **Decision: no `multifrontal/` extraction**
-- Followed the "extract on second consumer" principle from `docs/roadmap.md`
+- Followed the "extract on second consumer" principle from `dev/roadmap.md`
 - Workspace, assembly maps, tree traversal remain in `symmetric/` until a second
   solver (e.g., unsymmetric LU) needs them
 
@@ -241,7 +241,7 @@ All 525 tests pass. Zero clippy warnings. Clean formatting.
 Comprehensive robustness testing and hardening for the SSIDS solver across four
 independently verifiable user stories.
 
-**US1: SPRAL Test Parity Audit** (`docs/spral-test-audit.md`)
+**US1: SPRAL Test Parity Audit** (`dev/spral-test-audit.md`)
 - Cataloged all 41 `ldlt_app.cxx` and 25 `ldlt_tpp.cxx` SPRAL test scenarios
 - Mapped each scenario to rivrs-sparse coverage (26 covered, 8 N/A, 32 gap→filled)
 - Evaluated all 530 existing tests: 0 removals (each covers unique code path)
@@ -287,7 +287,7 @@ independently verifiable user stories.
 - `src/aptp/factor.rs` — torture tests + kernel-level property tests (appended to test module)
 - `tests/property.rs` — end-to-end proptest properties
 - `tests/adversarial.rs` — adversarial edge-case tests
-- `docs/spral-test-audit.md` — two-directional SPRAL audit document
+- `dev/spral-test-audit.md` — two-directional SPRAL audit document
 - `Cargo.toml` — proptest as optional dependency (activated by test-util)
 
 ## Phase 9.1g: Column-Oriented Extend-Add Scatter
@@ -924,7 +924,7 @@ bottleneck — not the assembly operations originally targeted.
 Phase 9.1d: Contribution workspace reuse — pre-allocate a contribution
 `Mat<f64>` on `FactorizationWorkspace` and/or restructure the factorization
 loop for direct extend-add from the frontal workspace. See `ssids-plan.md`
-Phase 9.1d and `docs/phase9/phase-9.1c-profiling-report.md`.
+Phase 9.1d and `dev/phase9/phase-9.1c-profiling-report.md`.
 
 ### Performance benchmarks
 
@@ -1659,7 +1659,7 @@ Workload analysis results from all 65 SuiteSparse matrices:
 faer dense operations in `apply_and_check`/`update_trailing`). Tree-level
 parallelism second (level-set scheduling for independent subtrees).
 
-See `docs/phase-8.1g-report.md` for complete analysis with per-matrix data.
+See `dev/phase-8.1g-report.md` for complete analysis with per-matrix data.
 
 Run the tools on a development machine to collect data:
 ```bash
@@ -1757,7 +1757,7 @@ on positive definite matrices.
 | `src/aptp/numeric.rs` | Added `PerSupernodeStats`, `per_supernode_stats` field, `export_assembled_frontal()`. |
 | `src/aptp/mod.rs` | Re-exported `PerSupernodeStats`. |
 | `src/aptp/solver.rs` | Added `per_supernode_stats()` accessor on `SparseLDLT`. |
-| `docs/phase8/d_pretok-investigation.md` | NEW: investigation log with root cause and results. |
+| `dev/phase8/d_pretok-investigation.md` | NEW: investigation log with root cause and results. |
 
 ---
 
@@ -1888,7 +1888,7 @@ bug fixes, and extensive SPRAL comparison work.
 
 ### Investigation Documentation
 
-Detailed investigation logs preserved in `docs/phase8/`:
+Detailed investigation logs preserved in `dev/phase8/`:
 
 | Document | Topic |
 |----------|-------|
@@ -2081,7 +2081,7 @@ Conducted comprehensive investigation of remaining backward error failures using
 `examples/mc64_isolation.rs`, which tests each matrix with four configurations:
 MatchOrderMetis, condensed-ordering-only, scaling-only, and plain-METIS-no-scaling.
 
-See `docs/phase8/mc64-pipeline-investigation.md` for full agent findings.
+See `dev/phase8/mc64-pipeline-investigation.md` for full agent findings.
 
 #### Remaining Failure Categories
 
@@ -2113,8 +2113,8 @@ from 7.45e-17 to 7.50e-4. The condensed ordering is a secondary contributor.
 | File | Change |
 |------|--------|
 | `src/aptp/matching.rs` | Replaced `BinaryHeap` Dijkstra with indexed heap (SPRAL port). Added `DijkstraState`, `heap_update_inline`, `heap_delete_inline`, `heap_pop_inline`. Added `extract_matched_subgraph` + re-matching pipeline. Removed `enforce_scaling_bound`, `check_dual_feasibility_raw`, `OrderedFloat`, trace instrumentation. |
-| `docs/phase8/mc64-dijkstra-heap-bug.md` | NEW: comprehensive investigation document |
-| `docs/phase8/mc64-pipeline-investigation.md` | NEW: 4-agent audit of remaining failures |
+| `dev/phase8/mc64-dijkstra-heap-bug.md` | NEW: comprehensive investigation document |
+| `dev/phase8/mc64-pipeline-investigation.md` | NEW: 4-agent audit of remaining failures |
 | `tools/spral_greedy_compare.f90` | NEW: Fortran tool for SPRAL greedy matching comparison |
 | `examples/mc64_isolation.rs` | NEW: 4-way scaling/ordering isolation diagnostic |
 
@@ -2254,9 +2254,9 @@ Potential fixes (Phase 9 candidates):
 - `src/aptp/factor.rs` — BLAS-3 pipeline refactoring + 5 delay tests + helpers
 - `src/aptp/numeric.rs` — extract_front_factors fix + 5 regression tests
 - `tests/solve.rs` — solve test updates
-- `docs/backward-error-investigation.md` — investigation results
-- `docs/phase8-audit-investigation.md` — NEW: full audit documentation
-- `docs/ssids-plan.md` — plan updates
+- `dev/backward-error-investigation.md` — investigation results
+- `dev/phase8-audit-investigation.md` — NEW: full audit documentation
+- `dev/ssids-plan.md` — plan updates
 
 ---
 
@@ -3035,7 +3035,7 @@ the issue to SPRAL using METIS (nested dissection) by default, not AMD.
 **Comparison against paper values** (Hogg et al. 2016, Table III, METIS ordering):
 nd3k: 1.8× more fill with AMD; Si10H16: 2.9×; Si5H12: 2.8×; sparsine: ~10-20×.
 
-**Plan changes** (`docs/ssids-plan.md`):
+**Plan changes** (`dev/ssids-plan.md`):
 - Added "Lessons Learned: AMD Ordering Quality" section to Phase 3
 - Elevated METIS from "consider for Phase 9" to Phase 4.1 (before MC64)
 - Expanded Phase 4 from "MC64 Matching & Scaling" to "Ordering & Preprocessing"
@@ -3752,7 +3752,7 @@ No code changes. Documentation artifacts only:
 - `specs/003-spral-golden-results/spec.md` — original feature specification
 - `specs/003-spral-golden-results/plan.md` — implementation plan (not executed)
 - `specs/003-spral-golden-results/research.md` — SPRAL API investigation findings
-- Updated `docs/ssids-plan.md` — Phase 0.3 marked deferred, exit criteria revised
+- Updated `dev/ssids-plan.md` — Phase 0.3 marked deferred, exit criteria revised
 - Updated constitution v1.0.0 → v1.1.0
 
 ---
@@ -3856,7 +3856,7 @@ Four synthesis documents and a paper library completing the Phase 0.1 reference
 library, organized following the structure from `ssids-plan.md`:
 
 ```
-sparse/docs/references/
+sparse/dev/references/
 ├── INDEX.md                          # Paper index with citations and categories
 ├── papers/                           # 14 academic papers (.md format)
 │   ├── davis2016.md ... schenk2006.md
@@ -3867,13 +3867,13 @@ sparse/docs/references/
     └── FAER-INTEGRATION-NOTES.md     # faer component reuse map
 ```
 
-1. **`docs/references/INDEX.md`** (~1400 words) -- Paper index cataloging all 14
+1. **`dev/references/INDEX.md`** (~1400 words) -- Paper index cataloging all 14
    academic papers by category (Core APTP, Multifrontal Foundations, Pivoting
    Strategies, Ordering & Analysis, Infrastructure) with full bibliographic
    citations, relevance summaries, markdown quality flags, and RAL Technical
    Reports status.
 
-2. **`docs/references/notes/SPRAL-CODE-REVIEW.md`** (~5100 words) -- Annotated
+2. **`dev/references/notes/SPRAL-CODE-REVIEW.md`** (~5100 words) -- Annotated
    architecture review of SPRAL's SSIDS implementation covering: executive
    summary of three-phase design, module-by-module overview (9 top-level
    modules), CPU factorization stack (24 files), ASCII data flow diagrams, APTP
@@ -3881,7 +3881,7 @@ sparse/docs/references/
    `node_type`, `contrib_type`, diagonal D storage), and external dependencies
    with `ssids_options` configuration fields.
 
-3. **`docs/references/notes/FAER-INTEGRATION-NOTES.md`** (~3500 words) --
+3. **`dev/references/notes/FAER-INTEGRATION-NOTES.md`** (~3500 words) --
    Component-by-component map of faer 0.24.0 sparse infrastructure with reuse
    classifications: 8 "direct use" components (CSC, AMD, COLAMD, elimination
    tree, triangular solve, permutations, workspace management, CSR), 2 "adapt"
@@ -3889,7 +3889,7 @@ sparse/docs/references/
    Bunch-Kaufman, sparse LU). Includes deep dive on cholesky.rs
    Bunch-Kaufman vs APTP difference and integration strategy with build order.
 
-4. **`docs/references/algorithms/APTP-ALGORITHM.md`** (~5000 words) -- Unified
+4. **`dev/references/algorithms/APTP-ALGORITHM.md`** (~5000 words) -- Unified
    pseudocode reference covering: APTP overview with TPP/SBK comparison table,
    Algorithm 3.1 (main APTP loop), all 7 dense block kernels, Algorithm 4.1
    (complete pivoting), pivot acceptance/column delay mechanism, symbolic

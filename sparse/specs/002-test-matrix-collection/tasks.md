@@ -116,8 +116,8 @@
 
 **Purpose**: Documentation, plan updates, final validation
 
-- [x] T028 [P] Update `sparse/docs/ssids-plan.md` Phase 0.2 success criteria checkboxes to reflect completion status
-- [x] T029 [P] Add Phase 0.2 entry to `sparse/docs/ssids-log.md` documenting: what was built (directory structure, scripts, matrix counts by category), key decisions (curated lists from papers, LFS strategy, 50MB threshold), and any issues encountered
+- [x] T028 [P] Update `sparse/dev/ssids-plan.md` Phase 0.2 success criteria checkboxes to reflect completion status
+- [x] T029 [P] Add Phase 0.2 entry to `sparse/dev/ssids-log.md` documenting: what was built (directory structure, scripts, matrix counts by category), key decisions (curated lists from papers, LFS strategy, 50MB threshold), and any issues encountered
 - [x] T030 [P] Create `sparse/test-data/README.md` with setup instructions adapted from quickstart.md: prerequisites (Python 3.8+, ssgetpy, numpy, scipy, git-lfs), first-time setup commands, directory layout, how to add new matrices
 - [x] T031 Run final `validate_collection.py` pass and confirm all success criteria: SC-001 (>=70 matrices), SC-002 (all parseable), SC-003 (all metadata complete), SC-004 (4+ orders of magnitude), SC-005 (>=5 killers), SC-006 (verified factorizations), SC-007 (queryable index)
 

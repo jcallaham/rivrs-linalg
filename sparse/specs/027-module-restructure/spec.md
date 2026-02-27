@@ -77,7 +77,7 @@ A future developer adding a new solver (e.g., unsymmetric LU, iterative CG) can 
 - **FR-009**: Crate MUST NOT extract `multifrontal/` as a separate module — there is no second consumer, and premature extraction risks designing wrong abstractions.
 - **FR-010**: The `ordering` module MUST have zero dependencies on the `symmetric` module (clean dependency direction: symmetric depends on ordering, not vice versa).
 - **FR-011**: Crate MUST update `CLAUDE.md` source code layout documentation to reflect the new structure.
-- **FR-012**: Crate MUST update `docs/ssids-log.md` to document the restructure.
+- **FR-012**: Crate MUST update `dev/ssids-log.md` to document the restructure.
 - **FR-013**: All existing tests MUST pass after the restructure with bit-identical results.
 - **FR-014**: `cargo clippy --all-targets` and `cargo clippy --all-targets --features diagnostic` MUST pass with no warnings.
 - **FR-015**: `cargo fmt --check` MUST pass.

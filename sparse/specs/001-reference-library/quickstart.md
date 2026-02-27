@@ -7,9 +7,9 @@ Four documentation deliverables completing the SSIDS Phase 0.1 literature review
 | Document | Location | Purpose |
 |----------|----------|---------|
 | Paper Index | `references/ssids/INDEX.md` | Find any paper by category, citation, or topic |
-| SPRAL Code Review | `sparse/docs/references/SPRAL-CODE-REVIEW.md` | Understand SPRAL SSIDS architecture without reading Fortran |
-| faer Integration Notes | `sparse/docs/references/FAER-INTEGRATION-NOTES.md` | Know which faer components to reuse vs build new |
-| APTP Algorithm | `sparse/docs/references/APTP-ALGORITHM.md` | Implementation-ready pseudocode with paper citations |
+| SPRAL Code Review | `sparse/dev/references/SPRAL-CODE-REVIEW.md` | Understand SPRAL SSIDS architecture without reading Fortran |
+| faer Integration Notes | `sparse/dev/references/FAER-INTEGRATION-NOTES.md` | Know which faer components to reuse vs build new |
+| APTP Algorithm | `sparse/dev/references/APTP-ALGORITHM.md` | Implementation-ready pseudocode with paper citations |
 
 ## How to Use
 

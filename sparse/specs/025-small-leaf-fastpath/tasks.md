@@ -111,8 +111,8 @@
 - [X] T031 [P] Rustdoc on `classify_small_leaf_subtrees()`: algorithm, SPRAL citations, threshold semantics. Added inline during implementation.
 - [X] T032 [P] Rustdoc on `SmallLeafSubtree` struct: fields, invariants (≥2 nodes, postorder, max_front < threshold). Added inline.
 - [X] T033 [P] Rustdoc on `small_leaf_threshold` field on `FactorOptions` and `SolverOptions`: default (256), disable (0), relationship to `INTRA_NODE_THRESHOLD`. Added inline.
-- [X] T034 Update `docs/ssids-log.md` with Phase 9.1f entry.
-- [X] T035 Update `docs/ssids-plan.md`: mark Phase 9.1f as complete.
+- [X] T034 Update `dev/ssids-log.md` with Phase 9.1f entry.
+- [X] T035 Update `dev/ssids-plan.md`: mark Phase 9.1f as complete.
 - [X] T036 `cargo fmt --check` clean, `cargo clippy --all-targets --features diagnostic -- -D warnings` clean.
 - [X] T037 `cargo doc --no-deps` clean (no warnings).
 - [X] T038 Update `sparse/CLAUDE.md` Current Implementation Status: Phase 9.1f entry added.

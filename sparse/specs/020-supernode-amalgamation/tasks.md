@@ -139,8 +139,8 @@
 
 - [X] T049 Add amalgamation statistics to `FactorizationStats` in `src/aptp/numeric.rs` — fields: `supernodes_before_amalgamation: usize`, `supernodes_after_amalgamation: usize`, `merges_performed: usize`
 - [X] T050 [P] Add rustdoc examples on `amalgamate()` and `do_merge()` in `src/aptp/amalgamation.rs` — module-level doc + per-function doc already comprehensive with SPRAL references
-- [X] T051 [P] Update `docs/ssids-plan.md` — marked Phase 9.1a as COMPLETE with results
-- [X] T052 [P] Update `docs/ssids-log.md` — added Phase 9.1a changelog entry
+- [X] T051 [P] Update `dev/ssids-plan.md` — marked Phase 9.1a as COMPLETE with results
+- [X] T052 [P] Update `dev/ssids-log.md` — added Phase 9.1a changelog entry
 - [X] T053 [P] Update `CLAUDE.md` — updated "Current Implementation Status" section
 - [X] T054 Run `cargo fmt --check` and `cargo clippy --all-targets --features diagnostic -- -D warnings` — clean
 - [X] T055 Run `cargo doc --no-deps` — no warnings

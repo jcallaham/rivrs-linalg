@@ -185,8 +185,8 @@ All `examples/*.rs`: replace `rivrs_sparse::aptp::` → `rivrs_sparse::symmetric
 ### Step 9: Update documentation
 
 1. Update `sparse/CLAUDE.md` Source Code Layout section
-2. Add entry to `docs/ssids-log.md`
-3. Update any `aptp/` path references in `docs/` files
+2. Add entry to `dev/ssids-log.md`
+3. Update any `aptp/` path references in `dev/` files
 4. Update root `CLAUDE.md` if it references `aptp/`
 
 ## Complexity Tracking

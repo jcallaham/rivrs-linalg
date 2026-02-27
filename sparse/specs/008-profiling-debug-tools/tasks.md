@@ -132,8 +132,8 @@
 - [x] T032 Verify feature gating (FR-004, FR-016, FR-017, SC-006): build without `test-util` feature (`cargo build`) and confirm profiling/debug modules are excluded; compare binary sizes with and without feature; write a compile-test (or integration test behind a `cfg` check) that verifies the no-op API compiles with identical signatures when `test-util` is disabled (ProfileSession::new, enter_section, finish, summary_report all return empty/ZST values); verify `profiling` and `debug` modules can each be used independently without importing the other
 - [x] T033 [P] Add rustdoc documentation with `# Examples` sections to all public types and functions in `src/profiling/mod.rs`, `src/debug/mod.rs`, and all submodules. Verify `cargo doc --no-deps` passes with `RUSTDOCFLAGS="-D warnings"`
 - [x] T034 [P] Run all hand-constructed test matrices through `SparsityDisplay` to verify SC-004: all 15 matrices produce correct visualizations matching their known sparsity structures
-- [x] T035 Update `docs/ssids-log.md` with Phase 1.4 entry documenting what was built, key decisions, and issues encountered
-- [x] T036 Update `docs/ssids-plan.md` Phase 1.4 section to mark as complete and note any deviations from original plan (similar to how Phase 1.3 was updated)
+- [x] T035 Update `dev/ssids-log.md` with Phase 1.4 entry documenting what was built, key decisions, and issues encountered
+- [x] T036 Update `dev/ssids-plan.md` Phase 1.4 section to mark as complete and note any deviations from original plan (similar to how Phase 1.3 was updated)
 - [x] T037 Run full test suite (`cargo test --all-targets`), clippy (`cargo clippy --all-targets -- -D warnings`), and benchmark compilation (`cargo bench --no-run`) to verify nothing is broken
 
 ---

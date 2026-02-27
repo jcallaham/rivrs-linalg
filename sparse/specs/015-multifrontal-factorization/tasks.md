@@ -145,8 +145,8 @@
 - [X] T033 [P] Add rustdoc to `pub(crate)` types in `src/aptp/numeric.rs` — `SupernodeInfo`, `FrontalMatrix`, `ContributionBlock`, `build_supernode_info()`, `extend_add()`, `extract_front_factors()`, `extract_contribution()`
 - [X] T034 Run `cargo clippy` and `cargo fmt --check` on `src/aptp/numeric.rs` and `tests/multifrontal.rs`, fix any warnings
 - [X] T035 Run full SuiteSparse test `cargo test -- --ignored --test-threads=1` and verify all 67 matrices pass with reconstruction error < 1e-12
-- [X] T036 Update `docs/ssids-log.md` with Phase 6 completion entry — what was built, key decisions (pass-entire-front strategy, unified supernode abstraction), statistics, and any lessons learned
-- [X] T037 Update `docs/ssids-plan.md` Phase 6 section to reflect completion status
+- [X] T036 Update `dev/ssids-log.md` with Phase 6 completion entry — what was built, key decisions (pass-entire-front strategy, unified supernode abstraction), statistics, and any lessons learned
+- [X] T037 Update `dev/ssids-plan.md` Phase 6 section to reflect completion status
 
 ---
 

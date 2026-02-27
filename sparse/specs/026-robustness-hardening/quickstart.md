@@ -32,7 +32,7 @@ src/testing/
 ├── perturbations.rs   # cause_delays, make_singular, make_dblk_singular
 └── strategies.rs      # proptest Strategy impls for matrix generation
 
-docs/
+dev/
 └── spral-test-audit.md  # SPRAL test parity audit document
 ```
 

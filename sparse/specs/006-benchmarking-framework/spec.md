@@ -3,7 +3,7 @@
 **Feature Branch**: `006-benchmarking-framework`
 **Created**: 2026-02-07
 **Status**: Draft
-**Input**: User description: "implement phase 1.2 in docs/ssids-plan.md. Treat any code snippets as notional APIs that help to explain *what* not *how*"
+**Input**: User description: "implement phase 1.2 in dev/ssids-plan.md. Treat any code snippets as notional APIs that help to explain *what* not *how*"
 
 ## User Scenarios & Testing *(mandatory)*
 

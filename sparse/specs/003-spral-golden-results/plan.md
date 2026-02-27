@@ -173,8 +173,8 @@ No violations to justify. All constitution gates pass without exception.
 **Goal**: Update project documentation to reflect Phase 0.3 completion.
 
 **Steps**:
-1. Update `docs/ssids-plan.md` success criteria checkboxes for Phase 0.3
-2. Add Phase 0.3 entry to `docs/ssids-log.md`
+1. Update `dev/ssids-plan.md` success criteria checkboxes for Phase 0.3
+2. Add Phase 0.3 entry to `dev/ssids-log.md`
 3. Update `CLAUDE.md` with new test infrastructure details
 4. Update `metadata.json` `reference_results` fields for matrices that now have SPRAL results
 
