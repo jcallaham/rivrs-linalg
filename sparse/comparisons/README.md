@@ -11,7 +11,6 @@ free of build-time dependencies on external solver libraries.
 |--------|---------|--------|--------|
 | SPRAL SSIDS | BSD-3 | `drivers/spral_benchmark.f90` | Working |
 | MUMPS | Public domain | `drivers/mumps_benchmark.f90` | Working |
-| HSL MA27 | Academic/Commercial | `drivers/ma27_benchmark.f90` | Working (requires user-provided source) |
 
 ## Directory Structure
 
@@ -21,19 +20,16 @@ comparisons/
 ├── drivers/                           # Fortran/C driver source and build scripts
 │   ├── build_spral.sh                 # Builds libspral.a from SPRAL source
 │   ├── build_mumps.sh                 # Builds MUMPS driver (requires libmumps-seq-dev)
-│   ├── build_ma27.sh                  # Builds MA27 driver (requires user-provided source)
 │   ├── build_spral_dense_factor.sh    # Builds dense factor comparison driver
 │   ├── spral_benchmark.f90            # SPRAL SSIDS benchmark driver (subprocess)
 │   ├── mumps_benchmark.f90            # MUMPS benchmark driver (subprocess)
-│   ├── ma27_benchmark.f90             # MA27 benchmark driver (subprocess)
 │   ├── spral_full_solve.f90           # SPRAL full solve driver
 │   ├── spral_match_order.f90          # SPRAL ordering comparison driver
 │   └── spral_dense_factor.cpp         # SPRAL dense APTP comparison
 └── src/
     ├── common.rs                      # Shared types, subprocess protocol, formatters
     ├── spral_benchmark.rs             # SPRAL orchestration binary
-    ├── mumps_benchmark.rs             # MUMPS orchestration binary
-    └── ma27_benchmark.rs              # MA27 orchestration binary
+    └── mumps_benchmark.rs             # MUMPS orchestration binary
 ```
 
 ## Prerequisites
@@ -72,27 +68,6 @@ This produces `/tmp/mumps_benchmark`.
 
 **Ordering**: MUMPS auto-selects its ordering by default (ICNTL(7)=7). Override
 via the `MUMPS_ORDERING` environment variable: `auto`, `metis`, `amd`, `scotch`, `pord`.
-
-### MA27
-
-MA27 source is **not redistributable**. It must be obtained from HSL:
-
-1. Visit https://www.hsl.rl.ac.uk/catalogue/ma27.html
-2. Register for a free academic license (or purchase commercial)
-3. Download the source package
-4. Extract to `/opt/hsl/ma27/` (or set `MA27_SRC` env var)
-
-5. Build the MA27 driver:
-
-```sh
-MA27_SRC=/path/to/ma27 comparisons/drivers/build_ma27.sh
-```
-
-This produces `/tmp/ma27_benchmark`.
-
-**Ordering note**: MA27 uses its own built-in minimum degree ordering — it does
-not accept external orderings (unlike SPRAL/rivrs which use METIS). Timing
-comparisons should note this difference.
 
 ### METIS
 
@@ -146,22 +121,6 @@ cargo run --bin mumps-comparison --release -- --ci-only \
 
 JSON output: `target/benchmarks/mumps/`
 
-### MA27 Benchmark Suite
-
-```sh
-# MA27-only on CI subset
-cargo run --bin ma27-comparison --release -- --ci-only
-
-# Side-by-side with rivrs
-cargo run --bin ma27-comparison --release -- --ci-only --rivrs
-
-# Compare against a previously collected rivrs baseline
-cargo run --bin ma27-comparison --release -- --ci-only \
-  --compare target/benchmarks/baselines/baseline-latest.json
-```
-
-JSON output: `target/benchmarks/ma27/`
-
 ### Common CLI Options
 
 All comparison binaries support:
@@ -192,6 +151,8 @@ to add new solvers without modifying the Rust crate itself.
 ### Matrix Input Formats
 
 - **CSC** (SPRAL): `n nnz` header, then column pointers (1-indexed), then `row val` pairs
-- **COO** (MUMPS, MA27): `n nnz` header, then `row col val` lines (1-indexed, lower triangle)
+- **COO** (MUMPS): `n nnz` header, then `row col val` lines (1-indexed, lower triangle)
 
 Use `common::format_spral_input()` or `common::format_lower_coo_text()` from the Rust side.
+
+## Results

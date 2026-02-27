@@ -94,7 +94,7 @@ cargo run --example baseline_collection --features diagnostic --release -- --ci-
 ## External Solver Comparisons
 
 The `comparisons/` directory contains tools for benchmarking against reference
-solvers (SPRAL, with MUMPS and HSL MA27 planned). See
+solvers (SPRAL and MUMPS). See
 [`comparisons/README.md`](comparisons/README.md) for build instructions.
 
 ```bash

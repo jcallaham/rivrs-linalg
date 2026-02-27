@@ -81,7 +81,7 @@ pub fn format_spral_input(matrix: &SparseColMat<usize, f64>) -> String {
     out
 }
 
-/// Format lower-triangle as COO text for MUMPS/MA27 drivers.
+/// Format lower-triangle as COO text for MUMPS drivers.
 /// Format: `n nnz\n` then `row col val\n` lines (1-indexed).
 pub fn format_lower_coo_text(matrix: &SparseColMat<usize, f64>) -> String {
     let n = matrix.nrows();

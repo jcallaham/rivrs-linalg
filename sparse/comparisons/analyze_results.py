@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Analyze solver benchmark results from JSON benchmark files.
 
-Supports SPRAL, MUMPS, MA27 comparison JSON files (from the corresponding
+Supports SPRAL, MUMPS comparison JSON files (from the corresponding
 ``cargo run --bin *-comparison`` binaries) and rivrs baseline JSON files
 (from ``cargo run --example baseline_collection``).
 
@@ -12,9 +12,6 @@ Usage:
     # MUMPS standalone (absolute timings, no rivrs ratios):
     python comparisons/analyze_results.py target/benchmarks/mumps/mumps-benchmark-*.json
 
-    # MA27 standalone:
-    python comparisons/analyze_results.py target/benchmarks/ma27/ma27-benchmark-*.json
-
     # MUMPS vs rivrs (join with baseline to compute ratios):
     python comparisons/analyze_results.py target/benchmarks/mumps/*.json \\
         --baseline target/benchmarks/baselines/baseline-1771946638.json
@@ -22,8 +19,7 @@ Usage:
     # Multi-solver side-by-side:
     python comparisons/analyze_results.py \\
         target/benchmarks/spral/spral-benchmark-1772124268.json \\
-        target/benchmarks/mumps/mumps-benchmark-1772176331.json \\
-        target/benchmarks/ma27/ma27-benchmark-1772158310.json
+        target/benchmarks/mumps/mumps-benchmark-1772176331.json
 
     # Auto-discover latest results from all solver directories:
     python comparisons/analyze_results.py
@@ -140,11 +136,11 @@ DOMAIN_DESCRIPTIONS = {
 # JSON format detection and loading
 # ---------------------------------------------------------------------------
 def detect_solver_type(data: dict) -> str:
-    """Detect JSON type: 'spral', 'mumps', 'ma27', or 'baseline'."""
+    """Detect JSON type: 'spral', 'mumps', or 'baseline'."""
     if "baselines" in data:
         return "baseline"
     if "solver_name" in data:
-        return data["solver_name"].lower()  # "mumps" or "ma27"
+        return data["solver_name"].lower()  # "mumps"
     if "spral_version" in data or "omp_num_threads" in data:
         return "spral"
     return "unknown"
@@ -203,7 +199,7 @@ def load_spral_json(path: Path) -> pd.DataFrame:
 
 
 def load_generic_json(path: Path) -> pd.DataFrame:
-    """Load a MUMPS or MA27 benchmark JSON file into a normalized DataFrame.
+    """Load a MUMPS benchmark JSON file into a normalized DataFrame.
 
     Handles the common BenchmarkSuite schema (solver_name, solver field).
     Gracefully skips entries where solver is null (e.g. MUMPS failing on
@@ -317,7 +313,7 @@ def load_any_json(path: Path) -> tuple[str, pd.DataFrame]:
     solver_type = detect_solver_type(data)
     if solver_type == "spral":
         return solver_type, load_spral_json(path)
-    elif solver_type in ("mumps", "ma27"):
+    elif solver_type == "mumps":
         return solver_type, load_generic_json(path)
     elif solver_type == "baseline":
         return solver_type, load_baseline_json(path)
@@ -344,7 +340,7 @@ def find_benchmark_root() -> Path:
 def find_default_files() -> list[Path]:
     """Find the newest benchmark file from each solver directory.
 
-    Scans spral/, mumps/, ma27/ subdirectories under target/benchmarks/
+    Scans spral/, mumps/ subdirectories under target/benchmarks/
     and returns the newest file from each.
     """
     root = find_benchmark_root()
@@ -352,7 +348,7 @@ def find_default_files() -> list[Path]:
         return []
 
     found = []
-    for solver_dir in ["spral", "mumps", "ma27"]:
+    for solver_dir in ["spral", "mumps"]:
         d = root / solver_dir
         if not d.is_dir():
             continue
@@ -373,7 +369,7 @@ def load_inputs(paths: list[Path], baseline_path: Path | None = None) -> dict[st
     are 'T{threads}' for backward compatibility with parallel scaling.
 
     For multi-solver mode (files from different solvers), keys are
-    solver names like 'SPRAL', 'MUMPS', 'MA27'.
+    solver names like 'SPRAL', 'MUMPS'.
 
     If baseline_path is provided, rivrs timing data from the baseline is
     joined into solver DataFrames that lack rivrs results.
@@ -863,7 +859,7 @@ def multi_solver_table(dfs: dict[str, pd.DataFrame]) -> str:
 # ---------------------------------------------------------------------------
 def main():
     parser = argparse.ArgumentParser(
-        description="Analyze solver benchmark JSON results (SPRAL, MUMPS, MA27, rivrs baselines).",
+        description="Analyze solver benchmark JSON results (SPRAL, MUMPS, rivrs baselines).",
         epilog=(
             "If no files are given, auto-discovers the newest file from each solver directory.\n\n"
             "Examples:\n"
@@ -877,8 +873,7 @@ def main():
             "  # Multi-solver side-by-side:\n"
             "  python comparisons/analyze_results.py \\\n"
             "      target/benchmarks/spral/spral-benchmark-1772124268.json \\\n"
-            "      target/benchmarks/mumps/mumps-benchmark-1772176331.json \\\n"
-            "      target/benchmarks/ma27/ma27-benchmark-1772158310.json"
+            "      target/benchmarks/mumps/mumps-benchmark-1772176331.json"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -886,13 +881,13 @@ def main():
         "files",
         nargs="*",
         type=Path,
-        help="One or more benchmark JSON files (SPRAL, MUMPS, MA27, or baseline)",
+        help="One or more benchmark JSON files (SPRAL, MUMPS, or baseline)",
     )
     parser.add_argument(
         "--baseline",
         type=Path,
         default=None,
-        help="Rivrs baseline JSON file for computing ratios with MUMPS/MA27",
+        help="Rivrs baseline JSON file for computing ratios with MUMPS",
     )
     args = parser.parse_args()
 

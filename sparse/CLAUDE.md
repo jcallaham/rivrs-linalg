@@ -126,18 +126,15 @@ comparisons/
 │   ├── build_spral.sh      # Builds SPRAL library from source
 │   ├── build_spral.sh      # Builds SPRAL library from source
 │   ├── build_mumps.sh      # Builds MUMPS driver (requires libmumps-seq-dev)
-│   ├── build_ma27.sh       # Builds MA27 driver (requires user-provided HSL source)
 │   ├── spral_benchmark.f90 # SPRAL SSIDS benchmark driver (subprocess)
 │   ├── mumps_benchmark.f90 # MUMPS benchmark driver (subprocess)
-│   ├── ma27_benchmark.f90  # MA27 benchmark driver (subprocess)
 │   ├── spral_full_solve.f90
 │   ├── spral_match_order.f90
 │   └── ...
 └── src/
     ├── common.rs            # Shared types, subprocess protocol, formatters
     ├── spral_benchmark.rs   # Rust orchestration binary (cargo run --bin spral-comparison)
-    ├── mumps_benchmark.rs   # MUMPS orchestration binary (cargo run --bin mumps-comparison)
-    └── ma27_benchmark.rs    # MA27 orchestration binary (cargo run --bin ma27-comparison)
+    └── mumps_benchmark.rs   # MUMPS orchestration binary (cargo run --bin mumps-comparison)
 ```
 
 ## Commands Reference
@@ -252,14 +249,6 @@ cargo run --bin mumps-comparison --release -- --ci-only
 # Side-by-side rivrs vs MUMPS
 cargo run --bin mumps-comparison --release -- --ci-only --rivrs
 
-# Build MA27 driver (requires user-provided HSL source)
-MA27_SRC=/opt/hsl/ma27 comparisons/drivers/build_ma27.sh
-
-# MA27-only on CI subset
-cargo run --bin ma27-comparison --release -- --ci-only
-
-# Side-by-side rivrs vs MA27
-cargo run --bin ma27-comparison --release -- --ci-only --rivrs
 ```
 
 ### CI (GitHub Actions)
