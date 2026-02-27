@@ -1,6 +1,7 @@
 [package]
 name = "rivrs-sparse"
 version = "0.1.0"
+authors = ["Jared Callaham"]
 edition = "2024"
 rust-version = "1.87"
 description = "Sparse linear algebra solvers for the Rivrs symbolic-numeric framework"
@@ -9,12 +10,10 @@ categories = ["science", "mathematics"]
 keywords = ["linear-algebra", "sparse-solver", "numerical-computing", "rust"]
 repository = "https://github.com/jcallaham/rivrs-linalg"
 readme = "README.md"
+exclude = ["comparisons/"]
 
 [dependencies]
 faer = "0.22"
-# serde/serde_json are prod dependencies because the io module (public API) uses
-# them for matrix metadata and reference factorization loading. They will also be
-# needed for solver configuration serialization in later phases.
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 metis-sys = "0.3"
