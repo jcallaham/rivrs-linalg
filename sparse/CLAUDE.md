@@ -8,7 +8,7 @@ This directory contains sparse linear algebra solver implementations for rivrs-l
 
 **Parent Project**: rivrs-linalg - Numerical Linear Algebra for Rivrs
 **Domain**: Sparse direct solvers (SSIDS, LDL^T factorization, APTP pivoting)
-**Current Status**: Phase 9.1g complete — column-oriented extend-add scatter + sub-phase instrumentation. Rewrote `extend_add_mapped` and `extend_add` to column-oriented iteration (à la SPRAL `asm_col`): contiguous source reads via `col_as_slice`, 4× unrolled inner loop, `ea_scatter_one` helper. c-71: 2.16×→1.49× SPRAL, c-big: 2.30×→1.37×, dTLB misses 608M→31M (20× reduction), 41/65 beat SPRAL. Added `g2l_reset_time` diagnostic instrumentation — revealed zeroing (8.8%) as biggest remaining non-compute overhead; per-node storage addressable budget ~9% (diminishing returns). 65/65 SuiteSparse pass.
+**Current Status**: Phase 9.3c complete — release documentation and packaging. README with performance benchmarks and "when to use" guidance, lib.rs + solver.rs rustdoc polish, two new user-facing examples (multiple_rhs, refactorization), examples README reorganization, CHANGELOG.md for 0.1.0. Median 0.94x SPRAL sequential, 0.89x at 8 threads, ~2x faster than MUMPS. 65/65 SuiteSparse pass, backward error < 5e-11, 546 tests + 23 ignored.
 
 ### Development docs
 
@@ -450,8 +450,12 @@ unit tests of the symbolic analysis and factorization kernel on small matrices.
 
 - Phase 9.2: Robustness — Testing & Hardening — SPRAL test parity audit (41 APP + 25 TPP scenarios mapped, 0 gaps remaining), SPRAL-style torture tests (9 configs × 500 = 4500 factorizations, zero panics, BE < 5e-11), proptest property-based tests (7 properties × 256 cases), adversarial edge-case tests (14 tests: 0×0, NaN, Inf, near-overflow, disconnected, etc., zero panics). No defensive guards needed — solver already handles all edge cases. Test count: 546 pass + 23 ignored. Files: `src/testing/perturbations.rs`, `src/testing/strategies.rs`, `src/symmetric/factor.rs` (torture+property tests), `tests/property.rs`, `tests/adversarial.rs`, `docs/spral-test-audit.md`.
 
+- Phase 9.3a: Module restructure — Reorganized source into `symmetric/`, `ordering/`, `io/`, `profiling/`, `debug/`, `benchmarking/`, `testing/` modules. Moved files without changing public API. 65/65 SuiteSparse pass.
+- Phase 9.3b: Benchmarking and performance comparisons — SPRAL + MUMPS comparison infrastructure, 65-matrix benchmark results. Median 0.94x SPRAL sequential, 0.89x at 8 threads, ~2x faster than MUMPS.
+- Phase 9.3c: Release documentation and packaging — README performance section, lib.rs + solver.rs rustdoc polish, two new user-facing examples (multiple_rhs, refactorization), examples README reorganization, CHANGELOG.md for 0.1.0.
+
 **Next:**
-- Phase 9.3: Release preparation (docs, examples, crates.io)
+- Publish to crates.io
 
 ## Recent Changes
 - 027-module-restructure: Added Rust 1.87+ (edition 2024) + faer 0.22, metis-sys 0.3, rayon, serde (unchanged)

@@ -3005,11 +3005,11 @@ SPRAL that deterministic tests missed.
 - Final SPRAL benchmark comparison report (updated after Phase 9.1 optimizations)
 
 **Success Criteria:**
-- [ ] README and user guide complete
-- [ ] All examples compile and run correctly
-- [ ] Rustdoc examples on public types and methods
+- [X] README and user guide complete (Performance, "When to Use", API sections)
+- [X] All examples compile and run correctly (basic_usage, multiple_rhs, refactorization + 4 diagnostic tools)
+- [X] Rustdoc examples on public types and methods (`#![warn(missing_docs)]` passes, Parallelism/Performance sections)
 - [ ] Published on crates.io
-- [ ] Contributing guide and issue templates in place
+- [ ] Contributing guide and issue templates in place (deferred — user will handle separately)
 
 **Time Estimate:** 1-2 weeks
 
@@ -3062,29 +3062,29 @@ Publish to crates.io.
 ## Success Metrics (Overall Project)
 
 ### Numerical Quality
-- [ ] 65/65 SuiteSparse matrices solve successfully
-- [ ] All backward errors < 5e-11 (SPRAL's threshold)
-- [ ] Inertia computation accurate
-- [ ] Stable on hard indefinite problems (bratu3d, cvxqp, ncvxqp families)
+- [X] 65/65 SuiteSparse matrices solve successfully
+- [X] All backward errors < 5e-11 (SPRAL's threshold)
+- [X] Inertia computation accurate
+- [X] Stable on hard indefinite problems (bratu3d, cvxqp, ncvxqp families)
 
 ### Performance
-- [ ] Sequential median ≤ 1.0× SPRAL (stretch: < 0.9×)
-- [ ] No outliers > 2× SPRAL
-- [ ] Parallel speedup on factorization (measured on 4+ cores)
-- [ ] Memory allocation profiled and optimized
+- [X] Sequential median ≤ 1.0× SPRAL (stretch: < 0.9×) — median 0.94x
+- [X] No outliers > 2× SPRAL — worst case 1.92x (mario001)
+- [X] Parallel speedup on factorization (measured on 4+ cores) — median 0.89x at 8 threads
+- [X] Memory allocation profiled and optimized — Phase 9.1b-9.1g
 
 ### Code Quality
-- [ ] SPRAL test parity audit complete
-- [ ] Torture tests: 500+ random instances, no panics
-- [ ] Property-based tests on random matrices
-- [ ] No clippy warnings
-- [ ] Comprehensive documentation
+- [X] SPRAL test parity audit complete — 41 APP + 25 TPP scenarios, 0 gaps
+- [X] Torture tests: 500+ random instances, no panics — 4500 factorizations
+- [X] Property-based tests on random matrices — 7 properties x 256 cases
+- [X] No clippy warnings
+- [X] Comprehensive documentation
 
 ### Ecosystem Integration
-- [ ] Transparent composition with faer types
+- [X] Transparent composition with faer types
 - [ ] Published on crates.io
-- [ ] CI passing on Linux/macOS
-- [ ] Ready for community contributions
+- [X] CI passing on Linux/macOS
+- [ ] Ready for community contributions (contributing guide deferred)
 
 ---
 

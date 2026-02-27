@@ -12,6 +12,25 @@ Sparse Symmetric Indefinite Direct Solver (SSIDS) for Rust, inspired by [SPRAL](
 - Parallel factorization & solve via rayon (tree-level) and faer `Par` (intra-node BLAS)
 - Three-phase API: analyze → factor → solve (symbolic reuse across re-factorizations)
 
+## Performance
+
+Benchmarked on 65 SuiteSparse matrices (factorization time, backward error < 5e-11 on all):
+
+| Configuration | vs SPRAL | vs MUMPS |
+|---------------|----------|----------|
+| Sequential (1 thread) | median 0.94x (36% faster, 38% comparable, 24% slower) | median 0.46x (~2x faster) |
+| Parallel (8 threads) | median 0.89x (53% faster, 23% comparable, 23% slower) | — |
+
+See [`comparisons/README.md`](comparisons/README.md) for full results per matrix.
+
+## When to Use This
+
+rivrs-sparse targets **symmetric indefinite** systems — KKT matrices, saddle-point
+problems, and optimization formulations where the diagonal has negative or zero entries.
+Compared to faer's built-in sparse LDL^T, it handles hard-indefinite matrices via APTP
+pivoting and MC64 matching/scaling. Compared to SPRAL and MUMPS, it is native Rust,
+100% safe code, and competitive on sequential and parallel performance.
+
 ## API
 
 ```rust
@@ -77,6 +96,12 @@ See [`examples/README.md`](examples/README.md) for full documentation.
 ```bash
 # Self-contained hello world (no external data needed)
 cargo run --example basic_usage
+
+# Multiple right-hand sides with workspace reuse
+cargo run --example multiple_rhs
+
+# Refactorization: same sparsity, different values
+cargo run --example refactorization
 
 # End-to-end solve timing on CI SuiteSparse matrices
 cargo run --example solve_timing --release

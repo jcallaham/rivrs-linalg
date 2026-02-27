@@ -1,5 +1,50 @@
 # SSIDS Development Log
 
+## Phase 9.3c: Release Documentation and Packaging
+
+**Status**: Complete
+**Branch**: `ssids-performance-comparisons`
+**Date**: 2026-02-27
+
+### What Was Built
+
+Release documentation, new user-facing examples, and packaging finalization.
+
+**README enhancements** (`README.md`)
+- Added Performance section with headline benchmark numbers (vs SPRAL and MUMPS)
+- Added "When to Use This" blurb (target use cases, comparison with alternatives)
+- Updated examples listing to include new examples
+
+**Rustdoc polish** (`src/lib.rs`, `src/symmetric/solver.rs`)
+- Fixed future tense ("will provide" -> "provides")
+- Added Parallelism section with `Par::Seq` vs `Par::rayon` guidance
+- Added Performance section with tuning note
+- Enhanced doc comments on 6 solver methods: `solve_full`, `solve_scratch`,
+  `refactor`, `inertia`, `stats`, `per_supernode_stats`
+
+**New user-facing examples**
+- `examples/multiple_rhs.rs` — workspace reuse pattern for multiple RHS
+- `examples/refactorization.rs` — symbolic reuse across parametric refactorizations
+
+**Examples README reorganization** (`examples/README.md`)
+- Split into "User Examples" (no setup) and "Diagnostic Tools" (need test data)
+
+**Packaging** (`CHANGELOG.md`, `Cargo.toml`)
+- Created CHANGELOG.md with 0.1.0 entry listing features, performance, correctness
+
+### Files Changed
+
+- `README.md` — Performance, "When to Use", updated examples listing
+- `src/lib.rs` — Tense fix, Parallelism + Performance sections, example listing
+- `src/symmetric/solver.rs` — Enhanced doc comments on 6 methods
+- `examples/multiple_rhs.rs` — New
+- `examples/refactorization.rs` — New
+- `examples/README.md` — Reorganized into user/diagnostic sections
+- `CHANGELOG.md` — New
+- `docs/ssids-log.md` — This entry
+- `docs/ssids-plan.md` — Phase 9.3 criteria marked
+- `CLAUDE.md` — Updated status
+
 ## Phase 9.3b: Benchmarking and Performance Comparisons
 
 **Status**: Complete
