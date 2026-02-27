@@ -12,11 +12,11 @@ This directory contains sparse linear algebra solver implementations for rivrs-l
 
 ### Development docs
 
-- `dev/ssids-plan.md` — **Living document** describing the overall development plan. Update when the plan itself changes (new decisions, scope adjustments), not for arbitrary progress tracking.
-- `dev/ssids-log.md` — Changelog for development updates, organized by phase. Records what was built, changed, fixed, and why.
-- `dev/phase-8.1g-report.md` — Performance analysis report with workload distribution and Phase 8.2 parallelism recommendations.
-- `dev/phase9/phase-9.1c-profiling-report.md` — Sub-phase profiling + perf stat analysis identifying contribution block allocation as dominant bottleneck.
-- `dev/phase9/phase-9.1d-contrib-architecture-review.md` — Architecture review comparing pool-based reuse (abandoned) vs SPRAL's zero-copy design. Recommends direct GEMM into contribution buffer.
+- `docs/ssids-plan.md` — **Living document** describing the overall development plan. Update when the plan itself changes (new decisions, scope adjustments), not for arbitrary progress tracking.
+- `docs/ssids-log.md` — Changelog for development updates, organized by phase. Records what was built, changed, fixed, and why.
+- `docs/phase-8.1g-report.md` — Performance analysis report with workload distribution and Phase 8.2 parallelism recommendations.
+- `docs/phase9/phase-9.1c-profiling-report.md` — Sub-phase profiling + perf stat analysis identifying contribution block allocation as dominant bottleneck.
+- `docs/phase9/phase-9.1d-contrib-architecture-review.md` — Architecture review comparing pool-based reuse (abandoned) vs SPRAL's zero-copy design. Recommends direct GEMM into contribution buffer.
 
 ## Licensing Strategy - Clean Room Implementation
 
@@ -448,7 +448,7 @@ unit tests of the symbolic analysis and factorization kernel on small matrices.
 - Phase 9.1f: Small leaf subtree fast path — Classify leaf subtrees where all fronts < 256, factor via pre-pass with dedicated small workspace (≤512KB). `classify_small_leaf_subtrees()` + pre-pass in `factor_tree_levelset()`. `FactorOptions::small_leaf_threshold` (default 256, 0 = disabled). 12 new tests. Files: `src/symmetric/numeric.rs` (classification, pre-pass), `src/symmetric/solver.rs` (threshold config), `src/symmetric/factor.rs` (AptpOptions field).
 - Phase 9.1g: Column-oriented extend-add scatter — Rewrote `extend_add_mapped` and `extend_add` to column-oriented iteration (à la SPRAL `asm_col`). Contiguous source reads via `col_as_slice`, 4× unrolled inner loop, `ea_scatter_one` helper. Added `g2l_reset_time` diagnostic. c-71: 2.16×→1.49× SPRAL, c-big: 2.30×→1.37×, dTLB 608M→31M. Instrumentation showed zeroing (8.8%) as biggest remaining non-compute overhead; per-node storage total addressable budget ~9%. 2 new tests + g2l_reset instrumentation. Files: `src/symmetric/numeric.rs`, `examples/profile_matrix.rs`, `examples/baseline_collection.rs`.
 
-- Phase 9.2: Robustness — Testing & Hardening — SPRAL test parity audit (41 APP + 25 TPP scenarios mapped, 0 gaps remaining), SPRAL-style torture tests (9 configs × 500 = 4500 factorizations, zero panics, BE < 5e-11), proptest property-based tests (7 properties × 256 cases), adversarial edge-case tests (14 tests: 0×0, NaN, Inf, near-overflow, disconnected, etc., zero panics). No defensive guards needed — solver already handles all edge cases. Test count: 546 pass + 23 ignored. Files: `src/testing/perturbations.rs`, `src/testing/strategies.rs`, `src/symmetric/factor.rs` (torture+property tests), `tests/property.rs`, `tests/adversarial.rs`, `dev/spral-test-audit.md`.
+- Phase 9.2: Robustness — Testing & Hardening — SPRAL test parity audit (41 APP + 25 TPP scenarios mapped, 0 gaps remaining), SPRAL-style torture tests (9 configs × 500 = 4500 factorizations, zero panics, BE < 5e-11), proptest property-based tests (7 properties × 256 cases), adversarial edge-case tests (14 tests: 0×0, NaN, Inf, near-overflow, disconnected, etc., zero panics). No defensive guards needed — solver already handles all edge cases. Test count: 546 pass + 23 ignored. Files: `src/testing/perturbations.rs`, `src/testing/strategies.rs`, `src/symmetric/factor.rs` (torture+property tests), `tests/property.rs`, `tests/adversarial.rs`, `docs/spral-test-audit.md`.
 
 - Phase 9.3a: Module restructure — Reorganized source into `symmetric/`, `ordering/`, `io/`, `profiling/`, `debug/`, `benchmarking/`, `testing/` modules. Moved files without changing public API. 65/65 SuiteSparse pass.
 - Phase 9.3b: Benchmarking and performance comparisons — SPRAL + MUMPS comparison infrastructure, 65-matrix benchmark results. Median 0.94x SPRAL sequential, 0.89x at 8 threads, ~2x faster than MUMPS.
