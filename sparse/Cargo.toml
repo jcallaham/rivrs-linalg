@@ -4,7 +4,7 @@ version = "0.1.0"
 authors = ["Jared Callaham"]
 edition = "2024"
 rust-version = "1.87"
-description = "Sparse linear algebra solvers for the Rivrs symbolic-numeric framework"
+description = "Sparse linear algebra solvers"
 license = "Apache-2.0"
 categories = ["science", "mathematics"]
 keywords = ["linear-algebra", "sparse-solver", "numerical-computing", "rust"]
@@ -20,7 +20,7 @@ metis-sys = "0.3"
 rayon = "1"
 proptest = { version = "1.4", optional = true }
 rand = { version = "0.8", optional = true }
-rand_distr = { version = "0.4", optional = true }
+rand_distr = { version = "0.6", optional = true }
 
 [features]
 test-util = ["rand", "rand_distr", "proptest"]
@@ -29,8 +29,8 @@ diagnostic = []
 [dev-dependencies]
 approx = "0.5"
 criterion = "0.5"
-rand = "0.8"
-rand_distr = "0.4"
+rand = "0.10"
+rand_distr = "0.6"
 tempfile = "3"
 # Self-referential dev-dependency to enable the test-util feature in tests and
 # benchmarks. This is a standard Cargo pattern for activating optional features
