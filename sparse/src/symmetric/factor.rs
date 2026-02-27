@@ -6033,7 +6033,7 @@ mod tests {
 
         let n = 256;
         let mut rng = StdRng::seed_from_u64(42);
-        let dist = Uniform::new(-1.0f64, 1.0);
+        let dist = Uniform::new(-1.0f64, 1.0).unwrap();
 
         let mut a = Mat::zeros(n, n);
         for i in 0..n {
@@ -6546,7 +6546,7 @@ mod tests {
         let m = 64;
         let k = 32;
         let mut rng = StdRng::seed_from_u64(99);
-        let dist = Uniform::new(-1.0f64, 1.0);
+        let dist = Uniform::new(-1.0f64, 1.0).unwrap();
 
         let mut a = Mat::zeros(m, k);
         // Fill FS block (k×k lower triangle) as symmetric indefinite
@@ -6854,7 +6854,7 @@ mod tests {
     // - SPRAL tests/ssids/kernels/ldlt_tpp.cxx (BSD-3): TPP torture test pattern
 
     use crate::testing::perturbations::TortureTestConfig;
-    use rand::Rng;
+    use rand::RngExt;
     use rand::SeedableRng;
     use rand::rngs::StdRng;
 
@@ -6875,17 +6875,17 @@ mod tests {
             let mut a = perturbations::generate_dense_symmetric_indefinite(m, &mut rng);
 
             // Apply probabilistic perturbation (70/20/10 split)
-            let roll: f64 = rng.r#gen::<f64>();
+            let roll: f64 = rng.random::<f64>();
             let is_singular;
             if roll < config.delay_probability {
                 perturbations::cause_delays(&mut a, options.inner_block_size, &mut rng);
                 is_singular = false;
             } else if roll < config.delay_probability + config.singular_probability {
                 if m >= 2 {
-                    let col1 = Rng::gen_range(&mut rng, 0..m);
-                    let mut col2 = Rng::gen_range(&mut rng, 0..m);
+                    let col1 = RngExt::random_range(&mut rng, 0..m);
+                    let mut col2 = RngExt::random_range(&mut rng, 0..m);
                     while col2 == col1 {
-                        col2 = Rng::gen_range(&mut rng, 0..m);
+                        col2 = RngExt::random_range(&mut rng, 0..m);
                     }
                     perturbations::make_singular(&mut a, col1, col2);
                 }
@@ -6893,7 +6893,7 @@ mod tests {
             } else {
                 if m >= options.inner_block_size && options.inner_block_size >= 2 {
                     let max_start = m - options.inner_block_size;
-                    let block_row = Rng::gen_range(&mut rng, 0..=max_start);
+                    let block_row = RngExt::random_range(&mut rng, 0..=max_start);
                     perturbations::make_dblk_singular(&mut a, block_row, options.inner_block_size);
                 }
                 is_singular = true;
@@ -6975,17 +6975,17 @@ mod tests {
             let mut a = perturbations::generate_dense_symmetric_indefinite(m, &mut rng);
 
             // TPP perturbation: 70% delays, 30% singular (no dblk_singular)
-            let roll: f64 = rng.r#gen::<f64>();
+            let roll: f64 = rng.random::<f64>();
             let is_singular;
             if roll < config.delay_probability {
                 perturbations::cause_delays(&mut a, options.inner_block_size, &mut rng);
                 is_singular = false;
             } else {
                 if m >= 2 {
-                    let col1 = Rng::gen_range(&mut rng, 0..m);
-                    let mut col2 = Rng::gen_range(&mut rng, 0..m);
+                    let col1 = RngExt::random_range(&mut rng, 0..m);
+                    let mut col2 = RngExt::random_range(&mut rng, 0..m);
                     while col2 == col1 {
-                        col2 = Rng::gen_range(&mut rng, 0..m);
+                        col2 = RngExt::random_range(&mut rng, 0..m);
                     }
                     perturbations::make_singular(&mut a, col1, col2);
                 }

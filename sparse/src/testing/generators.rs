@@ -2,7 +2,7 @@
 
 use faer::sparse::SparseColMat;
 use faer::sparse::Triplet;
-use rand::Rng;
+use rand::{Rng, RngExt};
 use rand_distr::{Distribution, Uniform};
 
 use crate::error::SparseError;
@@ -27,7 +27,7 @@ fn add_diagonal(
     let n = row_abs_sum.len();
     let half = n / 2;
     for (i, &abs_sum) in row_abs_sum.iter().enumerate() {
-        let margin = 1.0 + rng.r#gen::<f64>();
+        let margin = 1.0 + rng.random::<f64>();
         if positive_definite || i < half {
             triplets.push(Triplet::new(i, i, abs_sum + margin));
         } else {
@@ -72,8 +72,8 @@ pub fn generate_random_symmetric(
     let max_offdiag_pairs = n * (n - 1) / 2;
     let actual_pairs = target_offdiag_pairs.min(max_offdiag_pairs);
 
-    let val_dist = Uniform::new(-1.0, 1.0);
-    let idx_dist = Uniform::new(0, n);
+    let val_dist = Uniform::new(-1.0, 1.0).unwrap();
+    let idx_dist = Uniform::new(0, n).unwrap();
 
     let mut triplets: Vec<Triplet<usize, usize, f64>> = Vec::new();
     let mut placed = std::collections::HashSet::new();
@@ -128,7 +128,7 @@ pub fn generate_arrow(
     validate_size(size, positive_definite)?;
 
     let n = size;
-    let val_dist = Uniform::new(0.1f64, 1.0);
+    let val_dist = Uniform::new(0.1f64, 1.0).unwrap();
     let mut triplets: Vec<Triplet<usize, usize, f64>> = Vec::new();
     let mut row_abs_sum = vec![0.0f64; n];
 
@@ -162,7 +162,7 @@ pub fn generate_tridiagonal(
     validate_size(size, positive_definite)?;
 
     let n = size;
-    let val_dist = Uniform::new(0.1f64, 1.0);
+    let val_dist = Uniform::new(0.1f64, 1.0).unwrap();
     let mut triplets: Vec<Triplet<usize, usize, f64>> = Vec::new();
     let mut row_abs_sum = vec![0.0f64; n];
 
@@ -197,7 +197,7 @@ pub fn generate_banded(
     validate_size(size, positive_definite)?;
 
     let n = size;
-    let val_dist = Uniform::new(0.1f64, 1.0);
+    let val_dist = Uniform::new(0.1f64, 1.0).unwrap();
     let mut triplets: Vec<Triplet<usize, usize, f64>> = Vec::new();
     let mut row_abs_sum = vec![0.0f64; n];
 

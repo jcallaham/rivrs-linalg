@@ -16,4 +16,4 @@ default = ["linalg"]
 linalg = ["dep:rivrs-linalg"]
 
 [dependencies]
-rivrs-linalg = { version = "0.1.0", optional = true }
+rivrs-linalg = { path = "../rivrs-linalg", version = "0.1.0", optional = true }

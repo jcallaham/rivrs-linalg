@@ -16,4 +16,4 @@ default = ["sparse"]
 sparse = ["dep:rivrs-sparse"]
 
 [dependencies]
-rivrs-sparse = { version = "0.1.0", optional = true }
+rivrs-sparse = { path = "../../sparse", version = "0.1.0", optional = true }
