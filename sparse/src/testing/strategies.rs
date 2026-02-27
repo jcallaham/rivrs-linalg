@@ -8,8 +8,8 @@
 
 use faer::Mat;
 use faer::sparse::{SparseColMat, Triplet};
-use rand::RngExt;
 use proptest::prelude::*;
+use rand::RngExt;
 
 use super::perturbations::{generate_dense_symmetric_indefinite, generate_dense_symmetric_pd};
 
