@@ -140,11 +140,12 @@ COPY --from=references /references/ /opt/references/
 # Remove this block and the spral-builder stage above for a leaner image
 # =============================================================================
 
-# Install SPRAL runtime dependencies
+# Install SPRAL runtime dependencies + MUMPS sequential library
 RUN apt-get update && apt-get install -y \
 	libopenblas-dev \
 	libmetis-dev \
 	libhwloc-dev \
+	libmumps-seq-dev \
 	&& rm -rf /var/lib/apt/lists/*
 
 # Copy SPRAL build artifacts from spral-builder stage

@@ -50,6 +50,10 @@ required-features = ["diagnostic"]
 name = "spral-comparison"
 path = "comparisons/src/spral_benchmark.rs"
 
+[[bin]]
+name = "mumps-comparison"
+path = "comparisons/src/mumps_benchmark.rs"
+
 [[bench]]
 name = "solver_benchmarks"
 harness = false

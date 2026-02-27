@@ -124,12 +124,16 @@ comparisons/
 ├── README.md               # Build instructions and usage
 ├── drivers/                # Fortran/C driver source + build scripts for external solvers
 │   ├── build_spral.sh      # Builds SPRAL library from source
+│   ├── build_mumps.sh      # Builds MUMPS driver (requires libmumps-seq-dev)
 │   ├── spral_benchmark.f90 # SPRAL SSIDS benchmark driver (subprocess)
+│   ├── mumps_benchmark.f90 # MUMPS benchmark driver (subprocess)
 │   ├── spral_full_solve.f90
 │   ├── spral_match_order.f90
 │   └── ...
 └── src/
-    └── spral_benchmark.rs  # Rust orchestration binary (cargo run --bin spral-comparison)
+    ├── common.rs            # Shared types, subprocess protocol, formatters
+    ├── spral_benchmark.rs   # Rust orchestration binary (cargo run --bin spral-comparison)
+    └── mumps_benchmark.rs   # MUMPS orchestration binary (cargo run --bin mumps-comparison)
 ```
 
 ## Commands Reference
@@ -234,6 +238,16 @@ cargo run --bin spral-comparison --release -- --ci-only --threads 4
 
 # Compare against a previously collected rivrs baseline
 cargo run --bin spral-comparison --release -- --ci-only --compare target/benchmarks/baselines/prev.json
+
+# Build MUMPS driver (requires libmumps-seq-dev)
+comparisons/drivers/build_mumps.sh
+
+# MUMPS-only on CI subset
+cargo run --bin mumps-comparison --release -- --ci-only
+
+# Side-by-side rivrs vs MUMPS
+cargo run --bin mumps-comparison --release -- --ci-only --rivrs
+
 ```
 
 ### CI (GitHub Actions)
