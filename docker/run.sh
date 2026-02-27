@@ -57,6 +57,13 @@ else
 	# Get GitHub token from host (falls back to file-based if keyring fails)
 	GH_TOKEN=$(gh auth token 2>/dev/null || echo "")
 
+	# Cargo registry token for publishing to crates.io
+	if [ -z "${CARGO_REGISTRY_TOKEN:-}" ]; then
+		echo -e "${YELLOW}Warning: CARGO_REGISTRY_TOKEN not set — 'cargo publish' will not work${NC}"
+		echo "Set it in your shell environment before running this script."
+		echo ""
+	fi
+
 	# Run the container
 	docker run -it \
 		--name rivrs-linalg \
@@ -69,6 +76,7 @@ else
 		-v rivrs-linalg-claude-config:/home/node/.claude \
 		-e GH_TOKEN="${GH_TOKEN}" \
 		-e GITHUB_TOKEN="${GH_TOKEN}" \
+		-e CARGO_REGISTRY_TOKEN="${CARGO_REGISTRY_TOKEN:-}" \
 		-e RUSTFLAGS="-C target-cpu=native" \
 		-e CARGO_BUILD_JOBS=8 \
 		-e RUSTC_WRAPPER=sccache \

@@ -30,6 +30,7 @@ services:
       - RUSTC_WRAPPER=sccache
       - NODE_OPTIONS=--max-old-space-size=4096
       - CLAUDE_CONFIG_DIR=/home/node/.claude
+      - CARGO_REGISTRY_TOKEN=${CARGO_REGISTRY_TOKEN:-}
       - GH_TOKEN=${GH_TOKEN:-}
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
       - TERM=${TERM:-xterm-256color}
