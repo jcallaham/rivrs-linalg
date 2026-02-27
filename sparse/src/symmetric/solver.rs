@@ -4,11 +4,6 @@
 //! three-phase analyze → factor → solve pipeline. The symbolic analysis
 //! is reusable across factorizations with the same sparsity pattern.
 //!
-//! # SPRAL Equivalent
-//!
-//! Corresponds to `ssids_akeep` (symbolic) + `ssids_fkeep` (numeric)
-//! and the `ssids_analyse`, `ssids_factor`, `ssids_solve` subroutines.
-//!
 //! # References
 //!
 //! - Duff, Hogg & Lopez (2020), "A New Sparse LDL^T Solver Using A Posteriori
@@ -35,15 +30,10 @@ use crate::ordering::{match_order_metis, metis_ordering};
 /// The ordering is a user-configurable option rather than an automatic
 /// heuristic. Guidance from Duff, Hogg & Lopez (2020):
 ///
-/// - **Easy-indefinite** (structural FEM, thermal, acoustic, model reduction,
+/// - **Easy indefinite** (structural FEM, thermal, acoustic, model reduction,
 ///   quantum chemistry): use [`Metis`](Self::Metis) (the default).
-/// - **Hard-indefinite** (KKT/saddle-point, optimal control, power networks,
+/// - **Hard indefinite** (KKT/saddle-point, optimal control, power networks,
 ///   mixed FEM / Stokes): use [`MatchOrderMetis`](Self::MatchOrderMetis).
-///
-///
-/// # SPRAL Equivalent
-///
-/// `options%ordering` (1=METIS default, 2=matching+METIS).
 #[derive(Debug, Clone)]
 pub enum OrderingStrategy {
     /// AMD ordering (faer built-in).
@@ -155,15 +145,9 @@ impl Default for SolverOptions {
 
 /// High-level sparse symmetric indefinite solver.
 ///
-/// Wraps the APTP multifrontal factorization (Phases 2-6) with a
-/// three-phase API: analyze → factor → solve. The symbolic analysis
+/// Wraps the APTP multifrontal factorization with a
+/// three-stage API: analyze → factor → solve. The symbolic analysis
 /// is reusable across factorizations with the same sparsity pattern.
-///
-/// # SPRAL Equivalent
-///
-/// Corresponds to the `ssids_akeep` (symbolic) + `ssids_fkeep` (numeric)
-/// data structures and the `ssids_analyse`, `ssids_factor`, `ssids_solve`
-/// subroutines.
 ///
 /// # Examples
 ///
