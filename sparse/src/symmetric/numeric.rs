@@ -2053,98 +2053,97 @@ fn factor_tree_levelset(
         }
 
         // Factor all ready nodes (parallel if enabled and batch > 1)
-        let batch_results: Vec<SupernodeResult> =
-            if !is_parallel {
-                // Pure sequential: use the pre-allocated workspace (no pool
-                // overhead, no reallocations during postorder traversal).
-                batch_inputs
-                    .into_iter()
-                    .map(|(s, contribs)| {
-                        factor_single_supernode(
-                            s,
-                            &supernodes[s],
-                            contribs,
-                            matrix,
-                            perm_fwd,
-                            perm_inv,
-                            options,
-                            scaling,
-                            &mut seq_workspace,
-                            assembly_maps,
-                        )
-                    })
-                    .collect::<Result<_, _>>()?
-            } else if batch_inputs.len() == 1 {
-                // Parallel mode, single-node batch (near tree root): pop a
-                // workspace from the pool. Drop remaining pool workspaces to
-                // free memory before processing large supernodes.
-                let mut pool = workspace_pool.lock().unwrap();
-                let mut ws = pool.pop().unwrap_or_else(FactorizationWorkspace::empty);
-                pool.clear();
-                drop(pool);
-                ws.ensure_g2l(n);
-                let results = batch_inputs
-                    .into_iter()
-                    .map(|(s, contribs)| {
-                        factor_single_supernode(
-                            s,
-                            &supernodes[s],
-                            contribs,
-                            matrix,
-                            perm_fwd,
-                            perm_inv,
-                            options,
-                            scaling,
-                            &mut ws,
-                            assembly_maps,
-                        )
-                    })
-                    .collect::<Result<_, _>>();
-                workspace_pool.lock().unwrap().push(ws);
-                results?
-            } else {
-                // Parallel: take workspaces from the caller-owned pool so each
-                // rayon worker gets exclusive ownership during factorization.
-                // The pool is reused across level-set waves and dropped when
-                // factor_tree_levelset returns (unlike thread_local! which leaks
-                // for the lifetime of the rayon thread pool).
-                //
-                // If rayon work-steals another par_iter task onto the same thread
-                // (due to nested Par::rayon BLAS), that task takes a separate
-                // workspace from the pool — no aliasing.
-                use rayon::iter::{IntoParallelIterator, ParallelIterator};
-                batch_inputs
-                    .into_par_iter()
-                    .map(|(s, contribs)| {
-                        // Poisoned mutex means a worker panicked — already fatal.
-                        let mut ws = workspace_pool
-                            .lock()
-                            .unwrap()
-                            .pop()
-                            .unwrap_or_else(FactorizationWorkspace::empty);
-                        // Only ensure global_to_local is sized; frontal_data
-                        // grows on demand in factor_single_supernode. Avoids
-                        // eagerly allocating max_front² per thread (OOM on
-                        // large-front matrices like H2O: 9258² × 8 = 685 MB).
-                        ws.ensure_g2l(n);
-                        let result = factor_single_supernode(
-                            s,
-                            &supernodes[s],
-                            contribs,
-                            matrix,
-                            perm_fwd,
-                            perm_inv,
-                            options,
-                            scaling,
-                            &mut ws,
-                            assembly_maps,
-                        );
-                        // Poisoned mutex means a worker panicked — already fatal.
-                        workspace_pool.lock().unwrap().push(ws);
-                        result
-                    })
-                    .collect::<Result<_, _>>()?
-            };
+        let batch_results: Vec<SupernodeResult> = if !is_parallel {
+            // Pure sequential: use the pre-allocated workspace (no pool
+            // overhead, no reallocations during postorder traversal).
+            batch_inputs
+                .into_iter()
+                .map(|(s, contribs)| {
+                    factor_single_supernode(
+                        s,
+                        &supernodes[s],
+                        contribs,
+                        matrix,
+                        perm_fwd,
+                        perm_inv,
+                        options,
+                        scaling,
+                        &mut seq_workspace,
+                        assembly_maps,
+                    )
+                })
+                .collect::<Result<_, _>>()?
+        } else if batch_inputs.len() == 1 {
+            // Parallel mode, single-node batch (near tree root): pop a
+            // workspace from the pool. Drop remaining pool workspaces to
+            // free memory before processing large supernodes.
+            let mut pool = workspace_pool.lock().unwrap();
+            let mut ws = pool.pop().unwrap_or_else(FactorizationWorkspace::empty);
+            pool.clear();
+            drop(pool);
+            ws.ensure_g2l(n);
+            let results = batch_inputs
+                .into_iter()
+                .map(|(s, contribs)| {
+                    factor_single_supernode(
+                        s,
+                        &supernodes[s],
+                        contribs,
+                        matrix,
+                        perm_fwd,
+                        perm_inv,
+                        options,
+                        scaling,
+                        &mut ws,
+                        assembly_maps,
+                    )
+                })
+                .collect::<Result<_, _>>();
+            workspace_pool.lock().unwrap().push(ws);
+            results?
+        } else {
+            // Parallel: take workspaces from the caller-owned pool so each
+            // rayon worker gets exclusive ownership during factorization.
+            // The pool is reused across level-set waves and dropped when
+            // factor_tree_levelset returns (unlike thread_local! which leaks
+            // for the lifetime of the rayon thread pool).
+            //
+            // If rayon work-steals another par_iter task onto the same thread
+            // (due to nested Par::rayon BLAS), that task takes a separate
+            // workspace from the pool — no aliasing.
+            use rayon::iter::{IntoParallelIterator, ParallelIterator};
+            batch_inputs
+                .into_par_iter()
+                .map(|(s, contribs)| {
+                    // Poisoned mutex means a worker panicked — already fatal.
+                    let mut ws = workspace_pool
+                        .lock()
+                        .unwrap()
+                        .pop()
+                        .unwrap_or_else(FactorizationWorkspace::empty);
+                    // Only ensure global_to_local is sized; frontal_data
+                    // grows on demand in factor_single_supernode. Avoids
+                    // eagerly allocating max_front² per thread (OOM on
+                    // large-front matrices like H2O: 9258² × 8 = 685 MB).
+                    ws.ensure_g2l(n);
+                    let result = factor_single_supernode(
+                        s,
+                        &supernodes[s],
+                        contribs,
+                        matrix,
+                        perm_fwd,
+                        perm_inv,
+                        options,
+                        scaling,
+                        &mut ws,
+                        assembly_maps,
+                    );
+                    // Poisoned mutex means a worker panicked — already fatal.
+                    workspace_pool.lock().unwrap().push(ws);
+                    result
+                })
+                .collect::<Result<_, _>>()?
+        };
 
         // Store results and determine next ready set
         let mut next_ready = Vec::new();

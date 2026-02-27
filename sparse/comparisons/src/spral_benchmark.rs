@@ -16,44 +16,40 @@
 //!
 //! ```sh
 //! # SPRAL-only on CI subset
-//! cargo run --example spral_benchmark --release -- --ci-only
+//! cargo run --bin spral-comparison --release -- --ci-only
 //!
 //! # Side-by-side comparison with rivrs
-//! cargo run --example spral_benchmark --release -- --ci-only --rivrs
+//! cargo run --bin spral-comparison --release -- --ci-only --rivrs
 //!
 //! # Set thread count for both SPRAL (OMP_NUM_THREADS) and rivrs (Par::rayon)
-//! cargo run --example spral_benchmark --release -- --ci-only --threads 4
+//! cargo run --bin spral-comparison --release -- --ci-only --threads 4
 //!
 //! # Compare against a previously collected rivrs baseline
-//! cargo run --example spral_benchmark --release -- --ci-only \
+//! cargo run --bin spral-comparison --release -- --ci-only \
 //!   --compare target/benchmarks/baselines/baseline-latest.json
 //!
 //! # Filter by category
-//! cargo run --example spral_benchmark --release -- --category hard-indefinite
+//! cargo run --bin spral-comparison --release -- --category hard-indefinite
 //! ```
+
+#[path = "common.rs"]
+mod common;
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::Instant;
 
-use faer::Col;
-use faer::Par;
-use faer::dyn_stack::{MemBuffer, MemStack};
 use faer::sparse::SparseColMat;
 use serde::{Deserialize, Serialize};
 
 use rivrs_sparse::io::registry;
-use rivrs_sparse::symmetric::{AnalyzeOptions, FactorOptions, SparseLDLT};
-use rivrs_sparse::validate::sparse_backward_error;
+
+use common::{RivrsResult, extract_lower_triangle, format_spral_input, write_temp_matrix_file};
 
 const DEFAULT_SPRAL_BIN: &str = "/tmp/spral_benchmark";
 
-/// Threshold (in lower-triangle nnz) above which we use file mode instead of stdin.
-const FILE_MODE_NNZ_THRESHOLD: usize = 1_000_000;
-
 // ---------------------------------------------------------------------------
-// Data types
+// SPRAL-specific data types
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -82,21 +78,6 @@ struct SpralResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct RivrsResult {
-    matrix_name: String,
-    analyse_s: f64,
-    factor_s: f64,
-    solve_s: f64,
-    total_s: f64,
-    backward_error: f64,
-    num_delayed: usize,
-    num_2x2: usize,
-    max_front_size: usize,
-    small_leaf_subtrees: usize,
-    small_leaf_nodes: usize,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 struct ComparisonRecord {
     matrix_name: String,
     category: String,
@@ -117,181 +98,43 @@ struct SpralBenchmarkSuite {
     results: Vec<ComparisonRecord>,
 }
 
-/// Rivrs baseline format (from baseline_collection.rs).
-#[derive(Debug, Clone, Deserialize)]
-struct BaselineSuite {
-    #[allow(dead_code)]
-    timestamp: String,
-    #[allow(dead_code)]
-    platform: String,
-    #[allow(dead_code)]
-    solver_version: String,
-    baselines: Vec<BaselineEntry>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct BaselineEntry {
-    matrix_name: String,
-    #[allow(dead_code)]
-    matrix_dim: usize,
-    #[allow(dead_code)]
-    matrix_nnz: usize,
-    #[allow(dead_code)]
-    ordering_ms: f64,
-    #[allow(dead_code)]
-    symbolic_ms: f64,
-    factor_ms: f64,
-    #[allow(dead_code)]
-    solve_ms: f64,
-    #[allow(dead_code)]
-    total_ms: f64,
-    backward_error: f64,
-    #[allow(dead_code)]
-    num_supernodes: usize,
-    #[allow(dead_code)]
-    max_front_size: usize,
-    #[allow(dead_code)]
-    factorization_stats: BaselineFactStats,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct BaselineFactStats {
-    #[allow(dead_code)]
-    total_1x1_pivots: usize,
-    #[allow(dead_code)]
-    total_2x2_pivots: usize,
-    #[allow(dead_code)]
-    total_delayed: usize,
-    #[allow(dead_code)]
-    zero_pivots: usize,
-    #[allow(dead_code)]
-    max_front_size: usize,
-}
-
 // ---------------------------------------------------------------------------
 // CLI argument parsing
 // ---------------------------------------------------------------------------
 
 struct CliArgs {
-    ci_only: bool,
-    threads: Option<usize>,
-    category: Option<String>,
-    rivrs: bool,
-    compare: Option<String>,
+    common: common::CommonCliArgs,
     spral_binary: String,
 }
 
 fn parse_args() -> CliArgs {
-    let args: Vec<String> = std::env::args().collect();
-    let mut cli = CliArgs {
-        ci_only: false,
-        threads: None,
-        category: None,
-        rivrs: false,
-        compare: None,
-        spral_binary: DEFAULT_SPRAL_BIN.to_string(),
-    };
+    let mut spral_binary = DEFAULT_SPRAL_BIN.to_string();
 
-    let mut i = 1;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--ci-only" => cli.ci_only = true,
-            "--rivrs" => cli.rivrs = true,
-            "--threads" => {
-                i += 1;
-                cli.threads = args.get(i).and_then(|s| s.parse().ok());
+    let common = common::parse_common_args(|args, i| match args[i].as_str() {
+        "--spral-binary" => {
+            if let Some(path) = args.get(i + 1) {
+                spral_binary = path.clone();
             }
-            "--category" => {
-                i += 1;
-                cli.category = args.get(i).cloned();
-            }
-            "--compare" => {
-                i += 1;
-                cli.compare = args.get(i).cloned();
-            }
-            "--spral-binary" => {
-                i += 1;
-                if let Some(path) = args.get(i) {
-                    cli.spral_binary = path.clone();
-                }
-            }
-            other => {
-                eprintln!("Unknown argument: {other}");
-                eprintln!(
-                    "Usage: spral_benchmark [--ci-only] [--threads N] [--category CAT] \
-                     [--rivrs] [--compare FILE] [--spral-binary PATH]"
-                );
-                std::process::exit(1);
-            }
+            Ok(1) // consumed one extra arg
         }
-        i += 1;
-    }
-
-    cli
-}
-
-// ---------------------------------------------------------------------------
-// Matrix formatting for SPRAL
-// ---------------------------------------------------------------------------
-
-/// Extract lower triangle from a full symmetric CSC matrix.
-/// SPRAL expects lower-triangle-only CSC input.
-fn extract_lower_triangle(matrix: &SparseColMat<usize, f64>) -> (Vec<i64>, Vec<i64>, Vec<f64>) {
-    let n = matrix.nrows();
-    let symbolic = matrix.symbolic();
-    let values = matrix.val();
-    let col_ptrs = symbolic.col_ptr();
-    let row_indices = symbolic.row_idx();
-
-    let mut lower_ptr = vec![0i64; n + 1];
-    let mut lower_row = Vec::new();
-    let mut lower_val = Vec::new();
-
-    for j in 0..n {
-        lower_ptr[j] = lower_row.len() as i64 + 1; // 1-indexed
-        let start = col_ptrs[j];
-        let end = col_ptrs[j + 1];
-        for idx in start..end {
-            let i = row_indices[idx];
-            if i >= j {
-                lower_row.push(i as i64 + 1); // 1-indexed
-                lower_val.push(values[idx]);
-            }
+        other => {
+            eprintln!("Unknown argument: {other}");
+            eprintln!(
+                "Usage: spral-comparison [--ci-only] [--threads N] [--category CAT] \
+                 [--rivrs] [--compare FILE] [--spral-binary PATH]"
+            );
+            std::process::exit(1);
         }
+    })
+    .unwrap_or_else(|e| {
+        eprintln!("Error: {e}");
+        std::process::exit(1);
+    });
+
+    CliArgs {
+        common,
+        spral_binary,
     }
-    lower_ptr[n] = lower_row.len() as i64 + 1;
-
-    (lower_ptr, lower_row, lower_val)
-}
-
-/// Format lower-triangle CSC as text for the SPRAL benchmark driver.
-fn format_spral_input(matrix: &SparseColMat<usize, f64>) -> String {
-    let n = matrix.nrows();
-    let (lower_ptr, lower_row, lower_val) = extract_lower_triangle(matrix);
-    let nnz = lower_row.len();
-
-    let mut out = String::new();
-    out.push_str(&format!("{} {}\n", n, nnz));
-
-    for &ptr in &lower_ptr[..=n] {
-        out.push_str(&format!("{}\n", ptr));
-    }
-
-    for k in 0..nnz {
-        out.push_str(&format!("{} {:.17e}\n", lower_row[k], lower_val[k]));
-    }
-
-    out
-}
-
-/// Write formatted matrix to a temporary file, returning the path.
-fn write_temp_matrix_file(matrix: &SparseColMat<usize, f64>) -> std::io::Result<PathBuf> {
-    let input = format_spral_input(matrix);
-    let dir = PathBuf::from("/tmp/spral_benchmark_input");
-    std::fs::create_dir_all(&dir)?;
-    let path = dir.join("matrix.txt");
-    std::fs::write(&path, input)?;
-    Ok(path)
 }
 
 // ---------------------------------------------------------------------------
@@ -304,7 +147,7 @@ fn run_spral_benchmark(
     threads: Option<usize>,
     nnz_lower: usize,
 ) -> Result<SpralParsed, String> {
-    let use_file_mode = nnz_lower > FILE_MODE_NNZ_THRESHOLD;
+    let use_file_mode = nnz_lower > common::FILE_MODE_NNZ_THRESHOLD;
 
     let mut cmd = Command::new(spral_bin);
     cmd.stdout(std::process::Stdio::piped())
@@ -317,8 +160,9 @@ fn run_spral_benchmark(
     }
 
     if use_file_mode {
-        // Write matrix to temp file and pass path as argument
-        let temp_path = write_temp_matrix_file(matrix).map_err(|e| format!("temp file: {e}"))?;
+        let input = format_spral_input(matrix);
+        let temp_path = write_temp_matrix_file(&input, "spral_benchmark")
+            .map_err(|e| format!("temp file: {e}"))?;
         cmd.arg(
             temp_path
                 .to_str()
@@ -331,12 +175,9 @@ fn run_spral_benchmark(
             .wait_with_output()
             .map_err(|e| format!("wait: {e}"))?;
 
-        // Clean up temp file
         let _ = std::fs::remove_file(&temp_path);
-
         parse_spral_result(&output)
     } else {
-        // Use stdin mode
         cmd.stdin(std::process::Stdio::piped());
 
         let mut child = cmd.spawn().map_err(|e| format!("spawn: {e}"))?;
@@ -347,10 +188,9 @@ fn run_spral_benchmark(
                 .write_all(input.as_bytes())
                 .map_err(|e| format!("stdin write: {e}"))?;
         }
-        drop(child.stdin.take()); // Close stdin to signal EOF
+        drop(child.stdin.take());
 
         let output = child.wait_with_output().map_err(|e| format!("wait: {e}"))?;
-
         parse_spral_result(&output)
     }
 }
@@ -384,7 +224,6 @@ fn parse_spral_result(output: &std::process::Output) -> Result<SpralParsed, Stri
 
     let stdout = String::from_utf8_lossy(&output.stdout);
 
-    // Find content between sentinels
     let begin_marker = "SPRAL_BENCHMARK_BEGIN";
     let end_marker = "SPRAL_BENCHMARK_END";
 
@@ -423,7 +262,6 @@ fn parse_spral_result(output: &std::process::Output) -> Result<SpralParsed, Stri
         if line.is_empty() {
             continue;
         }
-        // Split on first whitespace
         let mut parts = line.splitn(2, char::is_whitespace);
         let key = match parts.next() {
             Some(k) => k,
@@ -458,87 +296,6 @@ fn parse_spral_result(output: &std::process::Output) -> Result<SpralParsed, Stri
     }
 
     Ok(result)
-}
-
-// ---------------------------------------------------------------------------
-// Rivrs solver
-// ---------------------------------------------------------------------------
-
-fn run_rivrs_solver(
-    matrix: &SparseColMat<usize, f64>,
-    name: &str,
-    threads: Option<usize>,
-) -> Result<RivrsResult, String> {
-    let n = matrix.nrows();
-
-    let par = match threads {
-        Some(t) if t > 1 => Par::rayon(t),
-        _ => Par::Seq,
-    };
-
-    // Generate RHS: b = A * ones(n) (using full symmetric CSC)
-    let symbolic = matrix.symbolic();
-    let col_ptrs = symbolic.col_ptr();
-    let row_indices = symbolic.row_idx();
-    let values = matrix.val();
-
-    let mut b_vec = vec![0.0f64; n];
-    for j in 0..n {
-        for idx in col_ptrs[j]..col_ptrs[j + 1] {
-            b_vec[row_indices[idx]] += values[idx];
-        }
-    }
-    let b = Col::from_fn(n, |i| b_vec[i]);
-
-    let t_total = Instant::now();
-
-    // Analyse
-    let t_analyse = Instant::now();
-    let opts = AnalyzeOptions::default();
-    let mut solver =
-        SparseLDLT::analyze_with_matrix(matrix, &opts).map_err(|e| format!("analyse: {e}"))?;
-    let analyse_s = t_analyse.elapsed().as_secs_f64();
-
-    // Factor
-    let t_factor = Instant::now();
-    let factor_opts = FactorOptions {
-        par,
-        ..FactorOptions::default()
-    };
-    solver
-        .factor(matrix, &factor_opts)
-        .map_err(|e| format!("factor: {e}"))?;
-    let factor_s = t_factor.elapsed().as_secs_f64();
-
-    // Solve
-    let t_solve = Instant::now();
-    let scratch = solver.solve_scratch(1);
-    let mut mem = MemBuffer::new(scratch);
-    let stack = MemStack::new(&mut mem);
-    let x = solver
-        .solve(&b, stack, par)
-        .map_err(|e| format!("solve: {e}"))?;
-    let solve_s = t_solve.elapsed().as_secs_f64();
-
-    let total_s = t_total.elapsed().as_secs_f64();
-
-    let be = sparse_backward_error(matrix, &x, &b);
-
-    let stats = solver.stats().ok_or("no factorization stats")?;
-
-    Ok(RivrsResult {
-        matrix_name: name.to_string(),
-        analyse_s,
-        factor_s,
-        solve_s,
-        total_s,
-        backward_error: be,
-        num_delayed: stats.total_delayed,
-        num_2x2: stats.total_2x2_pivots,
-        max_front_size: stats.max_front_size,
-        small_leaf_subtrees: stats.small_leaf_subtrees,
-        small_leaf_nodes: stats.small_leaf_nodes,
-    })
 }
 
 // ---------------------------------------------------------------------------
@@ -635,7 +392,7 @@ fn print_category_tables(results: &[ComparisonRecord], has_rivrs: bool, threads:
     }
 }
 
-fn print_baseline_comparison(results: &[ComparisonRecord], baseline: &BaselineSuite) {
+fn print_baseline_comparison(results: &[ComparisonRecord], baseline: &common::BaselineSuite) {
     eprintln!("\n=== Comparison: SPRAL vs rivrs baseline ===");
     eprintln!(
         "{:<35} {:>8} {:>10} {:>10} {:>7} {:>10} {:>10}",
@@ -696,31 +453,18 @@ fn main() {
         std::process::exit(1);
     }
 
-    // Load matrix registry
-    let all = registry::load_registry().expect("Failed to load registry");
-    let matrices: Vec<_> = all
-        .iter()
-        .filter(|m| {
-            if m.source != "suitesparse" {
-                return false;
-            }
-            if cli.ci_only && !m.ci_subset {
-                return false;
-            }
-            if let Some(ref cat) = cli.category {
-                if m.category != *cat {
-                    return false;
-                }
-            }
-            true
-        })
-        .collect();
+    let matrices = common::load_matrix_entries(&cli.common);
 
     eprintln!(
         "SPRAL benchmark: {} matrices{}{}",
         matrices.len(),
-        if cli.ci_only { " (CI subset)" } else { "" },
-        cli.threads
+        if cli.common.ci_only {
+            " (CI subset)"
+        } else {
+            ""
+        },
+        cli.common
+            .threads
             .map(|t| format!(", OMP_NUM_THREADS={t}"))
             .unwrap_or_default()
     );
@@ -752,7 +496,7 @@ fn main() {
 
         // Run SPRAL
         let spral_result =
-            match run_spral_benchmark(matrix, &cli.spral_binary, cli.threads, nnz_lower) {
+            match run_spral_benchmark(matrix, &cli.spral_binary, cli.common.threads, nnz_lower) {
                 Ok(parsed) => {
                     let status = if parsed.factor_flag < 0 {
                         format!("FACTOR_FAIL({})", parsed.factor_flag)
@@ -794,41 +538,15 @@ fn main() {
             };
 
         // Run rivrs if requested
-        let rivrs_result = if cli.rivrs {
-            let r = match run_rivrs_solver(matrix, &meta.name, cli.threads) {
+        let rivrs_result = if cli.common.rivrs {
+            let r = match common::run_rivrs_solver(matrix, &meta.name, cli.common.threads) {
                 Ok(r) => Some(r),
                 Err(e) => {
                     eprintln!("{:<35} RIVRS FAILED: {}", meta.name, e);
                     None
                 }
             };
-            // Ask glibc to return freed pages to OS when memory pressure is
-            // high. Without any trimming, glibc holds freed arena pages across
-            // iterations, which can cause OOM in memory-constrained containers
-            // (e.g., 16 GB cgroup limit with H2O's 3+ GB peak). But trimming
-            // unconditionally forces cold page allocation for the next matrix,
-            // costing ~10-50% on medium matrices. Compromise: only trim when
-            // the process is using more than 75% of the cgroup memory limit.
-            #[cfg(target_os = "linux")]
-            {
-                unsafe extern "C" {
-                    fn malloc_trim(pad: usize) -> i32;
-                }
-                let should_trim = std::fs::read_to_string("/sys/fs/cgroup/memory.current")
-                    .ok()
-                    .and_then(|c| c.trim().parse::<u64>().ok())
-                    .zip(
-                        std::fs::read_to_string("/sys/fs/cgroup/memory.max")
-                            .ok()
-                            .and_then(|m| m.trim().parse::<u64>().ok()),
-                    )
-                    .is_some_and(|(current, max)| current > max * 3 / 4);
-                if should_trim {
-                    unsafe {
-                        malloc_trim(0);
-                    }
-                }
-            }
+            common::maybe_trim_memory();
             r
         } else {
             None
@@ -836,7 +554,7 @@ fn main() {
 
         // Print progress row
         if let Some(ref sr) = spral_result {
-            if cli.rivrs {
+            if cli.common.rivrs {
                 if let Some(ref rr) = rivrs_result {
                     let ratio = if sr.factor_s > 0.0 {
                         rr.factor_s / sr.factor_s
@@ -880,12 +598,12 @@ fn main() {
     }
 
     // Print summary tables
-    print_category_tables(&results, cli.rivrs, cli.threads);
+    print_category_tables(&results, cli.common.rivrs, cli.common.threads);
 
     // Print comparison with baseline if requested
-    if let Some(ref compare_path) = cli.compare {
+    if let Some(ref compare_path) = cli.common.compare {
         match std::fs::read_to_string(compare_path) {
-            Ok(json) => match serde_json::from_str::<BaselineSuite>(&json) {
+            Ok(json) => match serde_json::from_str::<common::BaselineSuite>(&json) {
                 Ok(baseline) => print_baseline_comparison(&results, &baseline),
                 Err(e) => eprintln!("\nFailed to parse baseline JSON: {e}"),
             },
@@ -896,27 +614,18 @@ fn main() {
     eprintln!("\n{pass}/{} completed successfully", pass + fail);
 
     // Build output suite
-    let git_hash = Command::new("git")
-        .args(["rev-parse", "--short", "HEAD"])
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .unwrap_or_else(|| "unknown".to_string())
-        .trim()
-        .to_string();
-
-    let mode = if cli.rivrs {
+    let mode = if cli.common.rivrs {
         "comparison"
     } else {
         "spral-only"
     };
 
     let suite = SpralBenchmarkSuite {
-        timestamp: chrono_timestamp(),
+        timestamp: common::timestamp(),
         platform: format!("{} {}", std::env::consts::OS, std::env::consts::ARCH),
-        omp_num_threads: cli.threads,
+        omp_num_threads: cli.common.threads,
         spral_version: "SPRAL-git".to_string(),
-        rivrs_version: git_hash,
+        rivrs_version: common::git_hash(),
         mode: mode.to_string(),
         results,
     };
@@ -929,15 +638,4 @@ fn main() {
     let json = serde_json::to_string_pretty(&suite).expect("serialize");
     std::fs::write(&out_path, &json).expect("write JSON");
     eprintln!("JSON written to: {}", out_path.display());
-
-    // Also print JSON to stdout for piping
-    //     println!("{json}");
-}
-
-fn chrono_timestamp() -> String {
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    format!("{secs}")
 }
