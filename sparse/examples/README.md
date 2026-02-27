@@ -8,26 +8,45 @@ exposes a three-phase API:
 2. **Factor** — numeric LDL^T factorization with APTP pivoting
 3. **Solve** — forward/diagonal/backward substitution
 
-## Quick Start
+## User Examples
 
-```sh
-cargo run --example basic_usage
-```
-
-No external data files or feature flags required.
-
-## Examples
+Self-contained examples that require no external data or feature flags.
 
 ### basic_usage
 
-Self-contained example that constructs a small symmetric indefinite matrix from
-triplets, solves `Ax = b` for a known solution, and validates the result with
-backward error analysis. Demonstrates the core `SparseLDLT` API without any
-external dependencies.
+Constructs a small symmetric indefinite matrix from triplets, solves `Ax = b`
+for a known solution, and validates the result with backward error analysis.
+Demonstrates the core `SparseLDLT` API.
 
 ```sh
 cargo run --example basic_usage
 ```
+
+### multiple_rhs
+
+Factors a matrix once and solves for multiple right-hand sides, reusing both the
+factorization and the solve workspace. Demonstrates the workspace allocation
+pattern with `solve_scratch` and `MemBuffer`.
+
+```sh
+cargo run --example multiple_rhs
+```
+
+### refactorization
+
+Builds a parametric matrix `A(t)` with fixed sparsity and values that depend on
+a parameter `t`. Analyzes once, then loops over several `t` values calling
+`factor()` each time. Demonstrates symbolic reuse across refactorizations — the
+inner-loop pattern for interior-point methods and time-stepping.
+
+```sh
+cargo run --example refactorization
+```
+
+## Diagnostic Tools
+
+These examples require SuiteSparse test matrices and/or the `diagnostic` feature
+flag. They are intended for performance analysis and regression tracking.
 
 ### solve_timing
 
@@ -113,12 +132,12 @@ automatically enabled for examples via the dev-dependency in `Cargo.toml`.
 
 ## Test Data
 
-Some examples require SuiteSparse test matrices:
+Some diagnostic tools require SuiteSparse test matrices:
 
 | Tier | Path | Size | Git status |
 |------|------|------|------------|
 | CI subset | `test-data/suitesparse-ci/` | ~19 MB | Tracked |
 | Full suite | `test-data/suitesparse/` | ~500 MB | Gitignored |
 
-`basic_usage` requires no external data. All other examples use the CI subset
-by default.
+User examples (`basic_usage`, `multiple_rhs`, `refactorization`) require no
+external data.

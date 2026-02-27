@@ -6,7 +6,7 @@
 //!
 //! # Sparse Symmetric Indefinite Solver (SSIDS)
 //!
-//! The library will provide a sparse symmetric indefinite direct solver
+//! The library provides a sparse symmetric indefinite direct solver
 //! based on the A Posteriori Threshold Pivoting (APTP) algorithm:
 //!
 //! - **Symbolic analysis**: Ordering, elimination tree, symbolic factorization
@@ -119,12 +119,36 @@
 //! lower triangles). The [`io::mtx`] reader automatically mirrors entries from
 //! Matrix Market files.
 //!
+//! # Parallelism
+//!
+//! Both factorization and solve support shared-memory parallelism via
+//! `Par::Seq` (sequential) or `Par::rayon(n)` (parallel with `n` threads):
+//!
+//! ```no_run
+//! # use faer::Par;
+//! # use rivrs_sparse::symmetric::FactorOptions;
+//! let opts = FactorOptions { par: Par::rayon(4), ..Default::default() };
+//! ```
+//!
+//! Tree-level parallelism (independent subtrees via rayon) and intra-node
+//! parallelism (TRSM/GEMM via faer `Par`) are both controlled by this setting.
+//!
+//! # Performance
+//!
+//! Factorization dominates total solve time for most matrices. On the
+//! 65-matrix SuiteSparse benchmark suite, rivrs-sparse is competitive with
+//! SPRAL (median 0.94x sequential, 0.89x at 8 threads). Tuning
+//! [`FactorOptions::threshold`](symmetric::FactorOptions::threshold) (default
+//! 0.01) trades off stability vs fill-in for specific problem classes.
+//!
 //! # Examples
 //!
 //! See the [`examples/`](https://github.com/jcallaham/rivrs-linalg/tree/main/sparse/examples)
 //! directory for complete programs:
 //!
 //! - `basic_usage.rs` — Self-contained hello world
+//! - `multiple_rhs.rs` — Solve for multiple right-hand sides, reusing the factorization
+//! - `refactorization.rs` — Refactorize with different values on the same sparsity pattern
 //! - `solve_timing.rs` — End-to-end solve timing on SuiteSparse matrices
 //! - `profile_matrix.rs` — Per-supernode profiling with Chrome Trace export
 //! - `parallel_scaling.rs` — Parallel speedup measurement

@@ -333,9 +333,15 @@ impl SparseLDLT {
         Ok(())
     }
 
-    /// Refactor with same sparsity pattern.
+    /// Refactor with same sparsity pattern but different numeric values.
     ///
-    /// Equivalent to calling `factor()` again — provided for API clarity.
+    /// Reuses the symbolic analysis from [`analyze_with_matrix`](Self::analyze_with_matrix),
+    /// avoiding the cost of re-ordering and re-computing the elimination tree.
+    /// This is the inner-loop operation for applications where the sparsity
+    /// pattern is fixed but values change — interior-point iterations,
+    /// time-stepping schemes, and parameter sweeps.
+    ///
+    /// Equivalent to calling [`factor`](Self::factor) again.
     pub fn refactor(
         &mut self,
         matrix: &SparseColMat<usize, f64>,
@@ -432,6 +438,14 @@ impl SparseLDLT {
     }
 
     /// Workspace requirement for solve.
+    ///
+    /// Returns the [`StackReq`] needed by [`solve`](Self::solve) or
+    /// [`solve_in_place`](Self::solve_in_place). Allocate once with
+    /// [`MemBuffer::new`](faer::dyn_stack::MemBuffer::new) and reuse across
+    /// multiple solves to avoid repeated allocation.
+    ///
+    /// `rhs_ncols` is the number of right-hand side columns (1 for a single
+    /// vector solve).
     pub fn solve_scratch(&self, rhs_ncols: usize) -> StackReq {
         if let Some(ref numeric) = self.numeric {
             aptp_solve_scratch(numeric, rhs_ncols)
@@ -441,6 +455,28 @@ impl SparseLDLT {
     }
 
     /// One-shot: analyze + factor + solve.
+    ///
+    /// Convenience method that runs the full pipeline in a single call.
+    /// For repeated solves (multiple RHS or refactorization), use the
+    /// three-phase API instead to amortize the symbolic analysis cost.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use faer::sparse::{SparseColMat, Triplet};
+    /// use faer::Col;
+    /// use rivrs_sparse::symmetric::{SparseLDLT, SolverOptions};
+    ///
+    /// let triplets = vec![
+    ///     Triplet::new(0, 0, 4.0),
+    ///     Triplet::new(0, 1, 1.0), Triplet::new(1, 0, 1.0),
+    ///     Triplet::new(1, 1, 3.0),
+    /// ];
+    /// let a = SparseColMat::try_new_from_triplets(2, 2, &triplets).unwrap();
+    /// let b = Col::from_fn(2, |i| [5.0, 4.0][i]);
+    /// let x = SparseLDLT::solve_full(&a, &b, &SolverOptions::default()).unwrap();
+    /// assert!((x[0] - 1.0).abs() < 1e-12);
+    /// ```
     pub fn solve_full(
         matrix: &SparseColMat<usize, f64>,
         rhs: &Col<f64>,
@@ -467,7 +503,14 @@ impl SparseLDLT {
         solver.solve(rhs, stack, options.par)
     }
 
-    /// Get inertia from the most recent factorization.
+    /// Get inertia (eigenvalue sign counts) from the most recent factorization.
+    ///
+    /// Returns the number of positive, negative, and zero eigenvalues of A.
+    /// Useful for checking definiteness, verifying KKT optimality conditions
+    /// (expected inertia `(n, m, 0)` for `n` primal and `m` dual variables),
+    /// and detecting numerical singularity (zero eigenvalues).
+    ///
+    /// Returns `None` if [`factor`](Self::factor) has not been called.
     pub fn inertia(&self) -> Option<Inertia> {
         self.numeric.as_ref().map(|numeric| {
             let mut inertia = Inertia {
@@ -485,12 +528,26 @@ impl SparseLDLT {
         })
     }
 
-    /// Get factorization statistics.
+    /// Get factorization statistics from the most recent factorization.
+    ///
+    /// Returns aggregate statistics including pivot counts (`total_1x1_pivots`,
+    /// `total_2x2_pivots`), delayed pivot count (`total_delayed`), maximum
+    /// front size, and supernode count. With the `diagnostic` feature enabled,
+    /// also includes per-phase timing breakdowns.
+    ///
+    /// Returns `None` if [`factor`](Self::factor) has not been called.
     pub fn stats(&self) -> Option<&FactorizationStats> {
         self.numeric.as_ref().map(|n| n.stats())
     }
 
     /// Get per-supernode diagnostic statistics from the most recent factorization.
+    ///
+    /// Returns one [`PerSupernodeStats`](super::numeric::PerSupernodeStats) per
+    /// supernode with front size, pivot counts, and delay counts. With the
+    /// `diagnostic` feature enabled, each entry also includes sub-phase timing
+    /// (assembly, kernel, extraction, extend-add).
+    ///
+    /// Returns `None` if [`factor`](Self::factor) has not been called.
     pub fn per_supernode_stats(&self) -> Option<&[super::numeric::PerSupernodeStats]> {
         self.numeric.as_ref().map(|n| n.per_supernode_stats())
     }
