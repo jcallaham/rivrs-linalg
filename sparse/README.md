@@ -1,16 +1,17 @@
 # rivrs-sparse
 
-Sparse linear algebra tools for Rust.
-
-The main goal of this project is to port legacy Fortran/C/C++ numerical code to the Rust ecosystem for performance, parallelism, memory safety, and better dev/packaging experiences.
+Sparse linear algebra functionality for Rust.
 
 This library builds on [`faer`](https://crates.io/crates/faer) for foundational data types, dense solvers, and some sparse linear algebra routines.
 Algorithms are implemented from academic literature and permissively-licensed reference code.
 
+This library is written as numerical implementations for the [`rivrs`](https://crates.io/crates/rivrs) symbolic-numeric framework but functions as a standalone crate for scientific computing applications.
+It is also re-exported by the [`rivrs-linalg`](https://crates.io/crates/rivrs-linalg) crate, containing more general numerical linear algebra functionality.
+
 **AI Disclaimer**: Large amounts of the codebase were written using Claude Code.
 Every effort was made to adhere to reference literature and codebases, to use structured development processes to maintain quality, and to extensively test the generated code using comparable test suites and ground truth data (e.g. [SuiteSparse](https://sparse.tamu.edu/) matrices).
 However, as with any numerical code that hasn't existed for very long, it is recommended that you add your own correctness checks (e.g. backwards residual calculations) when using these solvers.
-**Please report any correctness issues**
+**Please report any issues**
 
 ## Features
 
