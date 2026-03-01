@@ -1,12 +1,11 @@
 # rivrs
 
-Scientific computing framework for Rust.
+Rivrs is a symbolic-numeric compiler for Rust that can build, transform, and execute computational graphs.
 
-This is an umbrella crate that re-exports domain libraries as feature-gated modules:
+**Rivrs is currently a work in progress and the main compiler is not yet publicly available**.
 
-- **`linalg`** (default) — [`rivrs-linalg`](https://crates.io/crates/rivrs-linalg): Numerical linear algebra
-
-Future modules: `ode`, `optimize`, `signal`, `mesh`.
+Since the numerical implementations can be used independently of the compiler for scientific computing applications, these are released as standalone crates that are re-exported by `rivrs`.
+Currently this is limited to [`rivrs-linalg`](https://crates.io/crates/rivrs-linalg), containing numerical linear algebra functionality that builds on and extends [faer](https://crates.io/crates/faer).
 
 ## Usage
 

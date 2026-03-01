@@ -4,7 +4,7 @@ version = "0.1.0"
 authors = ["Jared Callaham"]
 edition = "2024"
 rust-version = "1.87"
-description = "Numerical linear algebra for the Rivrs framework"
+description = "Numerical linear algebra"
 license = "Apache-2.0"
 repository = "https://github.com/jcallaham/rivrs-linalg"
 readme = "README.md"
@@ -16,4 +16,4 @@ default = ["sparse"]
 sparse = ["dep:rivrs-sparse"]
 
 [dependencies]
-rivrs-sparse = { path = "../../sparse", version = "0.1.0", optional = true }
+rivrs-sparse = { version = "0.1.0", optional = true }
